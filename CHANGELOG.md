@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0.post1] - 2026-05-23
+
+### Fixed
+
+- **Spike-channel wheel install: `TemplateNotFound` on `dashboard` command**
+  (#145, #146). Cherry-picks the renderer + wheel-smoke hardening from
+  mainline PR #139 onto the `self-audit-spike-129` branch so the spike's
+  data-gathering install can render the dashboard. The spike's
+  experimental stop-hook code (issue #129) is untouched — only the
+  packaging plumbing was advanced. Versioned as a PEP 440 post-release
+  of 0.8.0 to signal "same 0.8.0 behavior, packaging hotfix only" and to
+  semver-sort below mainline 0.8.2.
+
+  Specifically:
+  - Replace `jinja2.FileSystemLoader` with
+    `PackageLoader("claude_prospector", "templates")` in `renderer.py`,
+    which resolves templates via `importlib.resources` and works in both
+    editable and wheel installs.
+  - Add `tests/test_template_resource.py` regression tests.
+  - Add `wheel-smoke` job to `release.yml`.
+
 ## [0.8.0] - 2026-05-19
 
 ### Added
