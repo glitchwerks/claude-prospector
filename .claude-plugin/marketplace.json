@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "claude-prospector-spike",
+  "description": "Local-only marketplace for the self-audit Stop-hook spike on branch self-audit-spike-129. Not for distribution. See docs/spikes/2026-05-19-self-audit-spike.md and issue #129.",
+  "owner": {
+    "name": "Christopher Beaulieu",
+    "email": "cmb_dev@outlook.com"
+  },
+  "plugins": [
+    {
+      "name": "claude-prospector",
+      "source": "./",
+      "description": "claude-prospector with the spike Stop hook (session-audit-prompt.py) wired into hooks/hooks.json. Use ONLY for spike #129 data collection; remove with `claude plugin marketplace remove claude-prospector-spike` when the spike concludes."
+    }
+  ]
+}

@@ -22,43 +22,61 @@ flow, feeding issue #63's session-summary and drift-detection machinery.
 
 ## How to register the hook locally for spike testing
 
-This hook is **not** in `hooks/hooks.json` and will not activate for plugin
-users. To test it locally, add a Stop hook entry to your **user-level** Claude
-Code settings (`~/.claude/settings.json`). User-level settings are not shipped
-with the plugin and affect only your local installation.
+This branch wires `session-audit-prompt.py` into `hooks/hooks.json`, but the
+spike branch is never merged to `main`. To get the hook active, install the
+worktree as a **local marketplace** named `claude-prospector-spike` (declared
+by `.claude-plugin/marketplace.json` on this branch), then install the plugin
+from it. The released `glitchwerks` marketplace stays registered; the spike
+copy of `claude-prospector` replaces the released copy for the duration of
+the spike.
 
-Locate (or create) `~/.claude/settings.json` and merge in the following
-fragment, adjusting the path to match where this worktree lives on your
-machine:
+Use the helper script. PowerShell (preferred on Windows) and Bash flavors
+are both shipped; pick whichever your shell is:
 
-```json
-{
-  "hooks": {
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python \"I:\\other\\claude-prospector\\.worktrees\\self-audit-spike-129\\hooks\\session-audit-prompt.py\""
-          }
-        ]
-      }
-    ]
-  }
-}
+```powershell
+# PowerShell, from the worktree root:
+.\scripts\spike-install.ps1 install   # add marketplace, swap to spike copy
+.\scripts\spike-install.ps1 status    # show marketplaces + active install
+.\scripts\spike-install.ps1 restore   # remove marketplace, restore release copy
 ```
 
-> **Note:** If `~/.claude/settings.json` already has a `hooks.Stop` array,
-> append the new entry to that array rather than replacing it. Hook arrays are
-> processed in order; this hook can safely run alongside the plugin's
-> `dashboard-regen.py` Stop hook.
+```bash
+# Bash, from the worktree root:
+./scripts/spike-install.sh install
+./scripts/spike-install.sh status
+./scripts/spike-install.sh restore
+```
 
-> **Windows path escaping:** JSON requires backslashes to be doubled
-> (`\\`). Adjust the path above if your repo is checked out elsewhere.
+What `install` runs, in order:
 
-After saving, open a new Claude Code session. The hook fires automatically
-when the session ends (i.e., when the user has no pending follow-up and the
-agent is about to halt).
+1. `claude plugin marketplace add <worktree>` — registers
+   `claude-prospector-spike` as a marketplace pointing at this worktree.
+2. `claude plugin uninstall claude-prospector` — removes any current install
+   (the release copy from `glitchwerks` if you had one).
+3. `claude plugin install claude-prospector@claude-prospector-spike` —
+   installs the spike copy, which carries the registered Stop hook.
+
+What `restore` runs, in order:
+
+1. `claude plugin uninstall claude-prospector` — removes the spike copy.
+2. `claude plugin marketplace remove claude-prospector-spike` — drops the
+   local marketplace registration.
+3. `claude plugin install claude-prospector@glitchwerks` — reinstalls the
+   released copy.
+
+After `install`, open a new Claude Code session. The hook fires automatically
+when the session ends — no user-level `~/.claude/settings.json` edit is
+required, and the wiring survives `git stash` / `git clean` on the worktree
+because the install record lives in `~/.claude/plugins/`, not in any file
+under the repo.
+
+> **Why this replaces the prior recipe:** the original spike doc instructed
+> editing `~/.claude/settings.json` with an absolute path into the worktree.
+> That setup was fragile — the settings entry was outside the repo and got
+> lost when the worktree's state changed (the hook entry was pulled into a
+> stash on 2026-05-22 and the elicitation stopped firing with no signal). The
+> local-marketplace install is first-class: `claude plugin list` shows it,
+> `claude plugin uninstall` cleans it up, no manual JSON editing required.
 
 ---
 
