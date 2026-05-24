@@ -55,6 +55,16 @@ What `install` runs, in order:
    (the release copy from `glitchwerks` if you had one).
 3. `claude plugin install claude-prospector@claude-prospector-spike` —
    installs the spike copy, which carries the registered Stop hook.
+4. `uv pip install --python <spike-venv-python> --force-reinstall -e <worktree>` —
+   installs the `claude_prospector` Python package **editable from this
+   worktree** into the spike plugin's venv. This bypasses the `/setup-prospector`
+   skill's default PyPI install path, which would otherwise pull a released
+   wheel that does not contain the spike's experimental code. (Spikes are
+   never published to PyPI; the worktree IS the source of truth.) Step 4 is
+   skipped with a warning if the spike plugin venv has not been created yet
+   — run `/setup-prospector` in a Claude Code session, then re-run
+   `spike-install install` to pick it up. See issues #145, #146, #147 for the
+   bug this step prevents.
 
 What `restore` runs, in order:
 

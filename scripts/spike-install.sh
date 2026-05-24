@@ -34,6 +34,12 @@ PLUGIN_NAME="claude-prospector"
 SPIKE_MARKETPLACE="claude-prospector-spike"
 RELEASE_MARKETPLACE="glitchwerks"
 
+# Plugin venv path follows the setup-prospector slug convention:
+#   plugin id "claude-prospector@claude-prospector-spike" → directory
+#   "claude-prospector-claude-prospector-spike" (every char outside
+#   [a-zA-Z0-9_-] replaced by a hyphen). CLAUDE_PLUGIN_DATA may override.
+SPIKE_PLUGIN_DATA="${CLAUDE_PLUGIN_DATA:-$HOME/.claude/plugins/data/claude-prospector-claude-prospector-spike}"
+
 # ANSI color helpers (skip when stdout isn't a tty).
 if [ -t 1 ]; then
     C_STEP=$'\033[36m'   # cyan
@@ -77,6 +83,32 @@ case "$ACTION" in
 
         step "Installing $PLUGIN_NAME from $SPIKE_MARKETPLACE..."
         run_claude plugin install "${PLUGIN_NAME}@${SPIKE_MARKETPLACE}"
+
+        # The plugin install above wires hooks + skills but does NOT install
+        # the claude_prospector Python package — /setup-prospector handles
+        # that, defaulting to a PyPI install. Spikes are local-only and not
+        # published to PyPI, so PyPI default ships the wrong (stale) wheel.
+        # Reinstall editable from this worktree so the spike's actual code
+        # runs. See issues #145, #146, #147.
+        if [ -x "$SPIKE_PLUGIN_DATA/venv/Scripts/python.exe" ]; then
+            VENV_PY="$SPIKE_PLUGIN_DATA/venv/Scripts/python.exe"   # Windows
+        elif [ -x "$SPIKE_PLUGIN_DATA/venv/bin/python" ]; then
+            VENV_PY="$SPIKE_PLUGIN_DATA/venv/bin/python"           # POSIX
+        else
+            VENV_PY=""
+        fi
+
+        if [ -n "$VENV_PY" ]; then
+            step "Reinstalling claude_prospector editable from spike worktree..."
+            trace "uv pip install --python $VENV_PY --force-reinstall -e $WORKTREE_ROOT"
+            if ! uv pip install --python "$VENV_PY" --force-reinstall -e "$WORKTREE_ROOT"; then
+                warn "Editable install failed; dashboard may render stale code. Re-run after fixing."
+            fi
+        else
+            warn "Spike plugin venv not found at $SPIKE_PLUGIN_DATA/venv."
+            warn "Run /setup-prospector in a Claude Code session, then re-run this script"
+            warn "to install claude_prospector editable from the spike worktree."
+        fi
 
         step "Done. Verify with: ./scripts/spike-install.sh status"
         step "Open a new Claude Code session; the Stop hook fires at session end."

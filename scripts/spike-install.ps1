@@ -44,6 +44,16 @@ $PluginName = 'claude-prospector'
 $SpikeMarketplace = 'claude-prospector-spike'
 $ReleaseMarketplace = 'glitchwerks'
 
+# Plugin venv path follows the setup-prospector slug convention:
+#   plugin id "claude-prospector@claude-prospector-spike" -> directory
+#   "claude-prospector-claude-prospector-spike" (every char outside
+#   [a-zA-Z0-9_-] replaced by a hyphen). CLAUDE_PLUGIN_DATA may override.
+$SpikePluginData = if ($env:CLAUDE_PLUGIN_DATA) {
+    $env:CLAUDE_PLUGIN_DATA
+} else {
+    Join-Path $HOME '.claude\plugins\data\claude-prospector-claude-prospector-spike'
+}
+
 function Write-Step($msg) {
     Write-Host ">> $msg" -ForegroundColor Cyan
 }
@@ -80,6 +90,35 @@ switch ($Action) {
 
         Write-Step "Installing $PluginName from $SpikeMarketplace..."
         Invoke-Claude -ClaudeArgs @('plugin', 'install', "${PluginName}@${SpikeMarketplace}")
+
+        # The plugin install above wires hooks + skills but does NOT install
+        # the claude_prospector Python package -- /setup-prospector handles
+        # that, defaulting to a PyPI install. Spikes are local-only and not
+        # published to PyPI, so PyPI default ships the wrong (stale) wheel.
+        # Reinstall editable from this worktree so the spike's actual code
+        # runs. See issues #145, #146, #147.
+        $VenvWindowsPython = Join-Path $SpikePluginData 'venv\Scripts\python.exe'
+        $VenvPosixPython = Join-Path $SpikePluginData 'venv/bin/python'
+        $VenvPy = if (Test-Path $VenvWindowsPython) {
+            $VenvWindowsPython
+        } elseif (Test-Path $VenvPosixPython) {
+            $VenvPosixPython
+        } else {
+            $null
+        }
+
+        if ($VenvPy) {
+            Write-Step "Reinstalling claude_prospector editable from spike worktree..."
+            Write-Host "   uv pip install --python $VenvPy --force-reinstall -e $WorktreeRoot" -ForegroundColor DarkGray
+            & uv pip install --python $VenvPy --force-reinstall -e $WorktreeRoot
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "   Editable install failed; dashboard may render stale code. Re-run after fixing." -ForegroundColor DarkYellow
+            }
+        } else {
+            Write-Host "   Spike plugin venv not found at $SpikePluginData\venv." -ForegroundColor DarkYellow
+            Write-Host "   Run /setup-prospector in a Claude Code session, then re-run this script" -ForegroundColor DarkYellow
+            Write-Host "   to install claude_prospector editable from the spike worktree." -ForegroundColor DarkYellow
+        }
 
         Write-Step "Done. Verify with: .\scripts\spike-install.ps1 status"
         Write-Step "Open a new Claude Code session; the Stop hook fires at session end."
