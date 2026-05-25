@@ -69,32 +69,37 @@ class TestResponsiveness:
         ), "Viewport meta tag must include width=device-width."
 
     def test_gauge_grid_uses_auto_fill(self, tmp_path: Path) -> None:
-        """Gauge grid must use auto-fill or responsive grid-template-columns.
+        """Budget grid must use auto-fill/auto-fit or a responsive @media rule.
 
-        A fixed ``repeat(3, 1fr)`` column definition will not wrap on narrow
-        screens. The fix uses ``repeat(auto-fill, minmax(...))`` or media
-        queries to allow the grid to collapse.
+        The refreshed dashboard (#148) uses ``.budgets`` (not ``.gauges``) for
+        the three budget cards.  A fixed ``repeat(3, 1fr)`` definition will not
+        wrap on narrow screens; the fix is either ``repeat(auto-fill, ...)`` or
+        a ``@media`` query targeting the budget grid class.
         """
         html = _render_html(tmp_path)
         has_autofill = "auto-fill" in html or "auto-fit" in html
-        has_gauge_media = "@media" in html and ".gauges" in html
-        assert has_autofill or has_gauge_media, (
-            "Gauge grid must use auto-fill/auto-fit or a media query so it "
-            "collapses from 3 columns to fewer on narrow screens."
+        # The refreshed template uses .budgets with an @media collapse rule.
+        has_budget_media = "@media" in html and ".budgets" in html
+        assert has_autofill or has_budget_media, (
+            "Budget grid must use auto-fill/auto-fit or a @media query so it "
+            "collapses from 3 columns to fewer on narrow screens. "
+            "The refreshed template (PR #148) uses .budgets, not .gauges."
         )
 
     def test_grid2_collapses_on_narrow_screens(self, tmp_path: Path) -> None:
         """Two-column card sections must collapse to one column via @media.
 
-        The .grid-2 class currently uses a fixed two-column layout. On
-        screens below ~800 px it must become a single column.
+        The refreshed dashboard (#148) uses ``.row`` (not ``.grid-2``) for the
+        two-column daily-chart + skills layout.  A ``@media`` query targeting
+        that class must be present so the layout collapses on narrow screens.
         """
         html = _render_html(tmp_path)
-        # The template must define a breakpoint that makes .grid-2
-        # single-column. We accept any media query that references grid-2.
-        assert "@media" in html and "grid-2" in html, (
-            "A @media query targeting .grid-2 must be present to collapse "
-            "the two-column layout on narrow screens."
+        # The refreshed template uses .lbd-style .row for the 2-column layout;
+        # accept any media query that references the .row class.
+        assert "@media" in html and ".row" in html, (
+            "A @media query targeting .row must be present to collapse the "
+            "two-column layout on narrow screens. "
+            "The refreshed template (PR #148) uses .row, not .grid-2."
         )
 
     def test_session_list_responsive(self, tmp_path: Path) -> None:
@@ -202,9 +207,9 @@ def test_path_keys_render_through(tmp_path: Path) -> None:
     # --- Assertion 2: JSON payload round-trip ---
     # Parse the embedded DATA block to confirm the key decodes back to the
     # original Python string (U+2192 codepoint, not a literal backslash-u).
-    # The template renders: const DATA = {{ data_json | safe }};
+    # The refreshed template (#148) renders: window.DATA = {{ data_json | safe }};
     # json.JSONDecoder.raw_decode handles \uXXXX escapes transparently.
-    data_line_marker = "const DATA = "
+    data_line_marker = "window.DATA = "
     data_start = html.index(data_line_marker) + len(data_line_marker)
     decoder = json.JSONDecoder()
     data_obj, _ = decoder.raw_decode(html, data_start)
@@ -254,7 +259,8 @@ def test_real_data_depth3_renders_correct_by_agent_values(
 
     # Extract the embedded DATA JSON payload the same way test_path_keys_render_through
     # does — raw_decode handles the → JSON-escape transparently.
-    data_line_marker = "const DATA = "
+    # The refreshed template (#148) uses window.DATA = instead of const DATA =.
+    data_line_marker = "window.DATA = "
     data_start = html.index(data_line_marker) + len(data_line_marker)
     decoder = json.JSONDecoder()
     data_obj, _ = decoder.raw_decode(html, data_start)
