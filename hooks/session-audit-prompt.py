@@ -45,6 +45,11 @@ import sys
 from pathlib import Path
 from typing import Any, Optional
 
+# Import the telemetry helper from hooks/lib/ using the same sys.path idiom
+# used by other hooks in this repo.
+sys.path.insert(0, str(Path(__file__).parent / "lib"))
+from self_audit_telemetry import log_outcome  # noqa: E402
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -127,6 +132,7 @@ def _extract_last_assistant_text(transcript_path: str) -> Optional[str]:
         sys.stderr.write(
             f"[session-audit-prompt] transcript not found:" f" {transcript_path}\n"
         )
+        log_outcome("transcript_missing", transcript_path)
         return None
 
     last_assistant_text: Optional[str] = None
@@ -160,6 +166,7 @@ def _extract_last_assistant_text(transcript_path: str) -> Optional[str]:
 
     except OSError as exc:
         sys.stderr.write(f"[session-audit-prompt] error reading transcript: {exc}\n")
+        log_outcome("transcript_read_error", transcript_path)
         return None
 
     return last_assistant_text
@@ -246,6 +253,7 @@ def main() -> int:
                 "[session-audit-prompt] stop_hook_active=True —"
                 " bailing out to prevent infinite loop\n"
             )
+            log_outcome("stop_hook_active")
             return 0
 
         # Step 3: locate transcript.
@@ -255,6 +263,7 @@ def main() -> int:
                 "[session-audit-prompt] transcript_path missing from"
                 " payload — allowing stop\n"
             )
+            log_outcome("no_transcript_path")
             return 0
 
         # Step 4: read last assistant message.
@@ -264,6 +273,7 @@ def main() -> int:
                 "[session-audit-prompt] could not read last assistant"
                 " message — allowing stop\n"
             )
+            log_outcome("no_assistant_text", transcript_path)
             return 0
 
         # Step 5: check for existing self-audit block.
@@ -271,17 +281,20 @@ def main() -> int:
             sys.stderr.write(
                 "[session-audit-prompt] <self-audit> block found —" " allowing stop\n"
             )
+            log_outcome("present", transcript_path)
             return 0
 
         # Step 6: block and elicit the audit.
         sys.stderr.write(
             "[session-audit-prompt] no <self-audit> block found —" " requesting audit\n"
         )
+        log_outcome("blocked", transcript_path)
         decision = json.dumps({"decision": "block", "reason": _AUDIT_PROMPT})
         sys.stdout.write(decision + "\n")
 
     except Exception as exc:
         sys.stderr.write(f"[session-audit-prompt] unexpected error: {exc}\n")
+        log_outcome("unexpected_error")
 
     return 0
 
