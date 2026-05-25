@@ -43,7 +43,7 @@ def test_autoregen_default_is_false() -> None:
     autoregen = data["userConfig"]["autoregen"]
     assert "default" in autoregen, (
         "userConfig.autoregen is missing a 'default' key in plugin.json. "
-        "Add `\"default\": false` to fix issue #149."
+        'Add `"default": false` to fix issue #149.'
     )
     assert autoregen["default"] is False, (
         f"userConfig.autoregen.default must be the boolean False, "
