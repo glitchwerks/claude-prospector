@@ -101,9 +101,7 @@ def _read_stdin() -> dict[str, Any]:
         raw = sys.stdin.read()
         return json.loads(raw) if raw.strip() else {}
     except Exception as exc:
-        sys.stderr.write(
-            f"[session-audit-prompt] failed to parse stdin: {exc}\n"
-        )
+        sys.stderr.write(f"[session-audit-prompt] failed to parse stdin: {exc}\n")
         return {}
 
 
@@ -127,8 +125,7 @@ def _extract_last_assistant_text(transcript_path: str) -> Optional[str]:
     path = Path(transcript_path)
     if not path.exists():
         sys.stderr.write(
-            f"[session-audit-prompt] transcript not found:"
-            f" {transcript_path}\n"
+            f"[session-audit-prompt] transcript not found:" f" {transcript_path}\n"
         )
         return None
 
@@ -162,9 +159,7 @@ def _extract_last_assistant_text(transcript_path: str) -> Optional[str]:
                     last_assistant_text = text
 
     except OSError as exc:
-        sys.stderr.write(
-            f"[session-audit-prompt] error reading transcript: {exc}\n"
-        )
+        sys.stderr.write(f"[session-audit-prompt] error reading transcript: {exc}\n")
         return None
 
     return last_assistant_text
@@ -274,25 +269,19 @@ def main() -> int:
         # Step 5: check for existing self-audit block.
         if _has_self_audit(last_text):
             sys.stderr.write(
-                "[session-audit-prompt] <self-audit> block found —"
-                " allowing stop\n"
+                "[session-audit-prompt] <self-audit> block found —" " allowing stop\n"
             )
             return 0
 
         # Step 6: block and elicit the audit.
         sys.stderr.write(
-            "[session-audit-prompt] no <self-audit> block found —"
-            " requesting audit\n"
+            "[session-audit-prompt] no <self-audit> block found —" " requesting audit\n"
         )
-        decision = json.dumps(
-            {"decision": "block", "reason": _AUDIT_PROMPT}
-        )
+        decision = json.dumps({"decision": "block", "reason": _AUDIT_PROMPT})
         sys.stdout.write(decision + "\n")
 
     except Exception as exc:
-        sys.stderr.write(
-            f"[session-audit-prompt] unexpected error: {exc}\n"
-        )
+        sys.stderr.write(f"[session-audit-prompt] unexpected error: {exc}\n")
 
     return 0
 
