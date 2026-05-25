@@ -13,6 +13,7 @@
   "userConfig": {
     "autoregen": {
       "type": "boolean",
+      "default": false,
       "title": "Auto-regenerate dashboard on session end",
       "description": "When enabled, automatically regenerates the HTML usage dashboard at the end of every Claude Code session. Toggle via the plugin manager (/plugin reconfigure claude-prospector) or at install time."
     }
