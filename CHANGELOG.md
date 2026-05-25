@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- New Stop hook: `session-audit-prompt.py` — emits a structured `<self-audit>` block at session end (closes #129).
+
 ### Fixed
 
 - **`userConfig.autoregen` missing schema default** (#149). Added `"default": false` to the `autoregen` field in `.claude-plugin/plugin.json` so the plugin manager has an explicit default and does not prompt unexpectedly or treat a missing value as true.
