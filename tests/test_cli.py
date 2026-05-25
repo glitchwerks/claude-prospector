@@ -9,11 +9,21 @@ from pathlib import Path
 
 
 def run_cli(args: list[str], cwd: Path) -> subprocess.CompletedProcess:
-    """Helper: run `python -m claude_prospector` with the given args."""
+    """Helper: run ``python -m claude_prospector`` with the given args.
+
+    Args:
+        args: Command-line arguments to pass after the module name.
+        cwd: Working directory for the subprocess.
+
+    Returns:
+        CompletedProcess with stdout, stderr, and returncode populated.
+        stdout and stderr are decoded as UTF-8 to handle HTML output
+        that may contain non-ASCII characters.
+    """
     return subprocess.run(
         [sys.executable, "-m", "claude_prospector", *args],
         capture_output=True,
-        text=True,
+        encoding="utf-8",
         cwd=str(cwd),
     )
 
@@ -180,6 +190,70 @@ class TestFormatJson:
         assert not (
             tmp_path / "out.html"
         ).exists(), "HTML file should not be written in json mode"
+
+
+class TestDryRun:
+    def test_dry_run_prints_html_to_stdout(self, sample_session_dir: Path) -> None:
+        """dashboard --dry-run must print the rendered HTML to stdout."""
+        result = run_cli(
+            [
+                "dashboard",
+                "--dry-run",
+                "--no-open",
+                "--data-dir",
+                str(sample_session_dir),
+            ],
+            cwd=WORKTREE_ROOT,
+        )
+        assert result.returncode == 0, f"CLI failed:\n{result.stderr}"
+        assert "<!doctype html>" in result.stdout.lower()
+
+    def test_dry_run_does_not_write_file(
+        self, sample_session_dir: Path, tmp_path: Path
+    ) -> None:
+        """dashboard --dry-run must NOT write the output HTML file to disk."""
+        output_path = tmp_path / "dashboard.html"
+        result = run_cli(
+            [
+                "dashboard",
+                "--dry-run",
+                "--no-open",
+                "--data-dir",
+                str(sample_session_dir),
+                "--output",
+                str(output_path),
+            ],
+            cwd=WORKTREE_ROOT,
+        )
+        assert result.returncode == 0, f"CLI failed:\n{result.stderr}"
+        assert not output_path.exists(), (
+            "dry-run must not write the output file"
+        )
+
+    def test_dry_run_flag_visible_in_help(self) -> None:
+        """--dry-run must appear in dashboard --help output."""
+        result = run_cli(["dashboard", "--help"], cwd=WORKTREE_ROOT)
+        assert result.returncode == 0
+        assert "--dry-run" in result.stdout
+
+    def test_without_dry_run_still_writes_file(
+        self, sample_session_dir: Path, tmp_path: Path
+    ) -> None:
+        """Without --dry-run, dashboard must still write the output file (unchanged behaviour)."""
+        output_path = tmp_path / "dashboard.html"
+        result = run_cli(
+            [
+                "dashboard",
+                "--no-open",
+                "--data-dir",
+                str(sample_session_dir),
+                "--output",
+                str(output_path),
+            ],
+            cwd=WORKTREE_ROOT,
+        )
+        assert result.returncode == 0, f"CLI failed:\n{result.stderr}"
+        assert output_path.exists(), "HTML output file must be created when --dry-run is absent"
 
 
 class TestFormatHtmlDefault:

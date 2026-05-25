@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import webbrowser
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,7 +19,8 @@ def render(
     output_path: Path | None = None,
     open_browser: bool = True,
     limits: dict[str, int] | None = None,
-) -> Path:
+    dry_run: bool = False,
+) -> Path | None:
     """Render the dashboard HTML from aggregated data.
 
     Uses ``jinja2.PackageLoader`` so the template resolves via Python's
@@ -31,13 +33,17 @@ def render(
     Args:
         result: Aggregated usage data.
         output_path: Where to write the HTML. If None, writes to a temp
-            file.
+            file. Ignored when ``dry_run`` is True.
         open_browser: Whether to open the result in the default browser.
+            Ignored when ``dry_run`` is True.
         limits: Optional budget limits:
             {limit_5h, limit_7d, limit_sonnet_7d}.
+        dry_run: When True, write the rendered HTML to ``sys.stdout``
+            instead of a file and do not open the browser. Returns None.
 
     Returns:
-        Path to the generated HTML file.
+        Path to the generated HTML file, or None when ``dry_run`` is
+        True.
     """
     env = Environment(
         loader=PackageLoader("claude_prospector", "templates"),
@@ -63,6 +69,10 @@ def render(
         generated_at=datetime.now(timezone.utc).isoformat(),
         limits_json=json.dumps(limits) if limits else "null",
     )
+
+    if dry_run:
+        sys.stdout.buffer.write(html.encode("utf-8"))
+        return None
 
     if output_path is None:
         tmp = NamedTemporaryFile(

@@ -135,6 +135,15 @@ def build_parser(parent: argparse._SubParsersAction) -> argparse.ArgumentParser:
             "'json' writes structured data to stdout."
         ),
     )
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False,
+        help=(
+            "Print the rendered HTML to stdout instead of writing a file. "
+            "No file is created and the browser is not opened."
+        ),
+    )
     return p
 
 
@@ -207,6 +216,8 @@ def run(args: argparse.Namespace) -> int:
         output_path=args.output,
         open_browser=not args.no_open,
         limits=limits,
+        dry_run=args.dry_run,
     )
-    print(f"Dashboard written to {output}")
+    if output is not None:
+        print(f"Dashboard written to {output}")
     return 0
