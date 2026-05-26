@@ -233,7 +233,7 @@
       padding-top: 14px;
     }
     .lbd-style .cumulative h4 { margin-bottom: 8px; }
-    .lbd-style .cumulative svg { width: 100%; height: 140px; display: block; }
+    .lbd-style .cumulative svg { width: 100%; height: 240px; display: block; }
 
     /* Top sessions */
     .lbd-style .topsess {
@@ -776,7 +776,7 @@
       running += ctx.allAgg.byDay[d].total_tokens;
       return { day: d, total: running };
     });
-    const W = 700, H = 140, padL = 40, padR = 20, padT = 12, padB = 24;
+    const W = 700, H = 240, padL = 40, padR = 20, padT = 12, padB = 24;
     const innerW = W - padL - padR, innerH = H - padT - padB;
     const finalTotal = points.length ? points[points.length - 1].total : 0;
     const maxY = Math.max(limit7d || 0, finalTotal) * 1.05 || 1;
@@ -930,8 +930,13 @@
     const maxY = Math.max(...q.points.map(p => p.invoked), 5);
     const xAt = v => padL + (v / maxX) * innerW;
     const yAt = v => padT + (1 - v / maxY) * innerH;
-    const midX = xAt(q.passedMed);
-    const midY = yAt(q.invokedMed);
+    // Clamp midX/midY so each quadrant always occupies at least 20% of the
+    // chart width/height.  Without this, when all points cluster in one corner
+    // the opposite tiles collapse to zero pixels and their labels disappear.
+    const minQuadW = innerW * 0.20;
+    const minQuadH = innerH * 0.20;
+    const midX = Math.min(Math.max(xAt(q.passedMed),  padL + minQuadW), padL + innerW - minQuadW);
+    const midY = Math.min(Math.max(yAt(q.invokedMed), padT + minQuadH), padT + innerH - minQuadH);
 
     const colors = {
       workhorse: '#3fb950',
@@ -952,12 +957,21 @@
       `<rect x="${midX}" y="${midY}" width="${(padL + innerW) - midX}" height="${(padT + innerH) - midY}" fill="${colors.dead}" opacity="0.07"/>`,
     ].join('');
 
-    // Labels in quadrants
+    // Labels in quadrants — always shown even when the quadrant has no items.
+    // When a quadrant is empty a "(no items)" sub-label is appended so the
+    // four-quadrant framing remains legible.
+    function quadLabel(label, quadKey, x, y, anchor) {
+      const empty = q.counts[quadKey] === 0;
+      const col = colors[quadKey];
+      return `
+        <text x="${x}" y="${y}" fill="${col}" font-size="10" text-anchor="${anchor}" font-weight="500">${label}</text>
+        ${empty ? `<text x="${x}" y="${y + 13}" fill="${col}" font-size="9" text-anchor="${anchor}" opacity="0.65">(no items)</text>` : ''}`;
+    }
     const labels = `
-      <text x="${midX - 6}" y="${padT + 14}" fill="${colors.explicit}" font-size="10" text-anchor="end" font-weight="500">EXPLICIT</text>
-      <text x="${midX + 6}" y="${padT + 14}" fill="${colors.workhorse}" font-size="10" text-anchor="start" font-weight="500">WORKHORSE</text>
-      <text x="${midX - 6}" y="${padT + innerH - 6}" fill="${colors.idle}" font-size="10" text-anchor="end" font-weight="500">IDLE</text>
-      <text x="${midX + 6}" y="${padT + innerH - 6}" fill="${colors.dead}" font-size="10" text-anchor="start" font-weight="500">DEAD</text>
+      ${quadLabel('EXPLICIT',  'explicit',  midX - 6, padT + 14,          'end'  )}
+      ${quadLabel('WORKHORSE', 'workhorse', midX + 6, padT + 14,          'start')}
+      ${quadLabel('IDLE',      'idle',      midX - 6, padT + innerH - 6,  'end'  )}
+      ${quadLabel('DEAD',      'dead',      midX + 6, padT + innerH - 6,  'start')}
     `;
 
     // Quadrant divider lines
