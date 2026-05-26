@@ -113,13 +113,25 @@
         byDay[d].by_model[m] = (byDay[d].by_model[m] || 0) + t;
       }
 
-      for (const agent of (s.agents || [])) {
+      // Fix #174: use agent_tokens (accurate per-agent totals) when available.
+      // The old equal-apportionment (total / agents.length) over-attributed parent
+      // tokens to sub-agents; agent_tokens was added to the aggregator output to
+      // provide accurate per-agent breakdowns per session.
+      const agentKeys = Object.keys(s.agent_tokens || {}).length > 0
+        ? Object.keys(s.agent_tokens)
+        : (s.agents || []);
+      for (const agent of agentKeys) {
         if (!byAgent[agent]) byAgent[agent] = { total_tokens: 0, session_count: 0, primary_model: null, _modelTokens: {} };
         byAgent[agent].session_count += 1;
-        const share = Math.round(s.total_tokens / Math.max(1, s.agents.length));
-        byAgent[agent].total_tokens += share;
+        const agentShare = s.agent_tokens && s.agent_tokens[agent] != null
+          ? s.agent_tokens[agent]
+          : Math.round(s.total_tokens / Math.max(1, agentKeys.length));
+        byAgent[agent].total_tokens += agentShare;
+        // Model split: apportion by this agent's token fraction of session total.
+        const sessionTotal = s.total_tokens || 1;
+        const agentFraction = agentShare / sessionTotal;
         for (const [m, t] of Object.entries(s.model_split || {})) {
-          byAgent[agent]._modelTokens[m] = (byAgent[agent]._modelTokens[m] || 0) + Math.round(t / Math.max(1, s.agents.length));
+          byAgent[agent]._modelTokens[m] = (byAgent[agent]._modelTokens[m] || 0) + Math.round(t * agentFraction);
         }
       }
     }
