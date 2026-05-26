@@ -142,6 +142,14 @@ def aggregate(
                     "root_agent": session.root_agent,
                     "agents": agents_in_session,
                     "total_tokens": sum(m.total_tokens for m in session_messages),
+                    "input_tokens": sum(m.input_tokens for m in session_messages),
+                    "output_tokens": sum(m.output_tokens for m in session_messages),
+                    "cache_creation_tokens": sum(
+                        m.cache_creation_tokens for m in session_messages
+                    ),
+                    "cache_read_tokens": sum(
+                        m.cache_read_tokens for m in session_messages
+                    ),
                     "model_split": dict(model_tokens),
                     "duration_minutes": session.duration_minutes,
                     "message_count": len(session_messages),
@@ -203,8 +211,8 @@ def aggregate(
     for msg in filtered_messages:
         day = msg.timestamp.strftime("%Y-%m-%d")
         if day not in result.by_day:
-            result.by_day[day] = {"total_tokens": 0, "by_model": {}}
-        result.by_day[day]["total_tokens"] += msg.total_tokens
+            result.by_day[day] = {"by_model": {}}
+        _add_tokens(result.by_day[day], msg)
         model = msg.model_short
         if model not in result.by_day[day]["by_model"]:
             result.by_day[day]["by_model"][model] = 0
