@@ -410,6 +410,196 @@ class TestAggregateByAgentPath:
             ), f"by_agent['{key}'] is missing 'session_count'"
 
 
+class TestSessionAgentTokens:
+    """Regression tests for issue #174: ops sub-agent over-attribution.
+
+    The root cause: the aggregator emits only leaf path-keys in
+    ``session["agents"]``.  When a session's only leaf is a sub-agent
+    (e.g. ``"general-purpose→ops"``), the parent ``"general-purpose"``
+    is excluded because it is a proper prefix of the leaf.  Client-side
+    code that apportions ``session.total_tokens / session.agents.length``
+    then attributes ALL session tokens to the sub-agent — including the
+    large cache-heavy parent turns — producing a wildly inflated figure
+    (1.23 B was observed for ``ops`` in the user's 7-day window).
+
+    The fix: the aggregator adds an ``"agent_tokens"`` dict to each
+    session record mapping every path-key to its actual accumulated
+    tokens from that session.  Client-side JS uses this dict instead of
+    the equal-apportionment approximation.
+    """
+
+    def test_session_carries_agent_tokens_dict(self):
+        """Each session summary must contain an ``agent_tokens`` key."""
+        sessions = [
+            _session(
+                [_msg(agent="general-purpose", input_t=100, output_t=50)],
+            )
+        ]
+        result = aggregate(sessions)
+        assert len(result.sessions) == 1
+        assert "agent_tokens" in result.sessions[0], (
+            "Session summary must carry 'agent_tokens' dict for accurate "
+            "per-agent attribution (fixes issue #174 ops overcount)"
+        )
+
+    def test_agent_tokens_reflects_actual_per_agent_contribution(self):
+        """``agent_tokens`` maps each path-key to its real token total.
+
+        Constructs the exact pattern that caused the #174 over-count:
+        - ``general-purpose`` parent: 1 000 000 tokens (large Opus context)
+        - ``ops`` sub-agent: 1 000 tokens (tiny Haiku query)
+
+        ``agent_tokens`` must report these accurately rather than the
+        equal-apportionment approximation that would give each agent
+        500 500 tokens.
+        """
+        SEP = AGENT_PATH_SEPARATOR
+        parent_tokens = 1_000_000  # input + output
+        ops_tokens = 1_000
+
+        sessions = [
+            _session(
+                [
+                    # Large parent messages (general-purpose)
+                    _make_path_msg(
+                        ("general-purpose",),
+                        input_t=700_000,
+                        output_t=300_000,
+                    ),
+                    # Tiny ops sub-agent messages
+                    _make_path_msg(
+                        ("general-purpose", "ops"),
+                        model="claude-haiku-4-5-20251001",
+                        input_t=700,
+                        output_t=300,
+                    ),
+                ],
+            )
+        ]
+        result = aggregate(sessions)
+        assert len(result.sessions) == 1
+        sess = result.sessions[0]
+
+        gp_key = "general-purpose"
+        ops_key = f"general-purpose{SEP}ops"
+
+        assert "agent_tokens" in sess, "Session must carry 'agent_tokens' dict"
+        at = sess["agent_tokens"]
+
+        assert gp_key in at, (
+            f"'general-purpose' must appear in agent_tokens "
+            f"(got keys: {sorted(at)})"
+        )
+        assert ops_key in at, (
+            f"'{ops_key}' must appear in agent_tokens " f"(got keys: {sorted(at)})"
+        )
+
+        assert at[gp_key] == parent_tokens, (
+            f"general-purpose agent_tokens should be {parent_tokens:,} "
+            f"(its actual messages), not {at[gp_key]:,}"
+        )
+        assert at[ops_key] == ops_tokens, (
+            f"ops agent_tokens should be {ops_tokens:,} "
+            f"(its actual messages), not {at[ops_key]:,}. "
+            f"This is the #174 over-attribution bug if ops gets "
+            f"the parent's {parent_tokens:,} tokens."
+        )
+
+    def test_ops_not_over_attributed_when_only_leaf(self):
+        """ops must not absorb parent tokens just because it's the only leaf.
+
+        This is the exact scenario from issue #174:
+        ``session.agents = ['general-purpose→ops']`` (parent excluded by
+        the leaf rule), so equal-apportionment gives ops all session tokens.
+
+        ``agent_tokens`` must break this by carrying the accurate split.
+        """
+        SEP = AGENT_PATH_SEPARATOR
+        ops_key = f"general-purpose{SEP}ops"
+
+        sessions = [
+            _session(
+                [
+                    _make_path_msg(
+                        ("general-purpose",),
+                        input_t=500_000,
+                        output_t=200_000,
+                    ),
+                    _make_path_msg(
+                        ("general-purpose", "ops"),
+                        model="claude-haiku-4-5-20251001",
+                        input_t=100,
+                        output_t=50,
+                    ),
+                ],
+            )
+        ]
+        result = aggregate(sessions)
+        sess = result.sessions[0]
+
+        # The leaf rule leaves only ops in agents — verify the buggy
+        # equal-apportionment would inflate ops:
+        assert sess["agents"] == [
+            ops_key
+        ], f"Expected ops to be the sole leaf agent; got {sess['agents']}"
+
+        # With the fix, agent_tokens must reflect the accurate split:
+        at = sess["agent_tokens"]
+        ops_actual = 100 + 50  # input + output for ops messages only
+        parent_actual = 500_000 + 200_000  # input + output for parent messages
+
+        assert at.get(ops_key, 0) == ops_actual, (
+            f"ops agent_tokens must be {ops_actual} (its actual messages). "
+            f"Got {at.get(ops_key, 0):,}. "
+            f"If this equals ~{parent_actual:,}, the #174 over-attribution "
+            f"bug is present."
+        )
+
+    def test_agent_tokens_present_for_depth_one_session(self):
+        """Depth-1 sessions (no sub-agents) also carry agent_tokens."""
+        sessions = [
+            _session(
+                [_msg(agent="main", input_t=200, output_t=100)],
+            )
+        ]
+        result = aggregate(sessions)
+        sess = result.sessions[0]
+        assert "agent_tokens" in sess
+        assert sess["agent_tokens"] == {"main": 300}
+
+    def test_agent_tokens_sums_match_session_total(self):
+        """Sum of all agent_tokens values equals session total_tokens."""
+        sessions = [
+            _session(
+                [
+                    _make_path_msg(
+                        ("general-purpose",),
+                        input_t=100,
+                        output_t=50,
+                    ),
+                    _make_path_msg(
+                        ("general-purpose", "code-writer"),
+                        input_t=200,
+                        output_t=100,
+                    ),
+                    _make_path_msg(
+                        ("general-purpose", "ops"),
+                        model="claude-haiku-4-5-20251001",
+                        input_t=10,
+                        output_t=5,
+                    ),
+                ],
+            )
+        ]
+        result = aggregate(sessions)
+        sess = result.sessions[0]
+        at_sum = sum(sess["agent_tokens"].values())
+        assert at_sum == sess["total_tokens"], (
+            f"agent_tokens sum {at_sum:,} must equal session "
+            f"total_tokens {sess['total_tokens']:,}"
+        )
+
+
 def _make_path_msg(
     path: tuple[str, ...],
     model: str = "claude-opus-4-6",

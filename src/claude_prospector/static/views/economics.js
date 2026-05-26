@@ -753,6 +753,10 @@
   // Artifact original approximated client-side via mock-injected _recent_total
   // etc. fields on by_agent. We now compute these by iterating sessions,
   // filtering to recent/prior 7-day windows, and accumulating per agent.
+  // Fix #174: use agent_tokens (accurate per-agent totals from aggregator)
+  // instead of equal-apportionment. Equal-apportionment divided session
+  // total_tokens by agents.length, inflating sub-agents like ops that were the
+  // sole leaf while the parent held large cache-heavy context.
   function computeAgentPeriods(sessions, now) {
     const c7  = new Date(now.getTime() - 7  * 86_400_000);
     const c14 = new Date(now.getTime() - 14 * 86_400_000);
@@ -764,18 +768,27 @@
       const isPrior  = t >= c14 && t < c7;
       if (!isRecent && !isPrior) continue;
       const bucket = isRecent ? recent : prior;
-      for (const agent of (s.agents || [])) {
+      // Prefer agent_tokens (accurate breakdown) over equal-apportionment.
+      const agentKeys = s.agent_tokens && Object.keys(s.agent_tokens).length > 0
+        ? Object.keys(s.agent_tokens)
+        : (s.agents || []);
+      const share = Math.max(1, agentKeys.length);
+      const sessionTotal = s.total_tokens || 1;
+      for (const agent of agentKeys) {
         if (!bucket[agent]) {
           bucket[agent] = {
             total_tokens: 0, message_count: 0,
             cache_creation_tokens: 0,
           };
         }
-        const share = Math.max(1, s.agents.length);
-        bucket[agent].total_tokens          += Math.round(s.total_tokens / share);
-        bucket[agent].message_count         += Math.round(s.message_count / share);
+        const agentTokens = s.agent_tokens && s.agent_tokens[agent] != null
+          ? s.agent_tokens[agent]
+          : Math.round(s.total_tokens / share);
+        const agentFraction = agentTokens / sessionTotal;
+        bucket[agent].total_tokens          += agentTokens;
+        bucket[agent].message_count         += Math.round(s.message_count * agentFraction);
         bucket[agent].cache_creation_tokens += Math.round(
-          (s.cache_creation_tokens || 0) / share
+          (s.cache_creation_tokens || 0) * agentFraction
         );
       }
     }

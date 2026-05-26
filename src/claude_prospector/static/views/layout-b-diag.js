@@ -492,17 +492,30 @@
   }
 
   // Per-agent tokens-per-minute and total minutes (sessions where they appear)
+  // Fix #174: use agent_tokens for accurate per-agent totals rather than
+  // dividing total_tokens equally across agents (equal-apportionment inflated
+  // sub-agents like ops that were the sole leaf while the parent held large
+  // context).
   function computeEfficiency(sessions) {
     const out = {};
     for (const s of sessions) {
-      const n = (s.agents || []).length || 1;
-      for (const a of (s.agents || [])) {
+      // Prefer agent_tokens (accurate) over equal-apportionment over leaf agents.
+      const agentKeys = s.agent_tokens && Object.keys(s.agent_tokens).length > 0
+        ? Object.keys(s.agent_tokens)
+        : (s.agents || []);
+      const n = agentKeys.length || 1;
+      const sessionTotal = s.total_tokens || 1;
+      for (const a of agentKeys) {
         if (!out[a]) out[a] = { tokens: 0, minutes: 0, sessions: 0, modelMix: {} };
-        out[a].tokens  += s.total_tokens / n;
+        const agentShare = s.agent_tokens && s.agent_tokens[a] != null
+          ? s.agent_tokens[a]
+          : s.total_tokens / n;
+        out[a].tokens  += agentShare;
         out[a].minutes += s.duration_minutes;
         out[a].sessions += 1;
+        const agentFraction = agentShare / sessionTotal;
         for (const [m, t] of Object.entries(s.model_split || {})) {
-          out[a].modelMix[m] = (out[a].modelMix[m] || 0) + (t / n);
+          out[a].modelMix[m] = (out[a].modelMix[m] || 0) + (t * agentFraction);
         }
       }
     }

@@ -132,6 +132,18 @@ def aggregate(
             }
             agents_in_session = sorted(leaf_path_keys)
 
+            # Per-agent actual token totals for this session (issue #174).
+            # The leaf-only ``agents`` list excludes parent path-keys when
+            # sub-agents exist, so client code that apportions
+            # ``session.total_tokens / session.agents.length`` equally
+            # over-attributes every parent token to the sub-agent.
+            # ``agent_tokens`` maps EVERY observed path-key (not just leaves)
+            # to its real accumulated tokens from this session so clients
+            # can use accurate attribution instead of the equal-share heuristic.
+            session_agent_tokens: dict[str, int] = defaultdict(int)
+            for m in session_messages:
+                session_agent_tokens[_path_key(m)] += m.total_tokens
+
             result.sessions.append(
                 {
                     "session_id": session.session_id,
@@ -141,6 +153,7 @@ def aggregate(
                     ).isoformat(),
                     "root_agent": session.root_agent,
                     "agents": agents_in_session,
+                    "agent_tokens": dict(session_agent_tokens),
                     "total_tokens": sum(m.total_tokens for m in session_messages),
                     "input_tokens": sum(m.input_tokens for m in session_messages),
                     "output_tokens": sum(m.output_tokens for m in session_messages),

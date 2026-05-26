@@ -305,14 +305,28 @@
       daily.push({ day: key, date: d, total: dayTokens, isToday: i === 0 });
     }
 
-    // Top agents in recent 7d
+    // Top agents in recent 7d — fix #174: use agent_tokens (accurate per-agent
+    // totals from the aggregator) instead of equal-apportionment heuristic.
+    // Equal-apportionment (total_tokens / agents.length) over-attributed parent
+    // tokens to sub-agents: when ops was the only leaf, it absorbed all Opus
+    // context tokens, inflating its 7-day total from ~tens of M to 1.23 B.
     const agentTotals = {};
     for (const s of recent) {
-      const agents = s.agents && s.agents.length ? s.agents : ['(unspecified)'];
-      const share = s.total_tokens / agents.length;
-      for (const a of agents) {
-        if (a === 'general') continue;
-        agentTotals[a] = (agentTotals[a] || 0) + share;
+      if (s.agent_tokens && Object.keys(s.agent_tokens).length > 0) {
+        // Prefer accurate per-agent breakdown supplied by the aggregator.
+        for (const [a, t] of Object.entries(s.agent_tokens)) {
+          if (a === 'general') continue;
+          agentTotals[a] = (agentTotals[a] || 0) + t;
+        }
+      } else {
+        // Fallback for session records that pre-date agent_tokens (e.g. stale
+        // JSON cache): fall back to equal-apportionment over leaf agents.
+        const agents = s.agents && s.agents.length ? s.agents : ['(unspecified)'];
+        const share = s.total_tokens / agents.length;
+        for (const a of agents) {
+          if (a === 'general') continue;
+          agentTotals[a] = (agentTotals[a] || 0) + share;
+        }
       }
     }
     const topAgents = Object.entries(agentTotals)
