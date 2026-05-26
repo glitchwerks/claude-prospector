@@ -104,6 +104,9 @@ def render(
         chart_js=_read_static("vendor/chart.umd.min.js"),
         treemap_js=_read_static("vendor/chartjs-chart-treemap.min.js"),
         cp_utils_js=_read_static("cp-utils.js"),
+        economics_basic_js=_read_static("views/economics-basic.js"),
+        layout_b_diag_js=_read_static("views/layout-b-diag.js"),
+        economics_js=_read_static("views/economics.js"),
     )
 
     if output_path is None:
