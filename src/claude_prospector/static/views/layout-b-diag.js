@@ -1,0 +1,1382 @@
+// Layout B — Diagnostic Tabs variant.
+// Reuses B's visual style. Replaces the static Insights row with a single
+// "Diagnostics" card containing horizontal badged tabs. Adds a one-line alert
+// summary directly under the page title.
+//
+// Phase 3: reads window.DATA / window.LIMITS (aggregator payload) directly.
+// Mock references removed. Function name, variable names, and visual output
+// match the reference artifact (Dashboard - Economy v1 standalone).
+// No design drift.
+
+(function () {
+  const PALETTE = CP.PALETTE;
+
+  // ── CSS ─────────────────────────────────────────────────────────────────
+  // Mirrors layout-b's idioms (so this file stands alone), then layers the
+  // diagnostic tab styles on top.
+  const css = `
+    .lbd-style { color: #c9d1d9; }
+
+    /* Page head */
+    .lbd-style .pagehead {
+      display: flex; align-items: flex-end; justify-content: space-between;
+      gap: 16px; margin-bottom: 8px; flex-wrap: wrap;
+    }
+    .lbd-style .pagehead h1 {
+      font-size: 22px; color: #f0f6fc; letter-spacing: -0.02em; font-weight: 600;
+    }
+    .lbd-style .pagehead h1 span { color: #6e7681; font-weight: 400; }
+    .lbd-style .pagehead .sub { color: #8b949e; font-size: 12px; margin-top: 4px; }
+    .lbd-style .pagehead-right { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+
+    /* Alert summary line — single-line dynamic headline below title */
+    .lbd-style .alert-line {
+      display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+      padding: 10px 14px;
+      background: linear-gradient(90deg, rgba(210,153,34,0.10), rgba(210,153,34,0.02));
+      border: 1px solid rgba(210,153,34,0.25);
+      border-radius: 8px;
+      margin-bottom: 18px;
+      font-size: 12px;
+      color: #c9d1d9;
+    }
+    .lbd-style .alert-line.ok {
+      background: linear-gradient(90deg, rgba(63,185,80,0.10), rgba(63,185,80,0.02));
+      border-color: rgba(63,185,80,0.25);
+    }
+    .lbd-style .alert-line.crit {
+      background: linear-gradient(90deg, rgba(248,81,73,0.10), rgba(248,81,73,0.02));
+      border-color: rgba(248,81,73,0.25);
+    }
+    .lbd-style .alert-line .ico {
+      width: 22px; height: 22px; border-radius: 6px;
+      display: inline-flex; align-items: center; justify-content: center;
+      font-weight: 700; font-size: 12px; flex-shrink: 0;
+    }
+    .lbd-style .alert-line.ok   .ico { background: rgba(63,185,80,0.18);  color: #3fb950; }
+    .lbd-style .alert-line.warn .ico { background: rgba(210,153,34,0.18); color: #e3b341; }
+    .lbd-style .alert-line.crit .ico { background: rgba(248,81,73,0.18);  color: #f85149; }
+    .lbd-style .alert-line .seg  { display: inline-flex; align-items: center; gap: 6px; }
+    .lbd-style .alert-line b { color: #f0f6fc; font-weight: 500; }
+    .lbd-style .alert-line .sep { color: #30363d; }
+
+    /* Budgets hero (carried from B) */
+    .lbd-style .budgets {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;
+      margin-bottom: 18px;
+    }
+    @media (max-width: 1000px) { .lbd-style .budgets { grid-template-columns: 1fr; } }
+    .lbd-style .bcard {
+      background: #161b22; border: 1px solid #21262d; border-radius: 12px;
+      padding: 16px 18px; position: relative; overflow: hidden;
+    }
+    .lbd-style .bcard::before {
+      content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+      background: var(--accent, #58a6ff);
+    }
+    .lbd-style .bcard .top { display: flex; justify-content: space-between; align-items: baseline; }
+    .lbd-style .bcard .name { font-size: 11px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 500; }
+    .lbd-style .bcard .num  { font-size: 28px; color: #f0f6fc; font-weight: 600; letter-spacing: -0.02em; margin: 4px 0 2px; font-variant-numeric: tabular-nums; }
+    .lbd-style .bcard .lim  { color: #6e7681; font-size: 12px; margin-bottom: 12px; }
+    .lbd-style .bcard .lim b { color: #8b949e; font-weight: 500; }
+    .lbd-style .bcard .bar  { height: 4px; background: #0d1117; border-radius: 3px; overflow: hidden; margin-bottom: 8px; }
+    .lbd-style .bcard .fill { height: 100%; border-radius: 3px; }
+    .lbd-style .bcard .spark    { margin-top: 4px; line-height: 0; }
+    .lbd-style .bcard .forecast { font-size: 11px; color: #8b949e; margin-top: 6px; display: flex; align-items: center; gap: 6px; }
+    .lbd-style .bcard .forecast .icon { width: 8px; height: 8px; border-radius: 50%; }
+    .lbd-style .bcard .forecast b { color: #f0f6fc; font-weight: 500; }
+
+    /* Where panel (carried from B, top-3 + rollup) */
+    .lbd-style .where {
+      background: #161b22; border: 1px solid #21262d; border-radius: 12px;
+      padding: 18px 20px; margin-bottom: 18px;
+    }
+    .lbd-style .where-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 16px; }
+    .lbd-style .where-head h2 { font-size: 14px; color: #f0f6fc; font-weight: 600; }
+    .lbd-style .where-head .sub { font-size: 11px; color: #8b949e; }
+
+    .lbd-style .proj-rail { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+    @media (max-width: 900px) { .lbd-style .proj-rail { grid-template-columns: 1fr; } }
+    .lbd-style .proj-card { background: #0d1117; border: 1px solid #21262d; border-radius: 10px; padding: 14px; position: relative; }
+    .lbd-style .proj-card.lead { border-color: #30363d; }
+    .lbd-style .proj-card .pname {
+      color: #ffa657; font-weight: 500; font-size: 14px; margin-bottom: 2px;
+      display: flex; justify-content: space-between; align-items: baseline;
+    }
+    .lbd-style .proj-card .pname .pct { color: #8b949e; font-size: 11px; font-weight: 400; }
+    .lbd-style .proj-card .ptok { font-size: 20px; color: #f0f6fc; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; margin-bottom: 4px; }
+    .lbd-style .proj-card .ptok .small { font-size: 11px; color: #6e7681; margin-left: 4px; font-weight: 400; }
+    .lbd-style .proj-card .pbar { height: 4px; background: #21262d; border-radius: 2px; overflow: hidden; margin-bottom: 10px; }
+    .lbd-style .proj-card .pbar .seg { height: 100%; display: inline-block; vertical-align: top; }
+    .lbd-style .proj-card .ag-list { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+    .lbd-style .proj-card .ag {
+      display: grid; grid-template-columns: 1fr auto; gap: 8px;
+      align-items: center; font-size: 12px;
+    }
+    .lbd-style .proj-card .ag .swatch { width: 5px; height: 5px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+    .lbd-style .proj-card .ag .n { color: #c9d1d9; }
+    .lbd-style .proj-card .ag .v { color: #8b949e; font-variant-numeric: tabular-nums; }
+
+    .lbd-style .proj-more { margin-top: 8px; border-top: 1px dashed #21262d; padding-top: 10px; }
+    .lbd-style .proj-more-head { font-size: 10px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; display: flex; justify-content: space-between; }
+    .lbd-style .proj-more-list { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px 16px; }
+    @media (max-width: 900px) { .lbd-style .proj-more-list { grid-template-columns: 1fr; } }
+    .lbd-style .proj-more-row { display: grid; grid-template-columns: 1fr 60px 36px; gap: 8px; align-items: center; padding: 4px 0; font-size: 12px; }
+    .lbd-style .proj-more-row .pn { color: #ffa657; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .lbd-style .proj-more-row .pv { color: #8b949e; font-variant-numeric: tabular-nums; text-align: right; }
+    .lbd-style .proj-more-row .ps { color: #6e7681; font-variant-numeric: tabular-nums; text-align: right; font-size: 10px; }
+
+    /* ── Diagnostics card ────────────────────────────────────────────── */
+    .lbd-style .diag {
+      background: #161b22; border: 1px solid #21262d; border-radius: 12px;
+      margin-bottom: 18px;
+      overflow: hidden;
+    }
+    .lbd-style .diag-tabs {
+      display: flex;
+      gap: 2px;
+      padding: 8px 8px 0 8px;
+      background: #0d1117;
+      border-bottom: 1px solid #21262d;
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+    .lbd-style .diag-tabs::-webkit-scrollbar { display: none; }
+    .lbd-style .diag-tab {
+      display: inline-flex; align-items: center; gap: 8px;
+      background: transparent;
+      border: 0;
+      color: #8b949e;
+      padding: 10px 14px 11px;
+      font: inherit; font-size: 12px;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -1px;
+      white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .lbd-style .diag-tab:hover { color: #f0f6fc; background: #161b22; }
+    .lbd-style .diag-tab.active {
+      color: #f0f6fc;
+      background: #161b22;
+      border-bottom-color: #58a6ff;
+    }
+    .lbd-style .diag-tab .ico { font-size: 13px; line-height: 1; }
+    .lbd-style .diag-tab .lbl { font-weight: 500; }
+    .lbd-style .diag-tab .tag {
+      padding: 1px 7px; border-radius: 10px;
+      font-size: 10px; font-weight: 500; letter-spacing: 0.02em;
+      background: #21262d; color: #c9d1d9;
+      font-variant-numeric: tabular-nums;
+    }
+    .lbd-style .diag-tab .tag.warn { background: rgba(210,153,34,0.22); color: #e3b341; }
+    .lbd-style .diag-tab .tag.crit { background: rgba(248,81,73,0.22);  color: #f85149; }
+    .lbd-style .diag-tab .tag.ok   { background: rgba(63,185,80,0.18);  color: #3fb950; }
+    .lbd-style .diag-tab .tag.info { background: rgba(88,166,255,0.18); color: #79c0ff; }
+    .lbd-style .diag-body {
+      padding: 18px 20px;
+      min-height: 360px;
+    }
+    .lbd-style .diag-body h4 {
+      font-size: 11px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.04em;
+      font-weight: 500; margin-bottom: 8px;
+    }
+
+    /* Burn rate widget */
+    .lbd-style .burn-bucket {
+      padding: 12px 0;
+      border-bottom: 1px dashed #21262d;
+    }
+    .lbd-style .burn-bucket:last-of-type { border-bottom: none; }
+    .lbd-style .burn-bucket .top {
+      display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px;
+    }
+    .lbd-style .burn-bucket .bname { color: #c9d1d9; font-size: 13px; font-weight: 500; }
+    .lbd-style .burn-bucket .ratio {
+      font-size: 18px; font-variant-numeric: tabular-nums; font-weight: 600; letter-spacing: -0.01em;
+    }
+    .lbd-style .burn-bucket .ratio.ok   { color: #3fb950; }
+    .lbd-style .burn-bucket .ratio.warn { color: #e3b341; }
+    .lbd-style .burn-bucket .ratio.crit { color: #f85149; }
+    .lbd-style .burn-bucket .track {
+      position: relative;
+      height: 10px;
+      background: #0d1117;
+      border-radius: 5px;
+      overflow: hidden;
+      margin-bottom: 6px;
+    }
+    .lbd-style .burn-bucket .actual {
+      position: absolute; left: 0; top: 0; bottom: 0;
+      border-radius: 5px;
+    }
+    .lbd-style .burn-bucket .marker {
+      position: absolute; top: -3px; bottom: -3px;
+      width: 2px;
+      background: #c9d1d9;
+      box-shadow: 0 0 0 1px #0d1117;
+    }
+    .lbd-style .burn-bucket .marker::after {
+      content: 'sustainable';
+      position: absolute; top: -16px; left: -28px;
+      font-size: 9px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.05em;
+      white-space: nowrap;
+    }
+    .lbd-style .burn-bucket .detail {
+      display: flex; justify-content: space-between; font-size: 11px; color: #8b949e;
+    }
+    .lbd-style .burn-bucket .detail b { color: #c9d1d9; font-weight: 500; }
+
+    .lbd-style .cumulative {
+      margin-top: 18px;
+      border-top: 1px solid #21262d;
+      padding-top: 14px;
+    }
+    .lbd-style .cumulative h4 { margin-bottom: 8px; }
+    .lbd-style .cumulative svg { width: 100%; height: 140px; display: block; }
+
+    /* Top sessions */
+    .lbd-style .topsess {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    @media (max-width: 1000px) { .lbd-style .topsess { grid-template-columns: 1fr; } }
+    .lbd-style .topsess-list .row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      padding: 10px 0;
+      border-bottom: 1px solid #21262d;
+      align-items: center;
+    }
+    .lbd-style .topsess-list .row:last-child { border-bottom: none; }
+    .lbd-style .topsess-list .row.outlier {
+      background: linear-gradient(90deg, rgba(248,81,73,0.06), transparent);
+      margin: 0 -8px; padding-left: 8px; padding-right: 8px; border-radius: 4px;
+    }
+    .lbd-style .topsess-list .meta { font-size: 11px; color: #8b949e; }
+    .lbd-style .topsess-list .name { color: #ffa657; font-weight: 500; font-size: 13px; margin-bottom: 2px; }
+    .lbd-style .topsess-list .agents { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }
+    .lbd-style .topsess-list .tokens { font-size: 17px; color: #f0f6fc; font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
+    .lbd-style .topsess-list .tokens .sub { font-size: 10px; color: #6e7681; font-weight: 400; display: block; margin-top: 2px; }
+    .lbd-style .outlier-flag {
+      display: inline-block; padding: 1px 6px; border-radius: 4px;
+      background: rgba(248,81,73,0.18); color: #f85149;
+      font-size: 10px; font-weight: 500;
+      margin-left: 6px;
+    }
+
+    .lbd-style .histo svg { width: 100%; height: 240px; display: block; }
+
+    /* Movers */
+    .lbd-style .movers-row {
+      display: grid;
+      grid-template-columns: 1fr 80px 80px 60px;
+      gap: 10px;
+      padding: 8px 0;
+      align-items: center;
+      border-bottom: 1px solid #21262d;
+      font-size: 12px;
+    }
+    .lbd-style .movers-row:last-child { border-bottom: none; }
+    .lbd-style .movers-row .nm { color: #c9d1d9; }
+    .lbd-style .movers-row .nm.proj { color: #ffa657; }
+    .lbd-style .movers-row .val { color: #8b949e; font-variant-numeric: tabular-nums; text-align: right; }
+    .lbd-style .movers-row .pre { color: #6e7681; font-variant-numeric: tabular-nums; text-align: right; }
+    .lbd-style .movers-row .delta { font-variant-numeric: tabular-nums; font-weight: 500; text-align: right; }
+    .lbd-style .movers-row .delta.up   { color: #f85149; }
+    .lbd-style .movers-row .delta.down { color: #3fb950; }
+    .lbd-style .movers-row .delta.flat { color: #8b949e; }
+    .lbd-style .movers-head {
+      display: grid;
+      grid-template-columns: 1fr 80px 80px 60px;
+      gap: 10px;
+      padding: 4px 0 8px;
+      font-size: 10px; color: #6e7681; text-transform: uppercase; letter-spacing: 0.05em;
+      border-bottom: 1px solid #21262d;
+    }
+    .lbd-style .movers-head .r { text-align: right; }
+    .lbd-style .mv-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+    }
+    @media (max-width: 1000px) { .lbd-style .mv-grid { grid-template-columns: 1fr; } }
+
+    /* Quadrant */
+    .lbd-style .quad-wrap {
+      display: grid;
+      grid-template-columns: 1fr 320px;
+      gap: 20px;
+    }
+    @media (max-width: 1000px) { .lbd-style .quad-wrap { grid-template-columns: 1fr; } }
+    .lbd-style .quad svg { width: 100%; height: 360px; display: block; }
+
+    .lbd-style .quad-legend { display: flex; flex-direction: column; gap: 10px; }
+    .lbd-style .qblock {
+      background: #0d1117;
+      border: 1px solid #21262d;
+      border-radius: 8px;
+      padding: 10px 12px;
+    }
+    .lbd-style .qblock.priority {
+      border-color: rgba(248,81,73,0.35);
+      background: linear-gradient(180deg, rgba(248,81,73,0.06), rgba(248,81,73,0.02));
+    }
+    .lbd-style .qblock.idle { opacity: 0.7; }
+    .lbd-style .qblock header {
+      display: flex; align-items: center; gap: 8px; margin-bottom: 4px;
+    }
+    .lbd-style .qblock header .sw {
+      width: 9px; height: 9px; border-radius: 2px; display: inline-block;
+    }
+    .lbd-style .qblock header .lbl {
+      color: #f0f6fc; font-weight: 600; font-size: 12px;
+    }
+    .lbd-style .qblock header .count {
+      margin-left: auto;
+      color: #c9d1d9; font-size: 11px;
+      font-variant-numeric: tabular-nums;
+      background: #21262d; padding: 1px 7px; border-radius: 8px;
+    }
+    .lbd-style .qblock.priority header .count {
+      background: rgba(248,81,73,0.18); color: #ffb4af;
+    }
+    .lbd-style .qblock .desc {
+      color: #8b949e; font-size: 10.5px; line-height: 1.4;
+      margin-bottom: 6px;
+    }
+    .lbd-style .qblock .names {
+      list-style: none; margin: 0; padding: 0;
+      display: flex; flex-direction: column; gap: 2px;
+    }
+    .lbd-style .qblock .name-row {
+      display: flex; justify-content: space-between; align-items: baseline;
+      gap: 8px; padding: 3px 0;
+      border-top: 1px dashed #21262d;
+      font-size: 11.5px;
+    }
+    .lbd-style .qblock .name-row:first-child { border-top: 0; }
+    .lbd-style .qblock .name-row .nm {
+      color: #c9d1d9; font-weight: 500;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      min-width: 0; flex: 1;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11px;
+    }
+    .lbd-style .qblock.priority .name-row .nm { color: #f0f6fc; }
+    .lbd-style .qblock .name-row .stats {
+      color: #6e7681; font-size: 10px;
+      font-variant-numeric: tabular-nums; white-space: nowrap;
+    }
+    .lbd-style .qblock .more {
+      color: #6e7681; font-size: 10.5px; font-style: italic;
+      padding: 4px 0 2px; border-top: 1px dashed #21262d;
+    }
+    .lbd-style .qblock .empty {
+      color: #6e7681; font-size: 10.5px; font-style: italic;
+    }
+
+    /* Efficiency */
+    .lbd-style .eff-row {
+      display: grid;
+      grid-template-columns: 140px 100px 1fr 80px;
+      gap: 12px;
+      align-items: center;
+      padding: 8px 0;
+      border-bottom: 1px solid #21262d;
+      font-size: 12px;
+    }
+    .lbd-style .eff-row:last-child { border-bottom: none; }
+    .lbd-style .eff-row .nm { color: #c9d1d9; }
+    .lbd-style .eff-row .rate { color: #f0f6fc; font-weight: 600; font-variant-numeric: tabular-nums; font-size: 14px; }
+    .lbd-style .eff-row .rate .u { font-size: 10px; color: #6e7681; font-weight: 400; margin-left: 3px; }
+    .lbd-style .eff-row .bar { height: 8px; background: #0d1117; border-radius: 4px; overflow: hidden; }
+    .lbd-style .eff-row .bar > i { display: block; height: 100%; }
+    .lbd-style .eff-row .meta { color: #8b949e; font-size: 11px; text-align: right; font-variant-numeric: tabular-nums; }
+    .lbd-style .eff-row.outlier .rate { color: #f85149; }
+    .lbd-style .eff-row.outlier .bar > i { background: linear-gradient(90deg,#b62324,#f85149) !important; }
+    .lbd-style .eff-head {
+      display: grid;
+      grid-template-columns: 140px 100px 1fr 80px;
+      gap: 12px;
+      padding: 4px 0 8px;
+      border-bottom: 1px solid #21262d;
+      font-size: 10px; color: #6e7681; text-transform: uppercase; letter-spacing: 0.05em;
+    }
+    .lbd-style .eff-head .r { text-align: right; }
+
+    /* Secondary row (daily chart + skills) — carried from B */
+    .lbd-style .row { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; margin-bottom: 18px; }
+    @media (max-width: 1000px) { .lbd-style .row { grid-template-columns: 1fr; } }
+    .lbd-style .card { background: #161b22; border: 1px solid #21262d; border-radius: 10px; padding: 16px; }
+    .lbd-style .chart-container { position: relative; height: 240px; }
+    .lbd-style .h {
+      display: flex; justify-content: space-between; align-items: baseline;
+      margin-bottom: 12px;
+    }
+    .lbd-style .h .title { font-size: 12px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 500; }
+    .lbd-style .h .meta  { font-size: 11px; color: #6e7681; }
+
+    /* Sessions */
+    .lbd-style .session-row {
+      display: grid;
+      grid-template-columns: 100px 1.2fr 1.4fr 90px 100px 60px;
+      gap: 10px; align-items: center; padding: 8px 0;
+      border-bottom: 1px solid #1c2128; font-size: 12px;
+    }
+    .lbd-style .session-row:last-child { border-bottom: none; }
+    .lbd-style .session-row .time { color: #8b949e; }
+    .lbd-style .session-row .proj { color: #ffa657; font-weight: 500; }
+    .lbd-style .session-row .tok  { color: #c9d1d9; text-align: right; font-variant-numeric: tabular-nums; }
+    .lbd-style .session-row .dur  { color: #8b949e; text-align: right; font-variant-numeric: tabular-nums; }
+    .lbd-style .sessions-head {
+      display: grid;
+      grid-template-columns: 100px 1.2fr 1.4fr 90px 100px 60px;
+      gap: 10px; padding: 4px 0 8px;
+      border-bottom: 1px solid #21262d;
+      font-size: 10px; color: #6e7681; text-transform: uppercase; letter-spacing: 0.05em;
+    }
+    .lbd-style .sessions-head .r { text-align: right; }
+    .lbd-style .mini-bar { display: flex; height: 5px; border-radius: 3px; overflow: hidden; }
+
+    /* Skills mini card */
+    .lbd-style .skills-card {
+      display: flex; flex-direction: column;
+      max-height: 320px;
+    }
+    .lbd-style .skill-row {
+      display: grid;
+      grid-template-columns: 1fr 40px 60px 32px;
+      gap: 10px; padding: 6px 0; align-items: center;
+      border-bottom: 1px solid #1c2128; font-size: 11px;
+    }
+    .lbd-style .skills-head {
+      display: grid;
+      grid-template-columns: 1fr 40px 60px 32px;
+      gap: 10px; align-items: center;
+      padding: 0 0 6px;
+      border-bottom: 1px solid #30363d;
+      font-size: 9.5px; color: #6e7681;
+      text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600;
+    }
+    .lbd-style .skills-head .h-adopt,
+    .lbd-style .skills-head .h-bar,
+    .lbd-style .skills-head .h-count { text-align: right; }
+    .lbd-style .skill-row .sname { color: #c9d1d9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .lbd-style .skill-row .sbar { height: 5px; background: #0d1117; border-radius: 3px; overflow: hidden; }
+    .lbd-style .skill-row .sbar > i { display: block; height: 100%; background: linear-gradient(90deg,#7e3bd6,#d2a8ff); }
+    .lbd-style .skill-row .adopt { color: #8b949e; font-variant-numeric: tabular-nums; text-align: right; font-size: 10px; }
+    .lbd-style .skill-row .adopt.low { color: #d29922; }
+    .lbd-style .skill-row .scount { color: #c9d1d9; font-variant-numeric: tabular-nums; text-align: right; font-weight: 500; }
+    .lbd-style .skills-scroll { overflow-y: auto; flex: 1; margin: 0 -4px; padding: 0 4px; scrollbar-width: thin; scrollbar-color: #30363d transparent; }
+    .lbd-style .skills-scroll::-webkit-scrollbar { width: 6px; }
+    .lbd-style .skills-scroll::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+  `;
+
+  // ── Diagnostic computations ─────────────────────────────────────────────
+
+  function bucketRatioCls(r) {
+    if (r >= 1.5) return 'crit';
+    if (r >= 1.0) return 'warn';
+    return 'ok';
+  }
+
+  function computeBurnRates(buckets) {
+    return {
+      h5:    { ...buckets.h5,    ratio: buckets.h5.limit    ? buckets.h5.value    / buckets.h5.limit    : 0, hours: 5   },
+      d7:    { ...buckets.d7,    ratio: buckets.d7.limit    ? buckets.d7.value    / buckets.d7.limit    : 0, hours: 168 },
+      son7d: { ...buckets.son7d, ratio: buckets.son7d.limit ? buckets.son7d.value / buckets.son7d.limit : 0, hours: 168 },
+    };
+  }
+
+  // Per-agent tokens-per-minute and total minutes (sessions where they appear)
+  function computeEfficiency(sessions) {
+    const out = {};
+    for (const s of sessions) {
+      const n = (s.agents || []).length || 1;
+      for (const a of (s.agents || [])) {
+        if (!out[a]) out[a] = { tokens: 0, minutes: 0, sessions: 0, modelMix: {} };
+        out[a].tokens  += s.total_tokens / n;
+        out[a].minutes += s.duration_minutes;
+        out[a].sessions += 1;
+        for (const [m, t] of Object.entries(s.model_split || {})) {
+          out[a].modelMix[m] = (out[a].modelMix[m] || 0) + (t / n);
+        }
+      }
+    }
+    const rows = Object.entries(out).map(([name, v]) => {
+      const tpm = v.minutes > 0 ? v.tokens / v.minutes : 0;
+      // Phase 3: primary model from aggregator's by_agent (window.DATA)
+      const auth = window.DATA.by_agent[name];
+      const primary = auth ? auth.primary_model : null;
+      return { name, tokens: Math.round(v.tokens), minutes: Math.round(v.minutes), sessions: v.sessions, tpm, primary };
+    }).filter(r => r.minutes > 0);
+    // Outlier flag: > median + 2× MAD
+    const tpms = rows.map(r => r.tpm).sort((a,b) => a-b);
+    const median = tpms[Math.floor(tpms.length / 2)] || 0;
+    const mad = tpms.map(v => Math.abs(v - median)).sort((a,b) => a-b)[Math.floor(tpms.length/2)] || 0;
+    const threshold = median + 2 * mad;
+    for (const r of rows) r.outlier = r.tpm > threshold && r.tpm > median * 1.5;
+    rows.sort((a,b) => b.tpm - a.tpm);
+    return { rows, median, threshold };
+  }
+
+  // Top sessions + outlier detection
+  function computeTopSessions(sessions) {
+    const sorted = sessions.slice().sort((a,b) => b.total_tokens - a.total_tokens);
+    // Outlier: > median + 1.5 × IQR (using session totals)
+    const vals = sessions.map(s => s.total_tokens).sort((a,b) => a-b);
+    const q = (p) => vals[Math.floor((vals.length - 1) * p)] || 0;
+    const q1 = q(0.25), q3 = q(0.75), iqr = q3 - q1;
+    const upper = q3 + 1.5 * iqr;
+    for (const s of sorted) s._isOutlier = s.total_tokens > upper;
+    return { top: sorted.slice(0, 5), outlierCount: sorted.filter(s => s._isOutlier).length, upper };
+  }
+
+  // Movers — 7d vs prior 7d, both agents and projects
+  function computeMovers() {
+    const now = new Date();
+    const c7  = new Date(now.getTime() - 7  * 86400000);
+    const c14 = new Date(now.getTime() - 14 * 86400000);
+    // Phase 3: read window.DATA (aggregator payload)
+    const recent = window.DATA.sessions.filter(s => new Date(s.start_time) >= c7);
+    const prior  = window.DATA.sessions.filter(s => { const t = new Date(s.start_time); return t >= c14 && t < c7; });
+    const r = CP.reAggregate(recent, window.DATA.by_agent);
+    const p = CP.reAggregate(prior,  window.DATA.by_agent);
+
+    function dlt(cur, pre) {
+      if (pre === 0) return cur > 0 ? 999 : 0;
+      return Math.round((cur - pre) / pre * 100);
+    }
+
+    const agents = Object.keys(r.byAgent).filter(a => a !== 'general').map(a => {
+      const cur = r.byAgent[a].total_tokens;
+      const pre = (p.byAgent[a] && p.byAgent[a].total_tokens) || 0;
+      return { name: a, cur, pre, delta: dlt(cur, pre), model: r.byAgent[a].primary_model };
+    }).sort((a,b) => Math.abs(b.delta) - Math.abs(a.delta));
+
+    const projects = Object.keys(r.byProject).map(name => {
+      const cur = r.byProject[name].total_tokens;
+      const pre = (p.byProject[name] && p.byProject[name].total_tokens) || 0;
+      return { name, cur, pre, delta: dlt(cur, pre) };
+    }).sort((a,b) => Math.abs(b.delta) - Math.abs(a.delta));
+
+    const biggestUp = agents.filter(a => a.delta < 999 && a.delta > 0)
+      .concat(projects.filter(p => p.delta < 999 && p.delta > 0))
+      .sort((a,b) => b.delta - a.delta)[0];
+
+    return { agents, projects, biggestUp };
+  }
+
+  // Skill quadrant data
+  function computeQuadrant() {
+    // Phase 3: read window.DATA (aggregator payload)
+    const adopt = window.DATA.by_skill_adoption;
+    const points = Object.entries(adopt).map(([name, info]) => ({
+      name,
+      passed: info.times_passed,
+      invoked: info.times_invoked,
+      rate: info.adoption_rate,
+    }));
+    const passes  = points.map(p => p.passed).sort((a,b) => a-b);
+    const invokes = points.map(p => p.invoked).sort((a,b) => a-b);
+    const passedMed  = passes[Math.floor(passes.length/2)] || 0;
+    const invokedMed = invokes[Math.floor(invokes.length/2)] || 0;
+    // Classify quadrant: passed (x) vs invoked (y)
+    for (const p of points) {
+      const hp = p.passed  >= passedMed;
+      const hi = p.invoked >= invokedMed;
+      if (hp && hi) p.quad = 'workhorse';
+      else if (!hp && hi) p.quad = 'explicit';
+      else if (hp && !hi) p.quad = 'dead';
+      else p.quad = 'idle';
+    }
+    const counts = { workhorse: 0, explicit: 0, dead: 0, idle: 0 };
+    for (const p of points) counts[p.quad]++;
+    return { points, passedMed, invokedMed, counts };
+  }
+
+  // ── Renderers (carry-overs from B) ─────────────────────────────────────
+
+  function budgetCard(b, accent, sparkSeries) {
+    if (!b.limit) {
+      // No limit configured for this bucket — show raw value only, neutral fill.
+      return `
+        <div class="bcard" style="--accent:${accent}">
+          <div class="top">
+            <div class="name">${b.label}</div>
+            <div class="pill" style="font-size:10px">no limit</div>
+          </div>
+          <div class="num">${CP.fmtTokens(b.value)}</div>
+          <div class="lim">configure <b>--limits</b> to enable forecasting</div>
+          <div class="bar"><div class="fill" style="width:0%;background:#30363d"></div></div>
+          <div class="spark">${CP.sparkline(sparkSeries, { width: 220, height: 28, stroke: accent, fill: accent })}</div>
+          <div class="forecast"><span class="icon" style="background:#30363d"></span> <span class="dim">tracking only — limit not set</span></div>
+        </div>`;
+    }
+    const pct = Math.min(100, (b.value/b.limit)*100);
+    const fillCol = pct >= 80 ? PALETTE.danger : pct >= 60 ? PALETTE.warn : PALETTE.ok;
+    const remaining = (b.limit || 0) - b.value;
+    const windowH = b.label.includes('5-hour') ? 5 : 168;
+    const f = CP.forecastHit(b.value, b.limit, windowH);
+    let forecastTxt = '';
+    if (f && !f.hitNow) {
+      if (f.onPace) {
+        const days = Math.floor(f.hoursToHit / 24);
+        const hrs = Math.round(f.hoursToHit % 24);
+        forecastTxt = `On pace to hit limit in <b>${days >= 1 ? days+'d '+hrs+'h' : Math.round(f.hoursToHit)+'h'}</b>`;
+      } else {
+        forecastTxt = `<b>${CP.fmtTokens(remaining)}</b> remaining at current pace`;
+      }
+    } else if (f && f.hitNow) forecastTxt = `Limit reached`;
+    const dotColor = pct >= 80 ? PALETTE.danger : pct >= 60 ? PALETTE.warn : PALETTE.ok;
+    return `
+      <div class="bcard" style="--accent:${accent}">
+        <div class="top">
+          <div class="name">${b.label}</div>
+          <div class="pill" style="font-size:10px">${Math.round(pct)}%</div>
+        </div>
+        <div class="num">${CP.fmtTokens(b.value)}</div>
+        <div class="lim">of <b>${CP.fmtTokens(b.limit)}</b> · ${CP.fmtTokens(remaining)} left</div>
+        <div class="bar"><div class="fill" style="width:${pct}%;background:${fillCol}"></div></div>
+        <div class="spark">${CP.sparkline(sparkSeries, { width: 220, height: 28, stroke: accent, fill: accent })}</div>
+        <div class="forecast"><span class="icon" style="background:${dotColor}"></span> ${forecastTxt}</div>
+      </div>`;
+  }
+
+  function projectCard(name, info, totalProj) {
+    const pct = Math.round(info.total_tokens / totalProj * 100);
+    // Phase 3: filter from window.DATA.sessions
+    const projSessions = window.DATA.sessions.filter(s => s.project === name);
+    const filtered = CP.filterSessions(projSessions, '7d');
+    const projAgg = CP.reAggregate(filtered, window.DATA.by_agent);
+    const agents = Object.entries(projAgg.byAgent)
+      .filter(([n]) => n !== 'general')
+      .sort((a,b) => b[1].total_tokens - a[1].total_tokens)
+      .slice(0, 4);
+    const modelSplit = {};
+    projSessions.forEach(s => {
+      for (const [m, t] of Object.entries(s.model_split || {})) {
+        modelSplit[m] = (modelSplit[m] || 0) + t;
+      }
+    });
+    const modelTotal = Object.values(modelSplit).reduce((a,b)=>a+b,0) || 1;
+    const segs = Object.entries(modelSplit).map(([m, t]) =>
+      `<span class="seg" style="width:${(t/modelTotal*100).toFixed(1)}%;background:${CP.modelColor(m)}"></span>`).join('');
+    return `
+      <div class="proj-card">
+        <div class="pname">${name}<span class="pct">${pct}%</span></div>
+        <div class="ptok">${CP.fmtTokens(info.total_tokens)}<span class="small">${info.session_count} sessions</span></div>
+        <div class="pbar">${segs}</div>
+        <div class="ag-list">
+          ${agents.map(([n, i]) => `
+            <div class="ag">
+              <div class="n"><span class="swatch" style="background:${CP.modelColor(i.primary_model)}"></span>${n}</div>
+              <div class="v">${CP.fmtTokens(i.total_tokens)}</div>
+            </div>`).join('')}
+        </div>
+      </div>`;
+  }
+
+  function buildWhere(agg) {
+    const projects = Object.entries(agg.byProject).sort((a,b) => b[1].total_tokens - a[1].total_tokens);
+    const totalProj = projects.reduce((a, [, info]) => a + info.total_tokens, 0);
+    const TOP = 3;
+    const featured = projects.slice(0, TOP);
+    const rest = projects.slice(TOP);
+    const restTokens = rest.reduce((a, [, info]) => a + info.total_tokens, 0);
+    const restSessions = rest.reduce((a, [, info]) => a + info.session_count, 0);
+    const restPct = totalProj > 0 ? Math.round(restTokens / totalProj * 100) : 0;
+    return `
+      <div class="where">
+        <div class="where-head">
+          <div>
+            <h2>Where your tokens went</h2>
+            <div class="sub">Top ${featured.length} projects shown · ${projects.length} total</div>
+          </div>
+          <div class="sub num">${CP.fmtTokens(agg.totalTokens)} total · ${projects.length} projects</div>
+        </div>
+        <div class="proj-rail">${featured.map(([n, info]) => projectCard(n, info, totalProj)).join('')}</div>
+        ${rest.length > 0 ? `
+          <div class="proj-more">
+            <div class="proj-more-head">
+              <span>+ ${rest.length} more projects</span>
+              <span>${CP.fmtTokens(restTokens)} · ${restPct}% · ${restSessions} sessions</span>
+            </div>
+            <div class="proj-more-list">
+              ${rest.map(([n, info]) => {
+                const pct = totalProj > 0 ? Math.round(info.total_tokens / totalProj * 100) : 0;
+                return `<div class="proj-more-row">
+                  <div class="pn">${n}</div>
+                  <div class="pv">${CP.fmtTokens(info.total_tokens)}</div>
+                  <div class="ps">${pct}%</div>
+                </div>`;
+              }).join('')}
+            </div>
+          </div>` : ''}
+      </div>`;
+  }
+
+  // ── Tab renderers ─────────────────────────────────────────────────────
+
+  function tabBurnRate(diag, ctx) {
+    function bucket(b) {
+      if (!b.limit) {
+        return `
+          <div class="burn-bucket">
+            <div class="top">
+              <div class="bname">${b.label}</div>
+              <div class="ratio" style="color:#6e7681">—</div>
+            </div>
+            <div class="detail"><span class="dim">No limit configured. Run with <code>--limits</code> or set your plan limits to enable burn-rate tracking.</span><span>${CP.fmtTokens(b.value)} used</span></div>
+          </div>`;
+      }
+      const ratio = b.ratio;
+      const cls = bucketRatioCls(ratio);
+      const fillColor = cls === 'crit' ? '#f85149' : cls === 'warn' ? '#e3b341' : '#3fb950';
+      const rateNow = b.value / b.hours;
+      const sustainable = b.limit / b.hours;
+      return `
+        <div class="burn-bucket">
+          <div class="top">
+            <div class="bname">${b.label}</div>
+            <div class="ratio ${cls}">${ratio.toFixed(2)}×</div>
+          </div>
+          <div class="track">
+            <div class="actual" style="width:${Math.min(100, ratio*100)}%;background:${fillColor}"></div>
+            <div class="marker" style="left:${100 / Math.max(1.2, ratio + 0.2)}%"></div>
+          </div>
+          <div class="detail">
+            <span>burning <b>${CP.fmtTokens(Math.round(rateNow))}/hr</b> · sustainable <b>${CP.fmtTokens(Math.round(sustainable))}/hr</b></span>
+            <span>${CP.fmtTokens(b.value)} / ${CP.fmtTokens(b.limit)}</span>
+          </div>
+        </div>`;
+    }
+    // Cumulative spend curve over last 7d toward 7d limit (if configured)
+    const days = Object.keys(ctx.allAgg.byDay).sort().slice(-7);
+    // Phase 3: read window.LIMITS
+    const limit7d = window.LIMITS.limit_7d || null;
+    let running = 0;
+    const points = days.map(d => {
+      running += ctx.allAgg.byDay[d].total_tokens;
+      return { day: d, total: running };
+    });
+    const W = 700, H = 140, padL = 40, padR = 20, padT = 12, padB = 24;
+    const innerW = W - padL - padR, innerH = H - padT - padB;
+    const finalTotal = points.length ? points[points.length - 1].total : 0;
+    const maxY = Math.max(limit7d || 0, finalTotal) * 1.05 || 1;
+    const xAt = i => padL + (i / Math.max(1, points.length - 1)) * innerW;
+    const yAt = v => padT + (1 - v / maxY) * innerH;
+    const path = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${xAt(i).toFixed(1)} ${yAt(p.total).toFixed(1)}`).join(' ');
+    const lastX = points.length ? xAt(points.length - 1) : padL;
+    const lastY = points.length ? yAt(finalTotal) : padT + innerH;
+    const limitLine = limit7d ? `
+      <line x1="${padL}" x2="${W - padR}" y1="${yAt(limit7d)}" y2="${yAt(limit7d)}" stroke="#f85149" stroke-dasharray="3 3" stroke-width="1"/>
+      <text x="${W - padR}" y="${yAt(limit7d) - 4}" fill="#f85149" font-size="9" text-anchor="end">7-day limit ${CP.fmtTokens(limit7d)}</text>
+    ` : '';
+
+    return `
+      <h4>Burn rate per budget bucket</h4>
+      ${bucket(ctx.burn.h5)}
+      ${bucket(ctx.burn.d7)}
+      ${bucket(ctx.burn.son7d)}
+
+      <div class="cumulative">
+        <h4>Cumulative 7-day spend · projected against limit</h4>
+        <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+          ${limitLine}
+          <!-- area under curve -->
+          <path d="${path} L ${xAt(points.length - 1)} ${padT + innerH} L ${padL} ${padT + innerH} Z" fill="#58a6ff" fill-opacity="0.12"/>
+          <!-- line -->
+          <path d="${path}" fill="none" stroke="#58a6ff" stroke-width="1.5" stroke-linejoin="round"/>
+          <!-- last dot + label -->
+          <circle cx="${lastX}" cy="${lastY}" r="3" fill="#58a6ff"/>
+          <text x="${lastX - 6}" y="${lastY - 6}" fill="#c9d1d9" font-size="10" text-anchor="end">${CP.fmtTokens(finalTotal)}</text>
+          <!-- x-axis labels -->
+          ${points.map((p, i) => `
+            <text x="${xAt(i)}" y="${H - 6}" fill="#6e7681" font-size="9" text-anchor="middle">${CP.fmtDay(p.day)}</text>
+          `).join('')}
+          <!-- y-axis label -->
+          <text x="6" y="${padT + 8}" fill="#6e7681" font-size="9">${CP.fmtTokens(maxY)}</text>
+          <text x="6" y="${padT + innerH}" fill="#6e7681" font-size="9">0</text>
+        </svg>
+      </div>`;
+  }
+
+  function tabTopSessions(diag, ctx) {
+    const { top, outlierCount, upper } = ctx.topSessions;
+    // Histogram bins
+    const bins = 16;
+    const vals = ctx.sessions.map(s => s.total_tokens);
+    const min = 0, max = Math.max(...vals, 1);
+    const binSize = max / bins;
+    const histo = new Array(bins).fill(0);
+    for (const v of vals) {
+      const i = Math.min(bins - 1, Math.floor(v / binSize));
+      histo[i]++;
+    }
+    const histMax = Math.max(...histo);
+    const W = 360, H = 240, padL = 24, padR = 12, padT = 12, padB = 30;
+    const innerW = W - padL - padR, innerH = H - padT - padB;
+    const upperX = padL + (upper / max) * innerW;
+
+    return `
+      <div class="topsess">
+        <div class="topsess-list">
+          <h4>Top 5 sessions · last 7 days</h4>
+          ${top.map(s => {
+            const dt = new Date(s.start_time);
+            const timeStr = dt.toLocaleString(undefined, { weekday:'short', month:'short', day:'numeric', hour:'numeric', minute:'2-digit' });
+            const agents = (s.agents || []).map(a => `<span class="chip">${a}</span>`).join(' ');
+            return `
+              <div class="row ${s._isOutlier ? 'outlier' : ''}">
+                <div>
+                  <div class="name">${s.project} ${s._isOutlier ? '<span class="outlier-flag">outlier</span>' : ''}</div>
+                  <div class="meta">${timeStr} · ${CP.fmtDuration(s.duration_minutes)}</div>
+                  <div class="agents">${agents}</div>
+                </div>
+                <div class="tokens">${CP.fmtTokens(s.total_tokens)}<span class="sub">${Math.round(s.total_tokens / s.duration_minutes)} tok/min</span></div>
+              </div>`;
+          }).join('')}
+        </div>
+        <div class="histo">
+          <h4>Session size distribution${outlierCount ? ' · <span style="color:#f85149">' + outlierCount + ' outlier' + (outlierCount === 1 ? '' : 's') + '</span>' : ''}</h4>
+          <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+            ${histo.map((c, i) => {
+              const x = padL + (i / bins) * innerW;
+              const w = (innerW / bins) * 0.86;
+              const y = padT + (1 - c / histMax) * innerH;
+              const h = (c / histMax) * innerH;
+              const binStart = i * binSize;
+              const isOutlierBin = binStart >= upper;
+              return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" fill="${isOutlierBin ? '#f85149' : '#58a6ff'}" opacity="${c > 0 ? 0.85 : 0.2}" rx="1"/>`;
+            }).join('')}
+            <!-- outlier threshold -->
+            <line x1="${upperX}" x2="${upperX}" y1="${padT}" y2="${padT + innerH}" stroke="#f85149" stroke-dasharray="3 3" stroke-width="1"/>
+            <text x="${upperX + 4}" y="${padT + 10}" fill="#f85149" font-size="9">outlier ≥ ${CP.fmtTokens(upper)}</text>
+            <!-- axis labels -->
+            <text x="${padL}" y="${H - 8}" fill="#6e7681" font-size="9">0</text>
+            <text x="${W - padR}" y="${H - 8}" fill="#6e7681" font-size="9" text-anchor="end">${CP.fmtTokens(max)}</text>
+            <text x="${(padL + W - padR) / 2}" y="${H - 8}" fill="#6e7681" font-size="9" text-anchor="middle">session size (tokens)</text>
+          </svg>
+        </div>
+      </div>`;
+  }
+
+  function tabMovers(diag, ctx) {
+    function dlt(d) {
+      const cls = d >= 999 ? 'up' : d > 0 ? 'up' : d < 0 ? 'down' : 'flat';
+      const txt = d >= 999 ? 'new' : `${d > 0 ? '+' : ''}${d}%`;
+      return `<div class="delta ${cls}">${txt}</div>`;
+    }
+    const a = ctx.movers.agents.slice(0, 7);
+    const p = ctx.movers.projects.slice(0, 7);
+    return `
+      <div class="mv-grid">
+        <div>
+          <h4>Agents · 7d vs prior 7d</h4>
+          <div class="movers-head">
+            <div>Agent</div><div class="r">7d</div><div class="r">prior 7d</div><div class="r">Δ</div>
+          </div>
+          ${a.map(row => `
+            <div class="movers-row">
+              <div class="nm">
+                <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${CP.modelColor(row.model)};margin-right:6px"></span>
+                ${row.name}
+              </div>
+              <div class="val">${CP.fmtTokens(row.cur)}</div>
+              <div class="pre">${CP.fmtTokens(row.pre)}</div>
+              ${dlt(row.delta)}
+            </div>
+          `).join('')}
+        </div>
+        <div>
+          <h4>Projects · 7d vs prior 7d</h4>
+          <div class="movers-head">
+            <div>Project</div><div class="r">7d</div><div class="r">prior 7d</div><div class="r">Δ</div>
+          </div>
+          ${p.map(row => `
+            <div class="movers-row">
+              <div class="nm proj">${row.name}</div>
+              <div class="val">${CP.fmtTokens(row.cur)}</div>
+              <div class="pre">${CP.fmtTokens(row.pre)}</div>
+              ${dlt(row.delta)}
+            </div>
+          `).join('')}
+        </div>
+      </div>`;
+  }
+
+  function tabQuadrant(diag, ctx) {
+    const q = ctx.quadrant;
+    const W = 520, H = 360, padL = 36, padR = 100, padT = 18, padB = 32;
+    const innerW = W - padL - padR, innerH = H - padT - padB;
+    const maxX = Math.max(...q.points.map(p => p.passed), 5);
+    const maxY = Math.max(...q.points.map(p => p.invoked), 5);
+    const xAt = v => padL + (v / maxX) * innerW;
+    const yAt = v => padT + (1 - v / maxY) * innerH;
+    const midX = xAt(q.passedMed);
+    const midY = yAt(q.invokedMed);
+
+    const colors = {
+      workhorse: '#3fb950',
+      explicit:  '#58a6ff',
+      dead:      '#f85149',
+      idle:      '#6e7681',
+    };
+
+    // Tile fills (subtle)
+    const tiles = [
+      // top-left: explicit
+      `<rect x="${padL}" y="${padT}" width="${midX - padL}" height="${midY - padT}" fill="${colors.explicit}" opacity="0.05"/>`,
+      // top-right: workhorse
+      `<rect x="${midX}" y="${padT}" width="${(padL + innerW) - midX}" height="${midY - padT}" fill="${colors.workhorse}" opacity="0.06"/>`,
+      // bottom-left: idle
+      `<rect x="${padL}" y="${midY}" width="${midX - padL}" height="${(padT + innerH) - midY}" fill="${colors.idle}" opacity="0.04"/>`,
+      // bottom-right: dead
+      `<rect x="${midX}" y="${midY}" width="${(padL + innerW) - midX}" height="${(padT + innerH) - midY}" fill="${colors.dead}" opacity="0.07"/>`,
+    ].join('');
+
+    // Labels in quadrants
+    const labels = `
+      <text x="${midX - 6}" y="${padT + 14}" fill="${colors.explicit}" font-size="10" text-anchor="end" font-weight="500">EXPLICIT</text>
+      <text x="${midX + 6}" y="${padT + 14}" fill="${colors.workhorse}" font-size="10" text-anchor="start" font-weight="500">WORKHORSE</text>
+      <text x="${midX - 6}" y="${padT + innerH - 6}" fill="${colors.idle}" font-size="10" text-anchor="end" font-weight="500">IDLE</text>
+      <text x="${midX + 6}" y="${padT + innerH - 6}" fill="${colors.dead}" font-size="10" text-anchor="start" font-weight="500">DEAD</text>
+    `;
+
+    // Quadrant divider lines
+    const lines = `
+      <line x1="${midX}" x2="${midX}" y1="${padT}" y2="${padT + innerH}" stroke="#21262d" stroke-dasharray="2 3"/>
+      <line x1="${padL}" x2="${padL + innerW}" y1="${midY}" y2="${midY}" stroke="#21262d" stroke-dasharray="2 3"/>
+    `;
+
+    // Axes
+    const axes = `
+      <line x1="${padL}" x2="${padL}"          y1="${padT}" y2="${padT + innerH}" stroke="#30363d"/>
+      <line x1="${padL}" x2="${padL + innerW}" y1="${padT + innerH}" y2="${padT + innerH}" stroke="#30363d"/>
+      <text x="${padL + innerW / 2}" y="${H - 6}" fill="#8b949e" font-size="10" text-anchor="middle">times passed by Claude →</text>
+      <text x="-${padT + innerH / 2}" y="12" fill="#8b949e" font-size="10" text-anchor="middle" transform="rotate(-90)">times invoked →</text>
+    `;
+
+    // Dots — no inline labels (legend lists names per quadrant). Tooltip on hover.
+    const dots = q.points.map(p => {
+      const r = 4 + Math.sqrt(Math.max(1, p.invoked)) * 0.8;
+      return `
+        <circle cx="${xAt(p.passed)}" cy="${yAt(p.invoked)}" r="${r}" fill="${colors[p.quad]}" fill-opacity="0.7" stroke="${colors[p.quad]}" stroke-width="0.5">
+          <title>${p.name} · passed ${p.passed}, invoked ${p.invoked} (${Math.round(p.rate*100)}%)</title>
+        </circle>`;
+    }).join('');
+
+    // Names per quadrant for the side panel
+    function topNames(quad, sortKey, n) {
+      return q.points
+        .filter(p => p.quad === quad)
+        .sort((a, b) => b[sortKey] - a[sortKey])
+        .slice(0, n);
+    }
+    const topWorkhorse = topNames('workhorse', 'invoked', 3);
+    const topDead      = topNames('dead',      'passed',  5); // most-passed dead = highest-priority fix
+    const topExplicit  = topNames('explicit',  'invoked', 3);
+
+    function nameRow(p) {
+      const rate = Math.round(p.rate * 100);
+      return `
+        <li class="name-row">
+          <span class="nm" title="${p.name}">${p.name}</span>
+          <span class="stats">${p.passed} pass · ${p.invoked} inv · ${rate}%</span>
+        </li>`;
+    }
+    function quadBlock(label, quadKey, picks, desc, opts) {
+      opts = opts || {};
+      const count = q.counts[quadKey];
+      const remainder = count - picks.length;
+      const more = remainder > 0 ? `<li class="more">+ ${remainder} more</li>` : '';
+      const items = picks.length
+        ? `<ul class="names">${picks.map(nameRow).join('')}${more}</ul>`
+        : `<div class="empty">none this period</div>`;
+      return `
+        <section class="qblock ${opts.tone || ''}">
+          <header>
+            <span class="sw" style="background:${colors[quadKey]}"></span>
+            <span class="lbl">${label}</span>
+            <span class="count">${count}</span>
+          </header>
+          <div class="desc">${desc}</div>
+          ${items}
+        </section>`;
+    }
+
+    const legend = [
+      quadBlock('Dead skills',  'dead',      topDead,      'Often passed but rarely invoked. Triggers likely need work.', { tone: 'priority' }),
+      quadBlock('Workhorses',   'workhorse', topWorkhorse, 'High pass × high invoke. Skills users rely on.'),
+      quadBlock('Explicit',     'explicit',  topExplicit,  'Invoked without being surfaced. Strong recall.'),
+      `<section class="qblock idle">
+        <header>
+          <span class="sw" style="background:${colors.idle}"></span>
+          <span class="lbl">Idle</span>
+          <span class="count">${q.counts.idle}</span>
+        </header>
+        <div class="desc">Low signal. Candidates for review or removal.</div>
+      </section>`
+    ].join('');
+
+    return `
+      <h4>Skill adoption quadrant</h4>
+      <div class="quad-wrap">
+        <div class="quad">
+          <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
+            ${tiles}
+            ${lines}
+            ${labels}
+            ${axes}
+            ${dots}
+          </svg>
+        </div>
+        <div class="quad-legend">${legend}</div>
+      </div>`;
+  }
+
+  function tabEfficiency(diag, ctx) {
+    const eff = ctx.efficiency;
+    const max = Math.max(1, ...eff.rows.map(r => r.tpm));
+    return `
+      <h4>Tokens / minute by agent <span class="dim" style="font-weight:400;text-transform:none;letter-spacing:0">· flags agents burning &gt; median + 2 MAD</span></h4>
+      <div class="eff-head">
+        <div>Agent</div>
+        <div class="r">Tokens / min</div>
+        <div>Share</div>
+        <div class="r">Sessions</div>
+      </div>
+      ${eff.rows.map(r => {
+        const w = (r.tpm / max) * 100;
+        const gradient = r.outlier
+          ? 'linear-gradient(90deg,#b62324,#f85149)'
+          : `linear-gradient(90deg,${CP.modelColor(r.primary)}80,${CP.modelColor(r.primary)})`;
+        return `
+          <div class="eff-row ${r.outlier ? 'outlier' : ''}">
+            <div class="nm">
+              <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${CP.modelColor(r.primary)};margin-right:6px"></span>
+              ${r.name}${r.outlier ? '<span class="outlier-flag">hot</span>' : ''}
+            </div>
+            <div class="rate">${Math.round(r.tpm).toLocaleString()}<span class="u">tok/min</span></div>
+            <div class="bar"><i style="width:${w}%;background:${gradient}"></i></div>
+            <div class="meta">${r.sessions} · ${CP.fmtDuration(r.minutes)}</div>
+          </div>`;
+      }).join('')}`;
+  }
+
+  // ── Tab framework ─────────────────────────────────────────────────────
+
+  const TAB_DEFS = [
+    { id: 'burn',       icon: '🔥', label: 'Burn rate',  build: tabBurnRate },
+    { id: 'sessions',   icon: '📍', label: 'Top sessions', build: tabTopSessions },
+    { id: 'movers',     icon: '🔄', label: 'Movers',     build: tabMovers },
+    { id: 'quadrant',   icon: '🎯', label: 'Skills',     build: tabQuadrant },
+    { id: 'efficiency', icon: '⚡', label: 'Efficiency', build: tabEfficiency },
+  ];
+
+  function tagFor(id, ctx) {
+    if (id === 'burn') {
+      // Only consider buckets with a configured limit.
+      const ratios = [ctx.burn.h5, ctx.burn.d7, ctx.burn.son7d]
+        .filter(b => b.limit).map(b => b.ratio);
+      if (ratios.length === 0) return { cls: '', text: '' };
+      const worst = Math.max(...ratios);
+      const cls = worst >= 1.5 ? 'crit' : worst >= 1.0 ? 'warn' : 'ok';
+      return { cls, text: worst.toFixed(2) + '×' };
+    }
+    if (id === 'sessions') {
+      const n = ctx.topSessions.outlierCount;
+      return n > 0
+        ? { cls: 'warn', text: n + ' outlier' + (n === 1 ? '' : 's') }
+        : { cls: '', text: '' };
+    }
+    if (id === 'movers') {
+      const biggest = ctx.movers.biggestUp;
+      if (!biggest || biggest.delta < 25) return { cls: '', text: '' };
+      const cls = biggest.delta >= 75 ? 'crit' : 'warn';
+      return { cls, text: '+' + biggest.delta + '%' };
+    }
+    if (id === 'quadrant') {
+      const n = ctx.quadrant.counts.dead;
+      return n > 0 ? { cls: 'warn', text: n + ' dead' } : { cls: '', text: '' };
+    }
+    if (id === 'efficiency') {
+      const hot = ctx.efficiency.rows.filter(r => r.outlier).length;
+      return hot > 0 ? { cls: 'warn', text: hot + ' hot' } : { cls: '', text: '' };
+    }
+    return { cls: '', text: '' };
+  }
+
+  // ── Alert summary line ────────────────────────────────────────────────
+  function alertSummary(ctx) {
+    const parts = [];
+    let severity = 'ok';
+
+    // Phase 3: read window.LIMITS (aggregator-supplied limits)
+    const L = window.LIMITS || {};
+    const hasLimits = !!(L.limit_5h || L.limit_7d || L.limit_sonnet_7d);
+
+    // Worst bucket forecast (only when limits exist)
+    if (hasLimits) {
+      const buckets = [
+        { name: '5-hour rolling', b: ctx.burn.h5,    hrs: 5   },
+        { name: '7-day rolling',  b: ctx.burn.d7,    hrs: 168 },
+        { name: 'Sonnet · 7d',    b: ctx.burn.son7d, hrs: 168 },
+      ].filter(x => x.b.limit);
+      const worst = buckets.map(x => ({
+        ...x,
+        f: CP.forecastHit(x.b.value, x.b.limit, x.hrs)
+      })).filter(x => x.f && x.f.onPace && !x.f.hitNow)
+        .sort((a, b) => a.f.hoursToHit - b.f.hoursToHit)[0];
+      if (worst) {
+        const days = Math.floor(worst.f.hoursToHit / 24);
+        const hrs = Math.round(worst.f.hoursToHit % 24);
+        parts.push(`<span class="seg"><b>${worst.name}</b> hits limit in <b>${days >= 1 ? days+'d '+hrs+'h' : Math.round(worst.f.hoursToHit)+'h'}</b></span>`);
+        severity = worst.f.hoursToHit < 24 ? 'crit' : 'warn';
+      }
+    }
+
+    // Biggest mover
+    const big = ctx.movers.biggestUp;
+    if (big && big.delta >= 25 && big.delta < 999) {
+      parts.push(`<span class="seg"><b>${big.name}</b> ${big.delta > 0 ? '+' : ''}${big.delta}% w/w</span>`);
+      if (big.delta >= 75 && severity === 'ok') severity = 'warn';
+    }
+
+    // Outliers today
+    const n = ctx.topSessions.outlierCount;
+    if (n > 0) {
+      parts.push(`<span class="seg"><b>${n}</b> outlier session${n === 1 ? '' : 's'}</span>`);
+      if (severity === 'ok') severity = 'warn';
+    }
+
+    if (parts.length === 0) {
+      const msg = hasLimits
+        ? 'All buckets healthy · no notable movers · no outlier sessions'
+        : 'No budget limits configured · pass <code>--limits</code> to enable pace tracking';
+      parts.push(`<span class="seg">${msg}</span>`);
+    }
+
+    const icon = severity === 'crit' ? '!' : severity === 'warn' ? '⚠' : '✓';
+    const joined = parts.join('<span class="sep">·</span>');
+    return `
+      <div class="alert-line ${severity}">
+        <span class="ico">${icon}</span>
+        ${joined}
+      </div>`;
+  }
+
+  // ── Main render ───────────────────────────────────────────────────────
+  window.renderLayoutBDiag = function renderLayoutBDiag(root) {
+    if (!document.getElementById('lbd-css')) {
+      const style = document.createElement('style');
+      style.id = 'lbd-css';
+      style.textContent = css;
+      document.head.appendChild(style);
+    }
+    root.classList.add('lbd-style');
+
+    const state = { period: '7d', tab: 'burn', skill: { q: '', sort: 'use' } };
+
+    function compute() {
+      // Phase 3: read window.DATA / window.LIMITS (aggregator payload)
+      const sessions = CP.filterSessions(window.DATA.sessions, state.period);
+      const agg = CP.reAggregate(sessions, window.DATA.by_agent);
+      const buckets = CP.computeBuckets(window.DATA.sessions, window.LIMITS || {});
+      const allAgg = CP.reAggregate(window.DATA.sessions, window.DATA.by_agent);
+      return {
+        sessions, agg, buckets, allAgg,
+        burn: computeBurnRates(buckets),
+        topSessions: computeTopSessions(CP.filterSessions(window.DATA.sessions, '7d')),
+        movers: computeMovers(),
+        efficiency: computeEfficiency(CP.filterSessions(window.DATA.sessions, '7d')),
+        quadrant: computeQuadrant(),
+      };
+    }
+
+    function periodTabs() {
+      return `<div class="period-tabs" id="lbd-periods">
+        ${['5h','24h','7d','30d','all'].map(p => `
+          <button data-period="${p}" class="${p === state.period ? 'active' : ''}">${p === 'all' ? 'All' : p}</button>
+        `).join('')}
+      </div>`;
+    }
+
+    function diagCard(ctx) {
+      const tabs = TAB_DEFS.map(t => {
+        const tag = tagFor(t.id, ctx);
+        const tagHtml = tag.text ? `<span class="tag ${tag.cls}">${tag.text}</span>` : '';
+        return `
+          <button class="diag-tab ${t.id === state.tab ? 'active' : ''}" data-tab="${t.id}">
+            <span class="ico">${t.icon}</span>
+            <span class="lbl">${t.label}</span>
+            ${tagHtml}
+          </button>`;
+      }).join('');
+
+      const active = TAB_DEFS.find(t => t.id === state.tab) || TAB_DEFS[0];
+      const body = active.build(null, ctx);
+
+      return `
+        <div class="diag">
+          <div class="diag-tabs" role="tablist">${tabs}</div>
+          <div class="diag-body">${body}</div>
+        </div>`;
+    }
+
+    function secondary(agg) {
+      // Phase 3: read window.DATA
+      const adoptAll = window.DATA.by_skill_adoption;
+      const allSkills = Object.entries(window.DATA.by_skill).map(([name, info]) => {
+        const a = adoptAll[name];
+        return {
+          name,
+          invocations: info.invocation_count,
+          passed: a ? a.times_passed : 0,
+          rate: a ? a.adoption_rate : null,
+        };
+      });
+      let skills = allSkills.slice();
+      skills.sort((a, b) => b.invocations - a.invocations);
+      const max = allSkills.reduce((m, s) => Math.max(m, s.invocations), 1);
+
+      return `
+        <div class="row">
+          <div class="card">
+            <div class="h"><div class="title">Daily tokens by model</div><div class="meta">last 7 days · stacked</div></div>
+            <div class="chart-container"><canvas id="lbd-daily"></canvas></div>
+          </div>
+          <div class="card skills-card">
+            <div class="h"><div class="title">Skills</div><div class="meta">${allSkills.length} installed</div></div>
+            <div class="skills-head">
+              <div>Skill</div>
+              <div class="h-adopt" title="Adoption: of sessions where this skill's description was passed, what % invoked it">Adopt.</div>
+              <div class="h-bar" title="Bar reflects total invocations">Invocations</div>
+              <div class="h-count"></div>
+            </div>
+            <div class="skills-scroll">
+              ${skills.map(s => {
+                const rate = s.rate != null ? Math.round(s.rate * 100) : null;
+                const rateCls = rate != null && rate < 50 ? 'low' : '';
+                return `
+                  <div class="skill-row">
+                    <div class="sname">${s.name}</div>
+                    <div class="adopt ${rateCls}">${rate != null ? rate + '%' : '—'}</div>
+                    <div class="sbar"><i style="width:${s.invocations/max*100}%"></i></div>
+                    <div class="scount">${s.invocations}</div>
+                  </div>`;
+              }).join('')}
+            </div>
+          </div>
+        </div>`;
+    }
+
+    function buildSessions(sessions) {
+      const list = sessions.slice().sort((a,b) => new Date(b.start_time) - new Date(a.start_time)).slice(0, 12);
+      return `
+        <div class="card">
+          <div class="h"><div class="title">Recent sessions</div><div class="meta">${sessions.length} in window · 12 shown</div></div>
+          <div class="sessions-head">
+            <div>Time</div><div>Project</div><div>Agents</div>
+            <div class="r">Tokens</div><div>Split</div><div class="r">Dur</div>
+          </div>
+          ${list.map(s => {
+            const split = s.model_split || {};
+            const splitTotal = Object.values(split).reduce((a,b) => a+b, 0) || 1;
+            const parts = Object.entries(split).map(([m, t]) =>
+              `<div style="width:${(t/splitTotal*100).toFixed(1)}%;background:${CP.modelColor(m)}"></div>`).join('');
+            const agents = (s.agents || []).map(a => `<span class="chip">${a}</span>`).join(' ');
+            return `
+              <div class="session-row">
+                <div class="time">${CP.fmtRelTime(s.start_time)}</div>
+                <div class="proj">${s.project}</div>
+                <div>${agents}</div>
+                <div class="tok">${CP.fmtTokens(s.total_tokens)}</div>
+                <div><div class="mini-bar">${parts}</div></div>
+                <div class="dur">${CP.fmtDuration(s.duration_minutes)}</div>
+              </div>`;
+          }).join('')}
+        </div>`;
+    }
+
+    function hero(buckets, allAgg) {
+      const seriesTotal  = CP.modelSeries(allAgg.byDay, null, 7);
+      const seriesSonnet = CP.modelSeries(allAgg.byDay, 'sonnet', 7);
+      const series5h     = seriesTotal.slice(-5).map(v => Math.round(v / 4));
+      return `<div class="budgets">
+        ${budgetCard(buckets.h5,    PALETTE.info,   series5h)}
+        ${budgetCard(buckets.d7,    PALETTE.accent, seriesTotal)}
+        ${budgetCard(buckets.son7d, PALETTE.sonnet, seriesSonnet)}
+      </div>`;
+    }
+
+    function render() {
+      const ctx = compute();
+      // Phase 3: read window.DATA.generated_at
+      const generatedAt = new Date(window.DATA.generated_at).toLocaleString();
+      root.innerHTML = `
+        <div class="pagehead">
+          <div>
+            <h1>Where your tokens went <span>· this ${state.period === 'all' ? 'all time' : state.period}</span></h1>
+            <div class="sub">Live read of session JSONL · generated ${generatedAt}</div>
+          </div>
+          <div class="pagehead-right">${periodTabs()}</div>
+        </div>
+        ${alertSummary(ctx)}
+        ${hero(ctx.buckets, ctx.allAgg)}
+        ${buildWhere(ctx.agg)}
+        ${diagCard(ctx)}
+        ${secondary(ctx.agg)}
+        ${buildSessions(ctx.sessions)}
+      `;
+      drawCharts(ctx);
+      wire();
+    }
+
+    function drawCharts({ agg }) {
+      CP.destroyChartsByPrefix('lbd-');
+      const days = Object.keys(agg.byDay).sort().slice(-7);
+      const allModels = new Set();
+      days.forEach(d => Object.keys(agg.byDay[d].by_model).forEach(m => allModels.add(m)));
+      const ordered = ['opus','sonnet','haiku'].filter(m => allModels.has(m));
+      const datasets = ordered.map(m => ({
+        label: m,
+        data: days.map(d => agg.byDay[d].by_model[m] || 0),
+        backgroundColor: CP.modelColor(m),
+        borderRadius: 3,
+        maxBarThickness: 36,
+      }));
+      const daily = new Chart(document.getElementById('lbd-daily'), {
+        type: 'bar',
+        data: { labels: days.map(d => CP.fmtDay(d)), datasets },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          scales: {
+            x: { stacked: true, grid: { display: false } },
+            y: { stacked: true, grid: { color: PALETTE.grid }, ticks: { callback: v => CP.fmtTokens(v) } },
+          },
+          plugins: {
+            legend: { position: 'bottom', labels: { padding: 14, usePointStyle: true, pointStyle: 'circle', boxWidth: 6, boxHeight: 6 } },
+            tooltip: { callbacks: { label: c => `${c.dataset.label}: ${CP.fmtTokens(c.parsed.y)}` } }
+          }
+        }
+      });
+      CP.registerChart('lbd-daily', daily);
+    }
+
+    function wire() {
+      root.querySelectorAll('#lbd-periods button').forEach(b => {
+        b.addEventListener('click', () => { state.period = b.dataset.period; render(); });
+      });
+      root.querySelectorAll('.diag-tab').forEach(b => {
+        b.addEventListener('click', () => { state.tab = b.dataset.tab; render(); });
+      });
+    }
+
+    render();
+  };
+})();

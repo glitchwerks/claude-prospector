@@ -290,6 +290,11 @@
 {# Shared utilities, palette, chart defaults (window.CP) #}
 <script>{{ cp_utils_js | safe }}</script>
 
+{# Phase 3 view renderers (inlined for offline use) #}
+<script>{{ economics_basic_js | safe }}</script>
+<script>{{ layout_b_diag_js | safe }}</script>
+<script>{{ economics_js | safe }}</script>
+
 <div class="stage">
   <div class="shell-head">
     <div class="titles">
@@ -326,157 +331,11 @@
     basic:
       "A weekly snapshot of how much you're using Claude Code.",
     detail:
-      "Where your tokens go — projects, agents, skills and adoption, " +
-      "full session log.",
+      "Where your tokens go — projects, agents, skills and adoption, full session log.",
     advanced:
       "Per-turn cost lever metrics with workflow vs. cost decomposition. " +
       "<b>For users comfortable with token/cache economics.</b>",
   };
-
-  /** Render the placeholder for tabs pending Phase 3. */
-  function _renderPlaceholder(title, root) {
-    root.innerHTML =
-      '<div class="ph3-card">' +
-        '<div class="ph3-badge">Phase 3 — coming</div>' +
-        '<div class="ph3-title">' + title + '</div>' +
-        '<p>Full view renderer ships in Phase 3 (issue #168). ' +
-        'Data is available in <code>window.DATA</code> now.</p>' +
-      '</div>';
-  }
-
-  /** Render the Overview tab using window.DATA. */
-  function _renderOverview(root) {
-    const d = window.DATA;
-    const L = window.LIMITS || {};
-
-    // KPI row
-    const kpiHtml =
-      '<div class="ov-kpi-row">' +
-        _kpi('Total Tokens',
-          CP.fmtTokens(d.total_tokens)) +
-        _kpi('Sessions', String(d.total_sessions)) +
-        _kpi('Messages', String(d.total_messages)) +
-      '</div>';
-
-    // Budget hero — only shown when limits configured
-    let budgetHtml = '';
-    if (L.limit_5h || L.limit_7d || L.limit_sonnet_7d) {
-      const buckets = CP.computeBuckets(d.sessions, L);
-      budgetHtml = '<div class="budgets">' +
-        _bcard('5-hour rolling', buckets.h5, '#79c0ff') +
-        _bcard('7-day rolling',  buckets.d7, '#d2a8ff') +
-        _bcard('Sonnet · 7d',   buckets.son7d, '#2ea043') +
-      '</div>';
-    }
-
-    // Top 5 sessions
-    const topSessions = (d.sessions || [])
-      .slice()
-      .sort(function(a, b) { return b.total_tokens - a.total_tokens; })
-      .slice(0, 5);
-
-    const sessRows = topSessions.map(function(s) {
-      const model = s.model_split
-        ? Object.keys(s.model_split).reduce(
-            function(a, b) {
-              return s.model_split[a] > s.model_split[b] ? a : b;
-            })
-        : '—';
-      return '<div class="session-row">' +
-        '<span class="sess-project">' + _esc(s.project) + '</span>' +
-        '<span class="sess-agent muted">' +
-          _esc(s.root_agent || '—') + '</span>' +
-        '<span class="sess-model dim">' + _esc(model) + '</span>' +
-        '<span class="sess-tokens">' +
-          CP.fmtTokens(s.total_tokens) + '</span>' +
-      '</div>';
-    }).join('');
-
-    const sessHtml =
-      '<div class="card">' +
-        '<div class="card-head">' +
-          '<h2>Top Sessions</h2>' +
-          '<span class="sub">by token spend</span>' +
-        '</div>' +
-        '<div class="session-table">' +
-          (sessRows || '<p class="muted" style="padding:12px 0">No sessions.</p>') +
-        '</div>' +
-      '</div>';
-
-    // Model breakdown
-    const models = Object.entries(d.by_model || {})
-      .sort(function(a, b) {
-        return b[1].total_tokens - a[1].total_tokens;
-      });
-
-    const modelRows = models.map(function(entry) {
-      const name = entry[0];
-      const info = entry[1];
-      const pct = d.total_tokens > 0
-        ? Math.round(info.total_tokens / d.total_tokens * 100)
-        : 0;
-      return '<div style="display:grid;grid-template-columns:' +
-        '1fr 50px 80px;gap:8px;align-items:center;padding:8px 0;' +
-        'border-bottom:1px solid #21262d;font-size:12px;">' +
-        '<span>' +
-          '<span class="badge-model badge-' + _esc(name) + '">' +
-            _esc(name) + '</span>' +
-        '</span>' +
-        '<span class="muted num" style="text-align:right">' +
-          pct + '%</span>' +
-        '<span class="hi num" style="text-align:right;font-weight:600">' +
-          CP.fmtTokens(info.total_tokens) + '</span>' +
-      '</div>';
-    }).join('');
-
-    const modelsHtml =
-      '<div class="card">' +
-        '<div class="card-head"><h2>By Model</h2></div>' +
-        (modelRows || '<p class="muted" style="padding:12px 0">No data.</p>') +
-      '</div>';
-
-    root.innerHTML =
-      kpiHtml +
-      budgetHtml +
-      '<div class="row">' + sessHtml + modelsHtml + '</div>';
-  }
-
-  function _kpi(label, value) {
-    return '<div class="ov-kpi">' +
-      '<div class="label">' + label + '</div>' +
-      '<div class="value">' + value + '</div>' +
-    '</div>';
-  }
-
-  function _bcard(label, bucket, color) {
-    const pct = bucket.limit
-      ? Math.min(100, Math.round(bucket.value / bucket.limit * 100))
-      : 0;
-    return '<div class="bcard" style="--accent:' + color + '">' +
-      '<div class="bname">' + label + '</div>' +
-      '<div class="bval">' + CP.fmtTokens(bucket.value) + '</div>' +
-      (bucket.limit
-        ? '<div style="margin-top:8px;height:4px;background:#0d1117;' +
-          'border-radius:3px;overflow:hidden;">' +
-          '<div style="height:100%;width:' + pct + '%;background:' +
-          color + ';border-radius:3px;"></div>' +
-          '</div>' +
-          '<div style="font-size:11px;color:#8b949e;margin-top:4px;">' +
-          'of ' + CP.fmtTokens(bucket.limit) + ' (' + pct + '%)' +
-          '</div>'
-        : '<div style="font-size:11px;color:#6e7681;margin-top:4px;">' +
-          'no limit set</div>'
-      ) +
-    '</div>';
-  }
-
-  function _esc(s) {
-    return String(s)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
-  }
 
   function _renderView(view) {
     // Reset animation for re-trigger
@@ -488,11 +347,11 @@
     _container.innerHTML = '';
 
     if (view === 'basic') {
-      _renderOverview(_container);
+      renderEconomicsBasic(_container);
     } else if (view === 'detail') {
-      _renderPlaceholder('Breakdown', _container);
+      renderLayoutBDiag(_container);
     } else {
-      _renderPlaceholder('Advanced', _container);
+      renderEconomics(_container);
     }
     _sub.innerHTML = _VIEW_SUBS[view] || '';
   }
