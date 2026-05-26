@@ -198,9 +198,9 @@ class TestRegenSubprocessNoWindow:
         )
 
         result = _run_hook(env)
-        assert result.returncode == 0, (
-            f"Hook exited non-zero. stderr: {result.stderr!r}"
-        )
+        assert (
+            result.returncode == 0
+        ), f"Hook exited non-zero. stderr: {result.stderr!r}"
         assert argv_file.exists(), (
             f"Spy argv file was not written — hook may not have reached "
             f"the regen step. hook returncode={result.returncode}, "
@@ -249,9 +249,9 @@ class TestRegenSubprocessNoWindow:
 
         _run_hook(env)
 
-        assert argv_file.exists(), (
-            "Spy argv file not written — hook did not reach the regen step."
-        )
+        assert (
+            argv_file.exists()
+        ), "Spy argv file not written — hook did not reach the regen step."
 
         all_calls = [
             json.loads(line)
@@ -264,9 +264,9 @@ class TestRegenSubprocessNoWindow:
             f"got {len(regen_calls)} from {all_calls!r}"
         )
         regen_argv = regen_calls[0]
-        assert "--output" in regen_argv, (
-            f"Regen command must still contain '--output'; got: {regen_argv!r}"
-        )
-        assert "--no-open" in regen_argv, (
-            f"Regen command must still contain '--no-open'; got: {regen_argv!r}"
-        )
+        assert (
+            "--output" in regen_argv
+        ), f"Regen command must still contain '--output'; got: {regen_argv!r}"
+        assert (
+            "--no-open" in regen_argv
+        ), f"Regen command must still contain '--no-open'; got: {regen_argv!r}"
