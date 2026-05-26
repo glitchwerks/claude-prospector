@@ -233,7 +233,13 @@
       padding-top: 14px;
     }
     .lbd-style .cumulative h4 { margin-bottom: 8px; }
-    .lbd-style .cumulative svg { width: 100%; height: 240px; display: block; }
+    .lbd-style .cumulative svg {
+      width: 100%;
+      height: auto;
+      aspect-ratio: 700 / 240;
+      max-height: 280px;
+      display: block;
+    }
 
     /* Top sessions */
     .lbd-style .topsess {
@@ -267,7 +273,13 @@
       margin-left: 6px;
     }
 
-    .lbd-style .histo svg { width: 100%; height: 240px; display: block; }
+    .lbd-style .histo svg {
+      width: 100%;
+      height: auto;
+      aspect-ratio: 700 / 240;
+      max-height: 280px;
+      display: block;
+    }
 
     /* Movers */
     .lbd-style .movers-row {
@@ -311,7 +323,17 @@
       gap: 20px;
     }
     @media (max-width: 1000px) { .lbd-style .quad-wrap { grid-template-columns: 1fr; } }
-    .lbd-style .quad svg { width: 100%; height: 360px; display: block; }
+    .lbd-style .quad {
+      width: 100%;
+      max-width: 560px;
+      justify-self: center;
+    }
+    .lbd-style .quad svg {
+      width: 100%;
+      height: auto;
+      aspect-ratio: 520 / 360;
+      display: block;
+    }
 
     .lbd-style .quad-legend { display: flex; flex-direction: column; gap: 10px; }
     .lbd-style .qblock {
@@ -798,7 +820,7 @@
 
       <div class="cumulative">
         <h4>Cumulative 7-day spend · projected against limit</h4>
-        <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+        <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
           ${limitLine}
           <!-- area under curve -->
           <path d="${path} L ${xAt(points.length - 1)} ${padT + innerH} L ${padL} ${padT + innerH} Z" fill="#58a6ff" fill-opacity="0.12"/>
@@ -831,7 +853,7 @@
       histo[i]++;
     }
     const histMax = Math.max(...histo);
-    const W = 360, H = 240, padL = 24, padR = 12, padT = 12, padB = 30;
+    const W = 700, H = 240, padL = 36, padR = 32, padT = 16, padB = 34;
     const innerW = W - padL - padR, innerH = H - padT - padB;
     const upperX = padL + (upper / max) * innerW;
 
@@ -856,7 +878,7 @@
         </div>
         <div class="histo">
           <h4>Session size distribution${outlierCount ? ' · <span style="color:#f85149">' + outlierCount + ' outlier' + (outlierCount === 1 ? '' : 's') + '</span>' : ''}</h4>
-          <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+          <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
             ${histo.map((c, i) => {
               const x = padL + (i / bins) * innerW;
               const w = (innerW / bins) * 0.86;

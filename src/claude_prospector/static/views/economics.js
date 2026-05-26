@@ -264,10 +264,14 @@
       display: inline-flex; align-items: center; gap: 4px;
       background: rgba(63,185,80,0.15); color: #3fb950;
       padding: 1px 6px; border-radius: 8px; font-size: 9px; text-transform: none; letter-spacing: 0;
+      border: 0;
+      cursor: default;
     }
+    .lec-style .score-col h4 .pill:hover { border-color: transparent; color: #3fb950; }
     .lec-style .score-col.regression h4 .pill {
       background: rgba(248,81,73,0.15); color: #f85149;
     }
+    .lec-style .score-col.regression h4 .pill:hover { color: #f85149; }
     .lec-style .score-row {
       display: grid;
       grid-template-columns: 1fr 80px 80px 80px;

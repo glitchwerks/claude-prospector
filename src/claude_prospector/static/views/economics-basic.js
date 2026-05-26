@@ -291,8 +291,15 @@
     const priorTotal  = sumT(prior);
     const pctChange = priorTotal > 0 ? (recentTotal - priorTotal) / priorTotal * 100 : 0;
 
-    // Distinct days with activity in recent 7d
-    const recentDays = new Set(recent.map(s => s.start_time.slice(0, 10))).size;
+    // Active days: of the last 7 calendar days (anchored on NOW),
+    // how many had any session activity.
+    const recentDateKeys = new Set();
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(NOW.getTime() - i * 86_400_000);
+      recentDateKeys.add(d.toISOString().slice(0, 10));
+    }
+    const sessionDateKeys = new Set(sessions.map(s => s.start_time.slice(0, 10)));
+    const recentDays = [...recentDateKeys].filter(k => sessionDateKeys.has(k)).length;
 
     // Daily totals for the last 14 days
     const daily = [];
