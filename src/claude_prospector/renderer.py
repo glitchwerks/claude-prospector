@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.resources
 import json
 import webbrowser
 from datetime import datetime, timezone
@@ -11,6 +12,40 @@ from tempfile import NamedTemporaryFile
 from jinja2 import Environment, PackageLoader
 
 from claude_prospector.aggregator import AggregateResult
+
+
+def _read_static(relative_path: str) -> str:
+    """Read a static asset from the package using importlib.resources.
+
+    Uses ``importlib.resources.files()`` so the file resolves correctly
+    in both editable source-tree installs and built wheel installs.
+
+    Args:
+        relative_path: Path relative to the ``static/`` directory inside
+            the ``claude_prospector`` package, using forward slashes
+            (e.g. ``"vendor/chart.umd.min.js"``).
+
+    Returns:
+        The file contents as a UTF-8 string.
+
+    Raises:
+        FileNotFoundError: If the static asset is not present in the
+            installed package.
+    """
+    pkg = importlib.resources.files("claude_prospector")
+    # Navigate through path components so the traversal works on both
+    # editable installs (real filesystem) and wheel installs (zipimport).
+    resource = pkg / "static"
+    for part in relative_path.split("/"):
+        resource = resource / part  # type: ignore[operator]
+
+    if not resource.is_file():
+        raise FileNotFoundError(
+            f"Static asset not found in package: static/{relative_path}. "
+            "Check that [tool.setuptools.package-data] includes "
+            "'static/**/*' in pyproject.toml."
+        )
+    return resource.read_text(encoding="utf-8")
 
 
 def render(
@@ -27,6 +62,10 @@ def render(
     work identically for both editable source-tree installs and built
     wheel installs, fixing the ``TemplateNotFound`` crash reported in
     issue #138.
+
+    Static assets (Chart.js, chartjs-chart-treemap, cp-utils) are read
+    via ``importlib.resources`` and inlined into the HTML so the output
+    is a fully self-contained, offline-capable file.
 
     Args:
         result: Aggregated usage data.
@@ -62,6 +101,9 @@ def render(
         data_json=json.dumps(data, indent=2, default=str),
         generated_at=datetime.now(timezone.utc).isoformat(),
         limits_json=json.dumps(limits) if limits else "null",
+        chart_js=_read_static("vendor/chart.umd.min.js"),
+        treemap_js=_read_static("vendor/chartjs-chart-treemap.min.js"),
+        cp_utils_js=_read_static("cp-utils.js"),
     )
 
     if output_path is None:
