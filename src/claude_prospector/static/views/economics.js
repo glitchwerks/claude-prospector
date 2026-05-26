@@ -1038,6 +1038,15 @@
 
     // Daily array, last 14 days, sorted
     const dailyDays = [];
+    // by_day rows from the aggregator carry per-message totals + message_count
+    // but not session_count, so compute the per-day session count here from
+    // the session list. Without this, msgs/session sparkline divides by 0 for
+    // every day and renders as a flat line at the chart floor.
+    const dailySessionCount = {};
+    for (const s of window.DATA.sessions) {
+      const key = s.start_time.slice(0, 10);
+      dailySessionCount[key] = (dailySessionCount[key] || 0) + 1;
+    }
     for (let i = 13; i >= 0; i--) {
       const d = new Date(now.getTime() - i * 86_400_000);
       const key = d.toISOString().slice(0, 10);
@@ -1046,7 +1055,10 @@
         cache_creation_tokens: 0, cache_read_tokens: 0,
         input_tokens: 0, output_tokens: 0,
       };
-      dailyDays.push(Object.assign({ _day: key }, row));
+      dailyDays.push(Object.assign(
+        { _day: key, session_count: dailySessionCount[key] || 0 },
+        row,
+      ));
     }
 
     // Phase 3: compute per-agent recent/prior token breakdowns from sessions
