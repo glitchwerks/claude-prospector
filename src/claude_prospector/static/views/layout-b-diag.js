@@ -960,6 +960,25 @@
     const midX = Math.min(Math.max(xAt(q.passedMed),  padL + minQuadW), padL + innerW - minQuadW);
     const midY = Math.min(Math.max(yAt(q.invokedMed), padT + minQuadH), padT + innerH - minQuadH);
 
+    // Re-classify points against the *clamped* midpoints so the dot colours
+    // and quadrant counts agree with the visual divider lines. Using the raw
+    // medians (as computeQuadrant does) drifts away from the rendered grid
+    // whenever the clamp is active — e.g. when the median sits near a corner
+    // and the divider snaps inward, a point above the raw median can plot
+    // visually inside the IDLE/DEAD tile.
+    const xThresh = (midX - padL) / innerW * maxX;
+    const yThresh = (1 - (midY - padT) / innerH) * maxY;
+    q.counts = { workhorse: 0, explicit: 0, dead: 0, idle: 0 };
+    for (const p of q.points) {
+      const hp = p.passed  >= xThresh;
+      const hi = p.invoked >= yThresh;
+      if      ( hp &&  hi) p.quad = 'workhorse';
+      else if (!hp &&  hi) p.quad = 'explicit';
+      else if ( hp && !hi) p.quad = 'dead';
+      else                 p.quad = 'idle';
+      q.counts[p.quad]++;
+    }
+
     const colors = {
       workhorse: '#3fb950',
       explicit:  '#58a6ff',
