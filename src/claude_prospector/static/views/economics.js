@@ -12,13 +12,9 @@
 
   // ── Helpers ─────────────────────────────────────────────────────────────
   function safeDiv(a, b) { return b > 0 ? a / b : 0; }
-  function fmtSig(n) {
-    if (n == null) return '—';
-    if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
-    if (n >= 10_000)    return Math.round(n / 1000) + 'K';
-    if (n >= 1000)      return (n / 1000).toFixed(1) + 'K';
-    return Math.round(n).toLocaleString();
-  }
+  // Use the shared CP.fmtTokens formatter throughout (suffixed: 1.2M, 450K)
+  // so every numeric cell in the Goodhart pane uses the same notation.
+  var fmtSig = CP.fmtTokens;
   // Δ chip — supports semantics where lower-is-better (cost metrics) flips
   // colors.
   function deltaChip(cur, prev, opts = {}) {
