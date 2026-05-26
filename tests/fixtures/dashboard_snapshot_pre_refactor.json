@@ -35,10 +35,15 @@
   },
   "by_day": {
     "2026-03-01": {
-      "total_tokens": 15,
       "by_model": {
         "sonnet": 15
-      }
+      },
+      "total_tokens": 15,
+      "input_tokens": 10,
+      "output_tokens": 5,
+      "cache_read_tokens": 0,
+      "cache_creation_tokens": 0,
+      "message_count": 1
     }
   },
   "sessions": [
@@ -51,6 +56,10 @@
         "main"
       ],
       "total_tokens": 15,
+      "input_tokens": 10,
+      "output_tokens": 5,
+      "cache_creation_tokens": 0,
+      "cache_read_tokens": 0,
       "model_split": {
         "sonnet": 15
       },
