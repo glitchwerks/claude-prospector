@@ -952,32 +952,16 @@
     const maxY = Math.max(...q.points.map(p => p.invoked), 5);
     const xAt = v => padL + (v / maxX) * innerW;
     const yAt = v => padT + (1 - v / maxY) * innerH;
-    // Clamp midX/midY so each quadrant always occupies at least 20% of the
-    // chart width/height.  Without this, when all points cluster in one corner
-    // the opposite tiles collapse to zero pixels and their labels disappear.
-    const minQuadW = innerW * 0.20;
-    const minQuadH = innerH * 0.20;
-    const midX = Math.min(Math.max(xAt(q.passedMed),  padL + minQuadW), padL + innerW - minQuadW);
-    const midY = Math.min(Math.max(yAt(q.invokedMed), padT + minQuadH), padT + innerH - minQuadH);
-
-    // Re-classify points against the *clamped* midpoints so the dot colours
-    // and quadrant counts agree with the visual divider lines. Using the raw
-    // medians (as computeQuadrant does) drifts away from the rendered grid
-    // whenever the clamp is active — e.g. when the median sits near a corner
-    // and the divider snaps inward, a point above the raw median can plot
-    // visually inside the IDLE/DEAD tile.
-    const xThresh = (midX - padL) / innerW * maxX;
-    const yThresh = (1 - (midY - padT) / innerH) * maxY;
-    q.counts = { workhorse: 0, explicit: 0, dead: 0, idle: 0 };
-    for (const p of q.points) {
-      const hp = p.passed  >= xThresh;
-      const hi = p.invoked >= yThresh;
-      if      ( hp &&  hi) p.quad = 'workhorse';
-      else if (!hp &&  hi) p.quad = 'explicit';
-      else if ( hp && !hi) p.quad = 'dead';
-      else                 p.quad = 'idle';
-      q.counts[p.quad]++;
-    }
+    // Divider lines sit at the raw medians from computeQuadrant() so that
+    // a point's classification (above/below median on each axis) always
+    // matches the tile it visually falls into. Earlier versions clamped
+    // midX/midY to keep IDLE/DEAD labels readable when data clustered near
+    // a corner — but that clamp introduced a classification/visualisation
+    // mismatch (dots coloured for one quadrant rendered inside another).
+    // We solve the label-readability problem separately by anchoring labels
+    // to chart corners below, independent of where the divider lands.
+    const midX = xAt(q.passedMed);
+    const midY = yAt(q.invokedMed);
 
     const colors = {
       workhorse: '#3fb950',
@@ -1009,10 +993,10 @@
         ${empty ? `<text x="${x}" y="${y + 13}" fill="${col}" font-size="9" text-anchor="${anchor}" opacity="0.65">(no items)</text>` : ''}`;
     }
     const labels = `
-      ${quadLabel('EXPLICIT',  'explicit',  midX - 6, padT + 14,          'end'  )}
-      ${quadLabel('WORKHORSE', 'workhorse', midX + 6, padT + 14,          'start')}
-      ${quadLabel('IDLE',      'idle',      midX - 6, padT + innerH - 6,  'end'  )}
-      ${quadLabel('DEAD',      'dead',      midX + 6, padT + innerH - 6,  'start')}
+      ${quadLabel('EXPLICIT',  'explicit',  padL + 8,          padT + 14,         'start')}
+      ${quadLabel('WORKHORSE', 'workhorse', padL + innerW - 8, padT + 14,         'end'  )}
+      ${quadLabel('IDLE',      'idle',      padL + 8,          padT + innerH - 6, 'start')}
+      ${quadLabel('DEAD',      'dead',      padL + innerW - 8, padT + innerH - 6, 'end'  )}
     `;
 
     // Quadrant divider lines
