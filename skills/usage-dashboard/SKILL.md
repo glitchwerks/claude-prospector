@@ -26,7 +26,7 @@ For interpretation (budget status, top consumers, recommendations), point the us
 
 ## Default behavior
 
-If the user passes no arguments, run the **7-day rolling** window (matches the most useful billing bucket) and write the dashboard to the platform-appropriate path:
+If the user passes no arguments, regenerate against the **full aggregated session history** and write the dashboard to the platform-appropriate path:
 
 - POSIX: `$HOME/.claude/claude-prospector/dashboard.html`
 - Windows: `%USERPROFILE%\.claude\claude-prospector\dashboard.html`
@@ -35,10 +35,10 @@ Pass `--no-open` so the file lands at the known path without spawning a browser 
 
 ```bash
 # POSIX
-python -m claude_prospector dashboard --window 7d --output "$HOME/.claude/claude-prospector/dashboard.html" --no-open
+python -m claude_prospector dashboard --output "$HOME/.claude/claude-prospector/dashboard.html" --no-open
 
 # Windows
-python -m claude_prospector dashboard --window 7d --output "%USERPROFILE%\.claude\claude-prospector\dashboard.html" --no-open
+python -m claude_prospector dashboard --output "%USERPROFILE%\.claude\claude-prospector\dashboard.html" --no-open
 ```
 
 The CLI prints `Dashboard written to <path>` to stdout on success. Echo that line back to the user so they have the absolute path to open or read.
@@ -49,8 +49,8 @@ The user may pass any of these. Forward them through to the underlying CLI; do n
 
 | Argument | Behavior |
 | --- | --- |
-| `--window 5h` | 5-hour rolling window — useful for "how am I doing right now in this session". |
-| `--window 7d` | 7-day rolling window (default). |
+| `--window 5h` | 5-hour rolling window — scopes the dashboard to the last 5 hours. |
+| `--window 7d` | 7-day rolling window — scopes the dashboard to the last 7 days. |
 | `--window 30d` | 30-day rolling window — useful for monthly trend context. Larger windows are slower; flag that if `--window` exceeds 30d. |
 | `--from YYYY-MM-DD --to YYYY-MM-DD` | Explicit date range. Mutually exclusive with `--window`. If both are supplied, surface the conflict and ask which one to use. |
 | Any other CLI flag (`--limit-5h`, `--limit-7d`, `--limit-sonnet-7d`, `--format json`, `--data-dir`, etc.) | Forward verbatim. See `python -m claude_prospector dashboard --help` for the full surface. |
