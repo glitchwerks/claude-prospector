@@ -14,11 +14,8 @@ Covers:
 from __future__ import annotations
 
 import importlib.resources
-import re
 import tomllib
 from pathlib import Path
-
-import pytest
 
 from claude_prospector.aggregator import AggregateResult
 from claude_prospector.renderer import render
@@ -82,13 +79,7 @@ class TestStaticAssetFiles:
 
     def test_cp_utils_js_exists(self) -> None:
         """cp-utils.js must exist under static/."""
-        p = (
-            _REPO_ROOT
-            / "src"
-            / "claude_prospector"
-            / "static"
-            / "cp-utils.js"
-        )
+        p = _REPO_ROOT / "src" / "claude_prospector" / "static" / "cp-utils.js"
         assert p.is_file(), f"Missing: {p}"
 
     def test_chart_js_non_empty(self) -> None:
@@ -101,9 +92,9 @@ class TestStaticAssetFiles:
             / "vendor"
             / "chart.umd.min.js"
         )
-        assert p.stat().st_size >= 100_000, (
-            f"chart.umd.min.js is suspiciously small: {p.stat().st_size} bytes"
-        )
+        assert (
+            p.stat().st_size >= 100_000
+        ), f"chart.umd.min.js is suspiciously small: {p.stat().st_size} bytes"
 
     def test_treemap_js_non_empty(self) -> None:
         """chartjs-chart-treemap.min.js must be non-trivially large (>10 KB)."""
@@ -122,16 +113,10 @@ class TestStaticAssetFiles:
 
     def test_cp_utils_js_non_empty(self) -> None:
         """cp-utils.js must be non-trivially large (>8 KB)."""
-        p = (
-            _REPO_ROOT
-            / "src"
-            / "claude_prospector"
-            / "static"
-            / "cp-utils.js"
-        )
-        assert p.stat().st_size >= 8_000, (
-            f"cp-utils.js is suspiciously small: {p.stat().st_size} bytes"
-        )
+        p = _REPO_ROOT / "src" / "claude_prospector" / "static" / "cp-utils.js"
+        assert (
+            p.stat().st_size >= 8_000
+        ), f"cp-utils.js is suspiciously small: {p.stat().st_size} bytes"
 
 
 # ---------------------------------------------------------------------------
@@ -195,9 +180,7 @@ class TestPackageData:
         )
 
         # Accept any glob pattern that covers static subpaths
-        covers_static = any(
-            "static" in entry for entry in pkg_data
-        )
+        covers_static = any("static" in entry for entry in pkg_data)
         assert covers_static, (
             f"[tool.setuptools.package-data].claude_prospector does not contain "
             f"a 'static' glob. Current entries: {pkg_data}"
@@ -215,44 +198,38 @@ class TestThreeTabSegmentedControl:
     def test_overview_tab_present(self, tmp_path: Path) -> None:
         """Rendered HTML must contain an 'Overview' tab button."""
         html = _render_html(tmp_path)
-        assert "Overview" in html, (
-            "Rendered HTML does not contain an 'Overview' tab."
-        )
+        assert "Overview" in html, "Rendered HTML does not contain an 'Overview' tab."
 
     def test_breakdown_tab_present(self, tmp_path: Path) -> None:
         """Rendered HTML must contain a 'Breakdown' tab button."""
         html = _render_html(tmp_path)
-        assert "Breakdown" in html, (
-            "Rendered HTML does not contain a 'Breakdown' tab."
-        )
+        assert "Breakdown" in html, "Rendered HTML does not contain a 'Breakdown' tab."
 
     def test_advanced_tab_present(self, tmp_path: Path) -> None:
         """Rendered HTML must contain an 'Advanced' tab button."""
         html = _render_html(tmp_path)
-        assert "Advanced" in html, (
-            "Rendered HTML does not contain an 'Advanced' tab."
-        )
+        assert "Advanced" in html, "Rendered HTML does not contain an 'Advanced' tab."
 
     def test_view_toggle_element_present(self, tmp_path: Path) -> None:
         """Rendered HTML must contain the view-toggle container element."""
         html = _render_html(tmp_path)
-        assert "view-toggle" in html, (
-            "Rendered HTML does not contain a 'view-toggle' element."
-        )
+        assert (
+            "view-toggle" in html
+        ), "Rendered HTML does not contain a 'view-toggle' element."
 
     def test_view_container_present(self, tmp_path: Path) -> None:
         """Rendered HTML must contain the view-container div."""
         html = _render_html(tmp_path)
-        assert "view-container" in html, (
-            "Rendered HTML does not contain a 'view-container' element."
-        )
+        assert (
+            "view-container" in html
+        ), "Rendered HTML does not contain a 'view-container' element."
 
     def test_data_view_attributes_present(self, tmp_path: Path) -> None:
         """Rendered HTML must have data-view attributes for tab switching."""
         html = _render_html(tmp_path)
-        assert 'data-view="basic"' in html or "data-view='basic'" in html, (
-            "Rendered HTML does not have data-view='basic' attribute."
-        )
+        assert (
+            'data-view="basic"' in html or "data-view='basic'" in html
+        ), "Rendered HTML does not have data-view='basic' attribute."
 
 
 # ---------------------------------------------------------------------------
@@ -266,23 +243,23 @@ class TestDarkThemeColors:
     def test_dark_background_color(self, tmp_path: Path) -> None:
         """Rendered HTML must contain the #0d1117 dark background colour."""
         html = _render_html(tmp_path)
-        assert "#0d1117" in html, (
-            "Rendered HTML does not contain the dark background colour #0d1117."
-        )
+        assert (
+            "#0d1117" in html
+        ), "Rendered HTML does not contain the dark background colour #0d1117."
 
     def test_foreground_color(self, tmp_path: Path) -> None:
         """Rendered HTML must contain the #c9d1d9 foreground colour."""
         html = _render_html(tmp_path)
-        assert "#c9d1d9" in html, (
-            "Rendered HTML does not contain foreground colour #c9d1d9."
-        )
+        assert (
+            "#c9d1d9" in html
+        ), "Rendered HTML does not contain foreground colour #c9d1d9."
 
     def test_accent_color(self, tmp_path: Path) -> None:
         """Rendered HTML must contain the #d2a8ff accent colour."""
         html = _render_html(tmp_path)
-        assert "#d2a8ff" in html, (
-            "Rendered HTML does not contain accent colour #d2a8ff."
-        )
+        assert (
+            "#d2a8ff" in html
+        ), "Rendered HTML does not contain accent colour #d2a8ff."
 
 
 # ---------------------------------------------------------------------------
