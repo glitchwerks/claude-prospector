@@ -31,9 +31,11 @@
   // ── Formatters ───────────────────────────────────────────────────────────
   function fmtTokens(n) {
     if (n == null) return '—';
-    if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
-    if (n >= 1000)      return (n / 1000).toFixed(n >= 10000 ? 0 : 1) + 'K';
-    return String(Math.round(n));
+    const sign = n < 0 ? '-' : '';
+    const a = Math.abs(n);
+    if (a >= 1_000_000) return sign + (a / 1_000_000).toFixed(1) + 'M';
+    if (a >= 1000)      return sign + (a / 1000).toFixed(a >= 10000 ? 0 : 1) + 'K';
+    return sign + String(Math.round(a));
   }
   function fmtTokensFull(n) {
     if (n == null) return '—';
