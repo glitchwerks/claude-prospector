@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import argparse
 import subprocess
 import sys
+
+import pytest
+
+from claude_prospector.cli.dashboard import build_parser
 
 
 def _run(*args: str) -> subprocess.CompletedProcess[str]:
@@ -45,3 +50,40 @@ def test_old_flag_only_form_exits_nonzero() -> None:
     """
     result = _run("--format", "json")
     assert result.returncode != 0
+
+
+# ---------------------------------------------------------------------------
+# Issue #188 — dashboard subcommand must NOT default --window to 7d
+# ---------------------------------------------------------------------------
+
+
+def test_dashboard_no_window_flag_yields_none() -> None:
+    """Invoking 'dashboard' with no --window flag must parse window as None.
+
+    Previously the dashboard subcommand defaulted to 7d, causing the
+    aggregator to drop prior-period data needed for week-over-week
+    comparison panes (issue #188). The default must be None (no filter).
+    """
+    top = argparse.ArgumentParser()
+    sub = top.add_subparsers()
+    build_parser(sub)
+    args = top.parse_args(["dashboard"])
+    assert args.window is None, (
+        f"Expected args.window to be None when --window is omitted, "
+        f"got {args.window!r}. "
+        f"The dashboard subcommand must not default --window to any value "
+        f"(issue #188)."
+    )
+
+
+def test_dashboard_explicit_window_flag_still_works() -> None:
+    """Passing '--window 7d' must still set args.window (opt-in preserved)."""
+    top = argparse.ArgumentParser()
+    sub = top.add_subparsers()
+    build_parser(sub)
+    args = top.parse_args(["dashboard", "--window", "7d"])
+    # 7d = 168 hours
+    assert args.window == pytest.approx(168.0), (
+        f"Expected args.window == 168.0 when --window 7d is passed, "
+        f"got {args.window!r}."
+    )

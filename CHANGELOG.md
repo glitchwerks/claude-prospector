@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Dashboard `--window` no longer filters out prior-period data needed for week-over-week comparison panes** (#188). The `dashboard` subcommand previously defaulted to `--window 7d`, which made the Economy v1 dashboard's recent-movers / burn-rate-trendline / "Why did total tokens change?" panes effectively unusable because the aggregator pre-dropped everything older than 7 days. Default is now "no window filter; aggregate the full session history". `--window` remains accepted as an explicit opt-in flag for users who want a scoped dashboard.
+
 ## [0.9.0] - 2026-05-26
 
 ### Added

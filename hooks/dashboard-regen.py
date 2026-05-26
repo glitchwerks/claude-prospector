@@ -410,7 +410,7 @@ def _regen_failed_page(stderr_output: str) -> str:
 <p>Captured error output:</p>
 <pre>{escaped}</pre>
 <p>To diagnose, run manually:</p>
-<pre>python -m claude_prospector dashboard --window 7d</pre>
+<pre>python -m claude_prospector dashboard</pre>
 """
     return _html_page(
         "Dashboard regeneration failed — claude-prospector",
@@ -575,14 +575,15 @@ def main() -> int:
             return 0
 
         # Step 4: run the regen.
+        # Note: no --window flag — the dashboard subcommand aggregates the
+        # full session history by default (issue #188).  Users who want a
+        # scoped dashboard can pass --window explicitly via the CLI.
         regen_result = subprocess.run(
             [
                 _venv_python,
                 "-m",
                 "claude_prospector",
                 "dashboard",
-                "--window",
-                "7d",
                 "--output",
                 str(dashboard),
                 "--no-open",
