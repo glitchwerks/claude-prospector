@@ -54,6 +54,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import os
 import subprocess
@@ -78,8 +79,23 @@ import setup_state  # noqa: E402
 # paths.py, so defaults are byte-for-byte compatible).
 
 
-def _base_dir() -> Path:
-    """Return the claude-prospector base directory.
+@dataclasses.dataclass(frozen=True)
+class BaseDirResolution:
+    """Result of the three-tier base-directory resolution.
+
+    A frozen dataclass so callers get a named type and an immutability
+    guarantee.  Only ``path`` is stored; source bookkeeping is omitted
+    because no current caller needs it (YAGNI).
+
+    Attributes:
+        path: The resolved claude-prospector base directory.
+    """
+
+    path: Path
+
+
+def _base_dir() -> BaseDirResolution:
+    """Return the claude-prospector base directory as a BaseDirResolution.
 
     Three-tier resolution (highest priority first):
 
@@ -91,15 +107,15 @@ def _base_dir() -> Path:
     ``claude_prospector.paths.base_dir()`` so it happens exactly once.
 
     Returns:
-        Resolved base directory path.
+        BaseDirResolution wrapping the resolved base directory path.
     """
     env_override = os.environ.get("CLAUDE_PROSPECTOR_BASE_DIR")
     if env_override:
-        return Path(env_override)
+        return BaseDirResolution(path=Path(env_override))
     plugin_data = os.environ.get("CLAUDE_PLUGIN_DATA")
     if plugin_data:
-        return Path(plugin_data)
-    return Path.home() / ".claude" / "claude-prospector"
+        return BaseDirResolution(path=Path(plugin_data))
+    return BaseDirResolution(path=Path.home() / ".claude" / "claude-prospector")
 
 
 def _config_path() -> Path:
@@ -111,7 +127,7 @@ def _config_path() -> Path:
     env = os.environ.get("CLAUDE_PROSPECTOR_CONFIG")
     if env:
         return Path(env)
-    return _base_dir() / "config.json"
+    return _base_dir().path / "config.json"
 
 
 def _dashboard_path() -> Path:
@@ -123,7 +139,7 @@ def _dashboard_path() -> Path:
     env = os.environ.get("CLAUDE_PROSPECTOR_DASHBOARD")
     if env:
         return Path(env)
-    return _base_dir() / "dashboard.html"
+    return _base_dir().path / "dashboard.html"
 
 
 def _hook_log_path() -> Path:
@@ -135,7 +151,7 @@ def _hook_log_path() -> Path:
     env = os.environ.get("CLAUDE_PROSPECTOR_HOOK_LOG")
     if env:
         return Path(env)
-    return _base_dir() / "hook.log"
+    return _base_dir().path / "hook.log"
 
 
 # ---------------------------------------------------------------------------
