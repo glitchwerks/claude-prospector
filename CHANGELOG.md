@@ -7,9 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-05-26
+
+### Added
+
+- **Economy v1 dashboard** (#144) — a three-tab dashboard shell (Overview / Breakdown / Advanced) replaces the single-view layout. (#170, #171)
+  - **Overview** (`economics-basic.js`) — top-line spend with "Where your tokens went" agent attribution.
+  - **Breakdown** (`layout-b-diag.js`) — cumulative spend, per-day histogram, top sessions, recent movers.
+  - **Advanced** (`economics.js`) — Goodhart decomposition, burn-rate projection, full diagnostic surface.
+  - Chart.js + chartjs-chart-treemap are vendored under `src/claude_prospector/static/` and shipped in the wheel via `[tool.setuptools.package-data]`.
+- **Per-token-type breakdowns** in `by_day` and `sessions` aggregator output (#166) — input / output / cache_read / cache_creation tokens are reported separately, enabling the dashboard's per-component cost lines.
+- **Per-agent token attribution** on session records (#174, fixed in #175). The aggregator now emits `agent_tokens: dict[str, int]` per session, which fixes a client-side over-attribution bug where the dashboard apportioned `session.total_tokens / session.agents.length` and reported sub-agent invocations (e.g. `ops` as a Haiku runner) at billions of tokens.
+
 ### Fixed
 
-- **`userConfig.autoregen` missing schema default** (#149). Added `"default": false` to the `autoregen` field in `.claude-plugin/plugin.json` so the plugin manager has an explicit default and does not prompt unexpectedly or treat a missing value as true.
+- **`userConfig.autoregen` missing schema default** (#149, fixed in #150). Added `"default": false` to the `autoregen` field in `.claude-plugin/plugin.json` so the plugin manager has an explicit default and does not prompt unexpectedly or treat a missing value as true.
+- **Goodhart decomposition mixed numeric notation** (#173) — some panes showed raw token counts while siblings used `k`/`M`/`B` suffixes; unified through `CP.fmtTokens`.
+- **Burn-rate chart vertically compressed** (#173) — raised the chart height so the 7-day cumulative projection is legible.
+- **Negative number formatting / active-days computation / pill hover state / SVG sizing** (#176, fixed in #177) — user-provided JS polish bundle applied as a drop-in.
+- **`msgs/session` sparkline rendered flat** (#179, fixed in #180) — the aggregator was not plumbing per-day `session_count`, so the sparkline divided messages by total sessions instead of per-day session counts.
+
+### Changed
+
+- **Removed the skill-adoption quadrant pane** from the Breakdown view (#185, removed in #186). Three iterative fix attempts (#173 clamp → #181 re-classify → #183 revert) produced three different broken layouts. Rather than ship a known-flaky chart, the quadrant is dropped from 0.9.0 and re-add work is tracked in **#184** (four design options enumerated: fixed-percentile thresholds, log axes, two-panel small-multiples, density heatmap).
+- **`_base_dir` resolution refactored** to a dataclass (#159, refactored in #164) — internal-only; no behavior change.
+
+### Notes
+
+- Release runbook (`docs/release-process.md`, #141) and project `CLAUDE.md` (#143) were added in the 0.9.0 cycle but are documentation-only and ship outside the user-facing surface.
+
+[0.9.0]: https://github.com/glitchwerks/claude-prospector/releases/tag/v0.9.0
 
 ## [0.8.2] - 2026-05-20
 
