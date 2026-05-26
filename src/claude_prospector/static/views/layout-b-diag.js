@@ -316,90 +316,6 @@
     }
     @media (max-width: 1000px) { .lbd-style .mv-grid { grid-template-columns: 1fr; } }
 
-    /* Quadrant */
-    .lbd-style .quad-wrap {
-      display: grid;
-      grid-template-columns: 1fr 320px;
-      gap: 20px;
-    }
-    @media (max-width: 1000px) { .lbd-style .quad-wrap { grid-template-columns: 1fr; } }
-    .lbd-style .quad {
-      width: 100%;
-      max-width: 560px;
-      justify-self: center;
-    }
-    .lbd-style .quad svg {
-      width: 100%;
-      height: auto;
-      aspect-ratio: 520 / 360;
-      display: block;
-    }
-
-    .lbd-style .quad-legend { display: flex; flex-direction: column; gap: 10px; }
-    .lbd-style .qblock {
-      background: #0d1117;
-      border: 1px solid #21262d;
-      border-radius: 8px;
-      padding: 10px 12px;
-    }
-    .lbd-style .qblock.priority {
-      border-color: rgba(248,81,73,0.35);
-      background: linear-gradient(180deg, rgba(248,81,73,0.06), rgba(248,81,73,0.02));
-    }
-    .lbd-style .qblock.idle { opacity: 0.7; }
-    .lbd-style .qblock header {
-      display: flex; align-items: center; gap: 8px; margin-bottom: 4px;
-    }
-    .lbd-style .qblock header .sw {
-      width: 9px; height: 9px; border-radius: 2px; display: inline-block;
-    }
-    .lbd-style .qblock header .lbl {
-      color: #f0f6fc; font-weight: 600; font-size: 12px;
-    }
-    .lbd-style .qblock header .count {
-      margin-left: auto;
-      color: #c9d1d9; font-size: 11px;
-      font-variant-numeric: tabular-nums;
-      background: #21262d; padding: 1px 7px; border-radius: 8px;
-    }
-    .lbd-style .qblock.priority header .count {
-      background: rgba(248,81,73,0.18); color: #ffb4af;
-    }
-    .lbd-style .qblock .desc {
-      color: #8b949e; font-size: 10.5px; line-height: 1.4;
-      margin-bottom: 6px;
-    }
-    .lbd-style .qblock .names {
-      list-style: none; margin: 0; padding: 0;
-      display: flex; flex-direction: column; gap: 2px;
-    }
-    .lbd-style .qblock .name-row {
-      display: flex; justify-content: space-between; align-items: baseline;
-      gap: 8px; padding: 3px 0;
-      border-top: 1px dashed #21262d;
-      font-size: 11.5px;
-    }
-    .lbd-style .qblock .name-row:first-child { border-top: 0; }
-    .lbd-style .qblock .name-row .nm {
-      color: #c9d1d9; font-weight: 500;
-      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-      min-width: 0; flex: 1;
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: 11px;
-    }
-    .lbd-style .qblock.priority .name-row .nm { color: #f0f6fc; }
-    .lbd-style .qblock .name-row .stats {
-      color: #6e7681; font-size: 10px;
-      font-variant-numeric: tabular-nums; white-space: nowrap;
-    }
-    .lbd-style .qblock .more {
-      color: #6e7681; font-size: 10.5px; font-style: italic;
-      padding: 4px 0 2px; border-top: 1px dashed #21262d;
-    }
-    .lbd-style .qblock .empty {
-      color: #6e7681; font-size: 10.5px; font-style: italic;
-    }
-
     /* Efficiency */
     .lbd-style .eff-row {
       display: grid;
@@ -603,34 +519,6 @@
       .sort((a,b) => b.delta - a.delta)[0];
 
     return { agents, projects, biggestUp };
-  }
-
-  // Skill quadrant data
-  function computeQuadrant() {
-    // Phase 3: read window.DATA (aggregator payload)
-    const adopt = window.DATA.by_skill_adoption;
-    const points = Object.entries(adopt).map(([name, info]) => ({
-      name,
-      passed: info.times_passed,
-      invoked: info.times_invoked,
-      rate: info.adoption_rate,
-    }));
-    const passes  = points.map(p => p.passed).sort((a,b) => a-b);
-    const invokes = points.map(p => p.invoked).sort((a,b) => a-b);
-    const passedMed  = passes[Math.floor(passes.length/2)] || 0;
-    const invokedMed = invokes[Math.floor(invokes.length/2)] || 0;
-    // Classify quadrant: passed (x) vs invoked (y)
-    for (const p of points) {
-      const hp = p.passed  >= passedMed;
-      const hi = p.invoked >= invokedMed;
-      if (hp && hi) p.quad = 'workhorse';
-      else if (!hp && hi) p.quad = 'explicit';
-      else if (hp && !hi) p.quad = 'dead';
-      else p.quad = 'idle';
-    }
-    const counts = { workhorse: 0, explicit: 0, dead: 0, idle: 0 };
-    for (const p of points) counts[p.quad]++;
-    return { points, passedMed, invokedMed, counts };
   }
 
   // ── Renderers (carry-overs from B) ─────────────────────────────────────
@@ -944,153 +832,6 @@
       </div>`;
   }
 
-  function tabQuadrant(diag, ctx) {
-    const q = ctx.quadrant;
-    const W = 520, H = 360, padL = 36, padR = 100, padT = 18, padB = 32;
-    const innerW = W - padL - padR, innerH = H - padT - padB;
-    const maxX = Math.max(...q.points.map(p => p.passed), 5);
-    const maxY = Math.max(...q.points.map(p => p.invoked), 5);
-    const xAt = v => padL + (v / maxX) * innerW;
-    const yAt = v => padT + (1 - v / maxY) * innerH;
-    // Divider lines sit at the raw medians from computeQuadrant() so that
-    // a point's classification (above/below median on each axis) always
-    // matches the tile it visually falls into. Earlier versions clamped
-    // midX/midY to keep IDLE/DEAD labels readable when data clustered near
-    // a corner — but that clamp introduced a classification/visualisation
-    // mismatch (dots coloured for one quadrant rendered inside another).
-    // We solve the label-readability problem separately by anchoring labels
-    // to chart corners below, independent of where the divider lands.
-    const midX = xAt(q.passedMed);
-    const midY = yAt(q.invokedMed);
-
-    const colors = {
-      workhorse: '#3fb950',
-      explicit:  '#58a6ff',
-      dead:      '#f85149',
-      idle:      '#6e7681',
-    };
-
-    // Tile fills (subtle)
-    const tiles = [
-      // top-left: explicit
-      `<rect x="${padL}" y="${padT}" width="${midX - padL}" height="${midY - padT}" fill="${colors.explicit}" opacity="0.05"/>`,
-      // top-right: workhorse
-      `<rect x="${midX}" y="${padT}" width="${(padL + innerW) - midX}" height="${midY - padT}" fill="${colors.workhorse}" opacity="0.06"/>`,
-      // bottom-left: idle
-      `<rect x="${padL}" y="${midY}" width="${midX - padL}" height="${(padT + innerH) - midY}" fill="${colors.idle}" opacity="0.04"/>`,
-      // bottom-right: dead
-      `<rect x="${midX}" y="${midY}" width="${(padL + innerW) - midX}" height="${(padT + innerH) - midY}" fill="${colors.dead}" opacity="0.07"/>`,
-    ].join('');
-
-    // Labels in quadrants — always shown even when the quadrant has no items.
-    // When a quadrant is empty a "(no items)" sub-label is appended so the
-    // four-quadrant framing remains legible.
-    function quadLabel(label, quadKey, x, y, anchor) {
-      const empty = q.counts[quadKey] === 0;
-      const col = colors[quadKey];
-      return `
-        <text x="${x}" y="${y}" fill="${col}" font-size="10" text-anchor="${anchor}" font-weight="500">${label}</text>
-        ${empty ? `<text x="${x}" y="${y + 13}" fill="${col}" font-size="9" text-anchor="${anchor}" opacity="0.65">(no items)</text>` : ''}`;
-    }
-    const labels = `
-      ${quadLabel('EXPLICIT',  'explicit',  padL + 8,          padT + 14,         'start')}
-      ${quadLabel('WORKHORSE', 'workhorse', padL + innerW - 8, padT + 14,         'end'  )}
-      ${quadLabel('IDLE',      'idle',      padL + 8,          padT + innerH - 6, 'start')}
-      ${quadLabel('DEAD',      'dead',      padL + innerW - 8, padT + innerH - 6, 'end'  )}
-    `;
-
-    // Quadrant divider lines
-    const lines = `
-      <line x1="${midX}" x2="${midX}" y1="${padT}" y2="${padT + innerH}" stroke="#21262d" stroke-dasharray="2 3"/>
-      <line x1="${padL}" x2="${padL + innerW}" y1="${midY}" y2="${midY}" stroke="#21262d" stroke-dasharray="2 3"/>
-    `;
-
-    // Axes
-    const axes = `
-      <line x1="${padL}" x2="${padL}"          y1="${padT}" y2="${padT + innerH}" stroke="#30363d"/>
-      <line x1="${padL}" x2="${padL + innerW}" y1="${padT + innerH}" y2="${padT + innerH}" stroke="#30363d"/>
-      <text x="${padL + innerW / 2}" y="${H - 6}" fill="#8b949e" font-size="10" text-anchor="middle">times passed by Claude →</text>
-      <text x="-${padT + innerH / 2}" y="12" fill="#8b949e" font-size="10" text-anchor="middle" transform="rotate(-90)">times invoked →</text>
-    `;
-
-    // Dots — no inline labels (legend lists names per quadrant). Tooltip on hover.
-    const dots = q.points.map(p => {
-      const r = 4 + Math.sqrt(Math.max(1, p.invoked)) * 0.8;
-      return `
-        <circle cx="${xAt(p.passed)}" cy="${yAt(p.invoked)}" r="${r}" fill="${colors[p.quad]}" fill-opacity="0.7" stroke="${colors[p.quad]}" stroke-width="0.5">
-          <title>${p.name} · passed ${p.passed}, invoked ${p.invoked} (${Math.round(p.rate*100)}%)</title>
-        </circle>`;
-    }).join('');
-
-    // Names per quadrant for the side panel
-    function topNames(quad, sortKey, n) {
-      return q.points
-        .filter(p => p.quad === quad)
-        .sort((a, b) => b[sortKey] - a[sortKey])
-        .slice(0, n);
-    }
-    const topWorkhorse = topNames('workhorse', 'invoked', 3);
-    const topDead      = topNames('dead',      'passed',  5); // most-passed dead = highest-priority fix
-    const topExplicit  = topNames('explicit',  'invoked', 3);
-
-    function nameRow(p) {
-      const rate = Math.round(p.rate * 100);
-      return `
-        <li class="name-row">
-          <span class="nm" title="${p.name}">${p.name}</span>
-          <span class="stats">${p.passed} pass · ${p.invoked} inv · ${rate}%</span>
-        </li>`;
-    }
-    function quadBlock(label, quadKey, picks, desc, opts) {
-      opts = opts || {};
-      const count = q.counts[quadKey];
-      const remainder = count - picks.length;
-      const more = remainder > 0 ? `<li class="more">+ ${remainder} more</li>` : '';
-      const items = picks.length
-        ? `<ul class="names">${picks.map(nameRow).join('')}${more}</ul>`
-        : `<div class="empty">none this period</div>`;
-      return `
-        <section class="qblock ${opts.tone || ''}">
-          <header>
-            <span class="sw" style="background:${colors[quadKey]}"></span>
-            <span class="lbl">${label}</span>
-            <span class="count">${count}</span>
-          </header>
-          <div class="desc">${desc}</div>
-          ${items}
-        </section>`;
-    }
-
-    const legend = [
-      quadBlock('Dead skills',  'dead',      topDead,      'Often passed but rarely invoked. Triggers likely need work.', { tone: 'priority' }),
-      quadBlock('Workhorses',   'workhorse', topWorkhorse, 'High pass × high invoke. Skills users rely on.'),
-      quadBlock('Explicit',     'explicit',  topExplicit,  'Invoked without being surfaced. Strong recall.'),
-      `<section class="qblock idle">
-        <header>
-          <span class="sw" style="background:${colors.idle}"></span>
-          <span class="lbl">Idle</span>
-          <span class="count">${q.counts.idle}</span>
-        </header>
-        <div class="desc">Low signal. Candidates for review or removal.</div>
-      </section>`
-    ].join('');
-
-    return `
-      <h4>Skill adoption quadrant</h4>
-      <div class="quad-wrap">
-        <div class="quad">
-          <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
-            ${tiles}
-            ${lines}
-            ${labels}
-            ${axes}
-            ${dots}
-          </svg>
-        </div>
-        <div class="quad-legend">${legend}</div>
-      </div>`;
-  }
-
   function tabEfficiency(diag, ctx) {
     const eff = ctx.efficiency;
     const max = Math.max(1, ...eff.rows.map(r => r.tpm));
@@ -1126,7 +867,6 @@
     { id: 'burn',       icon: '🔥', label: 'Burn rate',  build: tabBurnRate },
     { id: 'sessions',   icon: '📍', label: 'Top sessions', build: tabTopSessions },
     { id: 'movers',     icon: '🔄', label: 'Movers',     build: tabMovers },
-    { id: 'quadrant',   icon: '🎯', label: 'Skills',     build: tabQuadrant },
     { id: 'efficiency', icon: '⚡', label: 'Efficiency', build: tabEfficiency },
   ];
 
@@ -1151,10 +891,6 @@
       if (!biggest || biggest.delta < 25) return { cls: '', text: '' };
       const cls = biggest.delta >= 75 ? 'crit' : 'warn';
       return { cls, text: '+' + biggest.delta + '%' };
-    }
-    if (id === 'quadrant') {
-      const n = ctx.quadrant.counts.dead;
-      return n > 0 ? { cls: 'warn', text: n + ' dead' } : { cls: '', text: '' };
     }
     if (id === 'efficiency') {
       const hot = ctx.efficiency.rows.filter(r => r.outlier).length;
@@ -1246,7 +982,6 @@
         topSessions: computeTopSessions(CP.filterSessions(window.DATA.sessions, '7d')),
         movers: computeMovers(),
         efficiency: computeEfficiency(CP.filterSessions(window.DATA.sessions, '7d')),
-        quadrant: computeQuadrant(),
       };
     }
 
