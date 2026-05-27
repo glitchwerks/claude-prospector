@@ -2,201 +2,141 @@
 name: usage-analysis
 description: >
   Use when the user asks an interpretive question about their Claude Code
-  token spend — budget status across the 5h / 7d / Sonnet-7d billing buckets,
-  which agents/skills/projects are eating their budget, model-distribution
-  drift, or what to change to reduce spend. Regenerates the
-  `claude-prospector` dashboard as needed and reads the embedded data to
-  answer. Do NOT use for bare "regenerate the dashboard" requests with no
-  question attached (use `usage-dashboard` instead).
+  token spend — what's interesting, what's anomalous, what to change. This
+  skill produces insights and questions; it does NOT enumerate top
+  consumers (the dashboard does that).
+
+  Use `usage-dashboard` for "show me the numbers." Use `claude-audit` for
+  "audit my config overlap." Use this skill for "tell me what's interesting
+  / what should I change."
+
   Trigger phrases: "am I close to my Claude limit", "how much Sonnet am I
   using", "where are my Claude tokens going", "what's eating my Claude
-  budget", "which agent uses the most tokens", "why is my Claude spend so
-  high".
+  budget", "why is my Claude spend so high", "what should I change about
+  my Claude setup".
 ---
-
-## Prerequisites
-
-This skill invokes `python -m claude_prospector` under the hood. The Python package must be installed in the environment Claude Code uses. See the [README install steps](https://github.com/glitchwerks/claude-prospector#install-as-a-claude-code-plugin) for the two-step install.
 
 # Usage Analysis Skill
 
-You are analyzing the user's Claude Code token usage to help them understand and optimize their
-spend across the three billing buckets (5h rolling, 7d rolling, Sonnet-only 7d).
+You are surfacing **insights and improvement suggestions** about the
+user's Claude Code token spend that are not obvious from the dashboard at
+a glance. Your output is observations + questions, not a stats rehash.
 
-## How the Tool Works
+## Companion skills — route the user away when appropriate
 
-`claude-prospector` reads JSONL session files from `~/.claude/projects/` and generates an
-**interactive HTML dashboard**. It does not write structured data to stdout — all output is HTML.
+| User wants | Skill |
+| --- | --- |
+| Show me my numbers / regenerate the dashboard | `usage-dashboard` |
+| Audit my agent/skill config for overlap or conflicts | `claude-audit` |
+| Tell me what's interesting / what should I change | **this skill** |
 
-The tool is installed as the `claude_prospector` package. Invoke it as:
+## Prerequisites
 
-```
-python -m claude_prospector
-```
+This skill invokes `python -m claude_prospector` under the hood. The
+Python package must be installed in the environment Claude Code uses.
+See the [README install steps](https://github.com/glitchwerks/claude-prospector#install-as-a-claude-code-plugin)
+for the two-step install.
 
-The dashboard is automatically regenerated after every session via the Stop hook and written to:
+## Input — structured JSON, not the rendered dashboard
 
-- POSIX: `$HOME/.claude/claude-prospector/dashboard.html`
-- Windows: `%USERPROFILE%\.claude\claude-prospector\dashboard.html`
-
-## Regenerating the Dashboard
-
-Use these commands to regenerate the dashboard with a specific time window. Always pass
-`--output` and `--no-open` so the file lands at the known path without opening a browser tab.
-
-| Question                                 | Command                                                                                                                                                                                                               |
-| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Full history (default)                   | `python -m claude_prospector dashboard --output $HOME/.claude/claude-prospector/dashboard.html --no-open` (POSIX) / `python -m claude_prospector dashboard --output %USERPROFILE%\.claude\claude-prospector\dashboard.html --no-open` (Windows) |
-| Last 7 days                              | `python -m claude_prospector dashboard --window 7d --output $HOME/.claude/claude-prospector/dashboard.html --no-open`                                                                                                              |
-| Last 5 hours (matches 5h billing bucket) | `python -m claude_prospector dashboard --window 5h --output $HOME/.claude/claude-prospector/dashboard.html --no-open`                                                                                                              |
-| Specific date range                      | `python -m claude_prospector dashboard --from 2026-04-01 --to 2026-04-30 --output $HOME/.claude/claude-prospector/dashboard.html --no-open`                                                                                        |
-| With budget gauges                       | `python -m claude_prospector dashboard --window 7d --limit-5h 600000 --limit-7d 4000000 --limit-sonnet-7d 2000000 --output $HOME/.claude/claude-prospector/dashboard.html --no-open`                                               |
-
-On Windows, substitute `%USERPROFILE%\.claude\claude-prospector\dashboard.html` for `$HOME/.claude/claude-prospector/dashboard.html` in all commands above.
-
-All commands exit 0 and print a confirmation line to stdout:
-`Dashboard written to <path>`
-
-> **Tip:** for programmatic analysis, append `--format json` and the tool writes the full
-> structured payload (the same `DATA` object embedded in the HTML) to stdout instead of
-> rendering HTML. The progress lines ("Scanning sessions…", "Found N sessions.") still go to
-> stderr, so redirect with `--format json --no-open > snapshot.json 2>/dev/null` to get clean
-> JSON. Useful for `jq`-style summaries or feeding into Python.
-
-## Reading Data from the Dashboard
-
-After regenerating, use the `Read` tool to load the HTML file. The dashboard embeds all data
-as a JavaScript constant (`const DATA = {`) near the top of the `<script>` block at around
-line 179. Read the file starting at that line to extract the payload:
-
-```powershell
-# Windows PowerShell
-Get-Content "$env:USERPROFILE\.claude\claude-prospector\dashboard.html" |
-  Select-Object -Skip 178 -First 50
-```
+Get the structured payload directly from the CLI. Do **not** screen-scrape
+the dashboard HTML.
 
 ```bash
-# POSIX
-sed -n '179,228p' "$HOME/.claude/claude-prospector/dashboard.html"
+python -m claude_prospector dashboard --format json --no-open
 ```
 
-The `const DATA` object contains all the fields described in the analysis sections below.
+`--format json` writes the same `DATA` object the dashboard embeds, to
+stdout. Progress lines go to stderr. Pipe through `jq` (or read into
+memory) and reason over it.
 
-### Dashboard Sections to Scan
+Add `--window 7d` / `--window 5h` / `--from --to` to scope. Run multiple
+windows if comparing — e.g. 7d vs. all-time to see whether a category is
+growing or shrinking.
 
-When you read the HTML, look for these embedded data keys (all present in the `const DATA`
-object starting at line 179):
+Skill-tracking events (passed vs. invoked) live in per-day JSONL files at:
 
-- `total_tokens` / `total_messages` / `total_sessions` — top-level summary
-- `by_model` — token counts keyed by model name (`opus`, `sonnet`, `haiku`)
-- `by_agent` — token counts keyed by agent name with `primary_model`
-- `by_skill` — invocation counts per skill name
-- `by_project` — tokens per project name
-- `by_day` — daily token breakdown with per-model split
-- `sessions` — individual session records with agents, tokens, and model split
-
-## Skill Adoption Data
-
-Skill invocation events are logged to a separate file that is machine-readable:
-
-- POSIX: `$HOME/.claude/claude-prospector/skill-tracking/<YYYY-MM-DD>.jsonl` (per-day rotation)
+- POSIX: `$HOME/.claude/claude-prospector/skill-tracking/<YYYY-MM-DD>.jsonl`
 - Windows: `%USERPROFILE%\.claude\claude-prospector\skill-tracking\<YYYY-MM-DD>.jsonl`
 
-Each day's events land in a new file; the reader walks the directory in date order. Older files outside the 90-day retention window are skipped.
+Each line is `{"event": "skill_invoked"|"skill_passed", "skill": ..., ...}`.
+Read these directly — they're the input for trigger-drift insights and are
+not reflected at the same fidelity in the dashboard.
 
-Each line is a JSON object:
+## Insight categories — what to look at
 
-```json
-{"event": "skill_invoked", "skill": "superpowers:brainstorming", "timestamp": "...", "session_id": "..."}
-{"event": "skill_passed", "skill": "python", "timestamp": "...", "session_id": "..."}
+These categories are **harness-agnostic**. They reference data shapes the
+parser emits regardless of which agents, skills, or routing topology the
+user has installed. Do not assume any specific agent name (e.g.
+`general-purpose`, `code-writer`), skill name, or dispatch pattern is
+present.
+
+1. **Trigger drift** — skills with `skill_passed` >> `skill_invoked`. The
+   skill is being loaded into context but rarely actually firing — its
+   triggers may be too narrow, or the user's prompts may have drifted
+   away from them.
+
+2. **Model imbalance vs. stated workflow** — one model dominating
+   disproportionately. Surface the ratio; do not assert what "correct"
+   looks like — the user's workflow dictates the right mix.
+
+3. **Agent cost-per-session outliers** — flag any agent whose
+   tokens/session is more than ~2σ above the cohort mean. Name the agent
+   generically; the user knows what their agents are for.
+
+4. **Single-session outliers** — any one session consuming >10% of the
+   windowed total. Worth surfacing because it usually means an
+   orchestration anomaly (runaway loop, accidental long context, etc.).
+
+5. **Trend inflections** — daily or weekly deltas that change sign, or
+   exceed ~30% week-over-week. Note the direction and magnitude.
+
+6. **Cross-skill correlation (optional)** — if `claude-audit` findings
+   are available in the same conversation, correlate them with cost:
+   a high-cost agent that also has an audit-flagged tool-coupling gap is
+   worth a focused mention.
+
+If none of categories 1-6 trips a meaningful threshold, **say so
+plainly** — silence is a valid finding, and inventing concern wastes the
+user's time.
+
+## Suggestion format — how to deliver findings
+
+Lead with the **2-3 most consequential insights**. For each, three lines:
+
+```
+Observation:   <one sentence, with the data citation>
+Implication:   <what this might mean for the user's workflow>
+Question:      <ask the user about THEIR intent — don't assert>
 ```
 
-Use the `Read` tool on this file directly to count invocations, find most-used skills, or
-detect skills that are passed (present in conversation) but never invoked.
+Rules:
 
-## Analysis Framework
+- **No top-consumer enumeration.** Top-N tables belong in the dashboard.
+  If the user wants the numbers, they'll open the dashboard.
+- **No prescriptive advice** ("you should switch X to Haiku") — pose it
+  as "was that the role you intended for X?" The plugin author doesn't
+  know the user's harness or intent; the user does.
+- **Cite the data** — point at a session ID, a daily bucket, a JSON key,
+  or the date range you queried. Numbers without a citation are
+  unverifiable.
+- **Use the structured CLI output, not the HTML** — if you find yourself
+  reaching for `Read` on `dashboard.html`, you've taken a wrong turn.
+  Use `--format json`.
 
-When interpreting the data, focus on these areas:
+## Worked example (illustration only — your output will differ)
 
-### 1. Budget Status
+```
+Observation:  Skill `<X>` was passed in 42 sessions over the last 7 days
+              but invoked in only 3 (skill-tracking/2026-05-20..26).
+Implication:  Either the trigger phrases are too narrow for how you're
+              actually prompting, or the skill is loaded but redundant.
+Question:     Do you remember invoking `<X>` recently? If not, want to
+              tighten its triggers or unload it?
+```
 
-The user has three billing buckets. Regenerate for each window and read the summary line
-from stdout, or check the gauge values in the HTML:
-
-- **5h rolling**: Regenerate with `--window 5h`. High usage means the user is in an
-  intensive session.
-- **7d rolling**: Regenerate with `--window 7d`. This is the primary limit to watch.
-- **Sonnet-only 7d**: From the 7d dashboard, read `by_model.sonnet.total_tokens`. This is
-  often the tightest of the three buckets — if the user is approaching this limit, look
-  at which agents drive Sonnet usage (`by_agent` filtered to `primary_model == "sonnet"`)
-  for the largest levers.
-
-### 2. Model Distribution
-
-Check `by_model` for balance across Opus/Sonnet/Haiku. Different harnesses assign
-agents to models differently — there is no universal "correct" mapping. What to look
-for instead:
-
-- Cross-reference `by_model` with `by_agent.<name>.primary_model` to see whether each
-  agent is running on the model the user *intended* for that role. Drift here is a
-  common cost source (an agent that should be on Haiku but is actually defaulting to
-  Sonnet, for example).
-- If one model dominates disproportionately for the user's stated workflow, that's a
-  signal to investigate — not a fixed prescription. Surface the imbalance and ask
-  which agents the user expected to be on which model.
-
-### 3. Agent Efficiency
-
-Check `by_agent` for outliers:
-
-- Which agent consumes the most tokens? Is that expected given its role?
-- Are Haiku agents (ops, code-reviewer) actually running on Haiku?
-  Check `primary_model` for each.
-- Is the router (general-purpose) consuming too much? It should mostly route, not do
-  heavy work itself.
-
-### 4. Skill Cost
-
-Check `by_skill` for expensive skills and cross-reference with the per-day `skill-tracking/<YYYY-MM-DD>.jsonl` files:
-
-- Brainstorming is expected to be expensive (long back-and-forth)
-- Subagent-driven-development dispatches many subagents — check if reviews add
-  significant overhead
-- Skills with high invocation counts but low tokens are healthy (quick, efficient)
-- Skills appearing in `skill_passed` events but rarely in `skill_invoked` events may
-  not be triggering correctly
-
-### 5. Project Distribution
-
-Check `by_project` if the user works across multiple projects. Some projects may be
-token-heavy due to large codebases or complex work.
-
-### 6. Session Outliers
-
-Check `sessions` for anomalies:
-
-- Any single session consuming >10% of the 7d budget?
-- Sessions with many agents spawned (complex orchestration)?
-- Very long sessions (>2h) that could have been split?
-
-## Recommendations Format
-
-Present findings as:
-
-1. **Budget status** — where they stand on each bucket (use percentages if limits are
-   known)
-2. **Top consumers** — the 2-3 agents/skills/projects eating the most budget
-3. **Actionable recommendations** — specific, concrete changes. Examples:
-   - "code-writer is using 40% of your Sonnet budget. Most of it is large greenfield features — consider whether some of that work could be split into smaller plan-file-driven tasks dispatched in parallel."
-   - "Agent `<X>` is running on Opus but its role is mostly read-only lookups; check whether your harness allows downgrading it to Haiku for those calls."
-   - "Project X consumed 60% of your 7d budget. Consider pausing other work until the
-     rolling window resets."
-4. **Trend** — if daily data shows increasing/decreasing usage, note it
-
-Keep recommendations specific to what the data shows. Do not speculate about things
-not in the data.
-
----
+This is **one** insight at the right shape — not a section title to fill
+with subbullets.
 
 ## Triggers we deliberately do not claim
 
