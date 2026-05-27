@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added `audit` subcommand (`python -m claude_prospector audit`) that
+  deterministically inventories agents/skills, detects name collisions,
+  computes Jaccard semantic overlaps, detects tool-coupling mismatches,
+  and flags cache hygiene issues (closes #191).
+
 ## [0.9.1] - 2026-05-26
 
 ### Fixed

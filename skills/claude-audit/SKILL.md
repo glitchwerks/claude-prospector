@@ -41,107 +41,35 @@ note that the audit is using the user-scope objective only.
 
 ---
 
-## Step 2: Inventory all sources
+## Steps 2–5: Deterministic inventory and analysis
 
-Enumerate every agent and skill that could be loaded:
-
-### User-scope custom
+Run the built-in CLI subcommand and capture its markdown output:
 
 ```bash
-ls ~/.claude/agents/*.md            # custom agents
-ls ~/.claude/skills/*/SKILL.md      # custom skills
+python -m claude_prospector audit --project-dir <project-root>
 ```
 
-### Project-scope custom
+This single command covers all four deterministic steps:
 
-```bash
-ls <project>/.claude/agents/*.md    # if the dir exists
-ls <project>/.claude/skills/*/SKILL.md
-```
+- **Step 2 — Inventory**: walks user-scope (`~/.claude/agents/`,
+  `~/.claude/skills/*/SKILL.md`), project-scope (`.claude/agents/`,
+  `.claude/skills/*/SKILL.md`), the plugin cache (latest version per
+  `(marketplace, plugin)` only), and Windows Claude Desktop
+  `~/AppData/Roaming/Claude/…/skills-plugin/` if present.
+- **Step 3 — Direct name collisions**: groups all items by `(_type, name)`;
+  any group with more than one entry is a collision.
+- **Step 4 — Semantic overlaps**: computes bigram-Jaccard similarity on
+  description text for same-type pairs; flags pairs with Jaccard ≥ 0.5.
+- **Step 5 — Tool-coupling concerns**: scans each skill body for `mcp__*`
+  mentions and `PowerShell`/`Bash` references; cross-references against
+  each agent's `tools:` frontmatter and warns on mismatches.
 
-### Plugin-provided
+The command also reports **cache-hygiene findings**: stray `temp_git_*`
+clone leftovers and plugin names duplicated across multiple marketplace
+directories.
 
-1. Read `~/.claude/plugins/installed_plugins.json` to find the install path of every active
-   plugin.
-2. For each plugin's install path, list:
-   - `<install-path>/agents/*.md`
-   - `<install-path>/skills/*/SKILL.md`
-
-### Other plugin-managed sources
-
-If the user is on Windows running Claude Desktop, also check:
-
-```
-~/AppData/Roaming/Claude/local-agent-mode-sessions/skills-plugin/**/skills/*/SKILL.md
-```
-
-Skills loaded from there appear in the system reminder as `<plugin>:<skill>` and are real
-sources of overlap (e.g. `anthropic-skills:git` lives here).
-
-For each item discovered, parse the YAML frontmatter and capture:
-
-- `name`
-- `description` (collapse whitespace)
-- `tools` (if agent)
-- Source path
-- Source kind (custom-user / custom-project / plugin:`<plugin>`)
-
----
-
-## Step 3: Detect direct name collisions
-
-Group all discovered items by `name`. Any group with more than one entry is a **direct
-collision**.
-
-For each collision, also capture:
-
-- Which sources own each entry
-- Whether the descriptions diverge or are near-identical (cheap signal: are they the same on
-  the first 100 chars after lowercasing and collapsing whitespace?)
-- Whether the `tools` lists differ (for agents)
-
-Direct collisions are the most actionable finding — Claude Code namespaces them, but they
-still pollute the agent picker and confuse routing.
-
----
-
-## Step 4: Detect semantic overlaps
-
-For pairs of items with **different** names, compute a description similarity score. A simple
-bigram-Jaccard works well:
-
-1. Lowercase and tokenize description into bigrams of words
-2. Jaccard similarity = `|A ∩ B| / |A ∪ B|`
-3. Flag any pair with similarity ≥ 0.5
-
-Pairs scoring ≥ 0.5 should be inspected manually — they may be:
-
-- True duplicates with different names (drop one)
-- Overlapping triggers that compete (clarify trigger conditions)
-- Different concerns that happen to share vocabulary (false positive — ignore)
-
-Constrain the comparison to within a category (agent-vs-agent, skill-vs-skill) — not across
-— to keep noise down.
-
----
-
-## Step 5: Detect tool-coupling mismatches
-
-For each agent, parse its `tools:` list. For each skill that names a tool in its body (e.g.
-"use `mcp__plugin_github_github__list_pull_requests`"), record the dependency.
-
-Then check: for any (agent, skill) pair where the skill is plausibly passed to the agent (by
-the router's routing rules), does the agent have the tools the skill needs?
-
-Common failure modes to flag:
-
-- Skill uses `mcp__plugin_github_github__*` but the agent's `tools:` only has `Bash` (no
-  GitHub MCP)
-- Skill uses `PowerShell` but the agent only has `Bash`
-- Skill uses `mcp__plugin_context7_context7__*` but the agent doesn't include Context7
-
-This is heuristic — the skill might guard with "use this tool if available." Surface as a
-warning, not an error.
+Use `--format json` for machine-readable output with keys `inventory`,
+`collisions`, `overlaps`, `tool_coupling`, and `cache_hygiene`.
 
 ---
 
