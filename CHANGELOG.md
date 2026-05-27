@@ -14,6 +14,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   computes Jaccard semantic overlaps, detects tool-coupling mismatches,
   and flags cache hygiene issues (closes #191).
 
+### Changed
+
+- Refocused `usage-analysis` skill on insights and improvement
+  suggestions, dropping content that duplicated `usage-dashboard`
+  (top-consumer enumeration, dashboard regeneration mechanics, HTML
+  scraping). The skill now consumes structured `--format json` output
+  from the CLI, organizes findings around six harness-agnostic insight
+  categories, and uses an Observation / Implication / Question delivery
+  format that defers to the user's intent rather than prescribing
+  changes (closes #193).
+
 ## [0.9.1] - 2026-05-26
 
 ### Fixed
