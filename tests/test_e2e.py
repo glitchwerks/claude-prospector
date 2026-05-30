@@ -531,9 +531,7 @@ class TestNewModelVersionTokenCounting:
         )
         return tmp_path
 
-    def test_opus_4_8_tokens_counted_in_opus_bucket(
-        self, tmp_path: Path
-    ) -> None:
+    def test_opus_4_8_tokens_counted_in_opus_bucket(self, tmp_path: Path) -> None:
         """claude-opus-4-8 messages must aggregate into by_model["opus"].
 
         The ``model_short`` property uses substring matching so any model
@@ -562,9 +560,7 @@ class TestNewModelVersionTokenCounting:
             f"got {result.by_model['opus']['total_tokens']}"
         )
 
-    def test_opus_4_8_cache_tokens_included_in_total(
-        self, tmp_path: Path
-    ) -> None:
+    def test_opus_4_8_cache_tokens_included_in_total(self, tmp_path: Path) -> None:
         """Cache tokens from claude-opus-4-8 must reach the tier totals.
 
         Real 4-8 Opus sessions use prompt caching heavily (>96% of tokens
@@ -617,18 +613,16 @@ class TestNewModelVersionTokenCounting:
         # include cache tokens so computeBuckets gets accurate session totals.
         assert len(result.sessions) == 1
         model_split = result.sessions[0]["model_split"]
-        assert "opus" in model_split, (
-            "model_split must contain 'opus' key for claude-opus-4-8 sessions."
-        )
+        assert (
+            "opus" in model_split
+        ), "model_split must contain 'opus' key for claude-opus-4-8 sessions."
         assert model_split["opus"] == expected_total, (
             f"model_split['opus'] must equal {expected_total:,} "
             f"(input + output + cache_read + cache_creation), "
             f"got {model_split.get('opus', 0):,}."
         )
 
-    def test_sonnet_4_8_tokens_counted_in_sonnet_bucket(
-        self, tmp_path: Path
-    ) -> None:
+    def test_sonnet_4_8_tokens_counted_in_sonnet_bucket(self, tmp_path: Path) -> None:
         """claude-sonnet-4-8 messages must aggregate into by_model["sonnet"].
 
         The ``sonnet7d`` budget bucket in the JS reads ``s.model_split.sonnet``.
@@ -665,9 +659,9 @@ class TestNewModelVersionTokenCounting:
 
         assert len(result.sessions) == 1
         model_split = result.sessions[0]["model_split"]
-        assert "sonnet" in model_split, (
-            "model_split must contain 'sonnet' key for claude-sonnet-4-8 sessions."
-        )
+        assert (
+            "sonnet" in model_split
+        ), "model_split must contain 'sonnet' key for claude-sonnet-4-8 sessions."
 
     def test_future_version_suffix_does_not_break_tier_classification(
         self, tmp_path: Path
@@ -745,9 +739,9 @@ class TestNewModelVersionTokenCounting:
                 "Expected 'window.DATA = ' or 'const DATA = '."
             )
 
-        assert len(data["sessions"]) == 1, (
-            f"Expected 1 session in DATA, got {len(data['sessions'])}."
-        )
+        assert (
+            len(data["sessions"]) == 1
+        ), f"Expected 1 session in DATA, got {len(data['sessions'])}."
         session_total = data["sessions"][0]["total_tokens"]
         assert session_total == expected_total, (
             f"DATA.sessions[0].total_tokens must be {expected_total:,} "

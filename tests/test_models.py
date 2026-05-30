@@ -254,9 +254,7 @@ class TestAgentPath:
 
     def test_model_short_opus_4_8(self) -> None:
         """claude-opus-4-8 must classify as 'opus' (issue #196)."""
-        record = self._make(
-            agent_path=("general-purpose",), model="claude-opus-4-8"
-        )
+        record = self._make(agent_path=("general-purpose",), model="claude-opus-4-8")
         assert record.model_short == "opus", (
             "claude-opus-4-8 must map to 'opus' via substring match. "
             "If this fails, the model_short property no longer recognises "
@@ -265,9 +263,7 @@ class TestAgentPath:
 
     def test_model_short_sonnet_4_8(self) -> None:
         """claude-sonnet-4-8 must classify as 'sonnet' (issue #196)."""
-        record = self._make(
-            agent_path=("general-purpose",), model="claude-sonnet-4-8"
-        )
+        record = self._make(agent_path=("general-purpose",), model="claude-sonnet-4-8")
         assert record.model_short == "sonnet", (
             "claude-sonnet-4-8 must map to 'sonnet' via substring match. "
             "If this fails, the JS sonnet7d budget bucket will show 0 "
@@ -276,9 +272,7 @@ class TestAgentPath:
 
     def test_model_short_haiku_4_8(self) -> None:
         """claude-haiku-4-8 must classify as 'haiku' (issue #196)."""
-        record = self._make(
-            agent_path=("general-purpose",), model="claude-haiku-4-8"
-        )
+        record = self._make(agent_path=("general-purpose",), model="claude-haiku-4-8")
         assert record.model_short == "haiku"
 
     def test_model_short_opus_future_versions(self) -> None:
@@ -293,8 +287,7 @@ class TestAgentPath:
             model = f"claude-opus-{suffix}"
             record = self._make(agent_path=("general-purpose",), model=model)
             assert record.model_short == "opus", (
-                f"{model!r} must map to 'opus'. "
-                f"Got {record.model_short!r} instead."
+                f"{model!r} must map to 'opus'. " f"Got {record.model_short!r} instead."
             )
 
     def test_parallel_field_independence(self):
