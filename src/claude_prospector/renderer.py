@@ -121,6 +121,7 @@ def render(
         tmp.close()
         output_path = Path(tmp.name)
     else:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(html, encoding="utf-8")
 
     if open_browser:

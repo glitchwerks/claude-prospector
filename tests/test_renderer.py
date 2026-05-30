@@ -303,3 +303,68 @@ def test_real_data_depth3_renders_correct_by_agent_values(
     assert entry["session_count"] == 1, (
         f"Depth-3 leaf session_count must be 1. " f"Got: {entry['session_count']!r}"
     )
+
+
+class TestRenderMkdirParent:
+    """render() must create the output path's parent directory automatically.
+
+    The documented default invocation writes to
+    ``~/.claude/claude-prospector/dashboard.html``. That directory is not
+    created by any other part of the package, so ``render()`` must call
+    ``output_path.parent.mkdir(parents=True, exist_ok=True)`` before the
+    write — otherwise a first-run ``FileNotFoundError`` breaks out-of-the-box
+    usage (issue #201).
+    """
+
+    def test_render_creates_missing_parent_directory(self, tmp_path: Path) -> None:
+        """render() succeeds when the output path's parent does not exist yet.
+
+        Uses a two-level nested path that pytest's ``tmp_path`` has NOT
+        created, so the test confirms the directory is created by ``render()``
+        rather than by the test harness.
+        """
+        nonexistent_parent = tmp_path / "subdir" / "nested"
+        output_path = nonexistent_parent / "dashboard.html"
+        assert (
+            not nonexistent_parent.exists()
+        ), "Pre-condition: parent directory must not exist before render()."
+
+        result = AggregateResult()
+        rendered = render(result, output_path=output_path, open_browser=False)
+
+        assert (
+            nonexistent_parent.exists()
+        ), "render() must create the parent directory when it does not exist."
+        assert rendered.exists(), "HTML file must be written after parent creation."
+        assert rendered.read_text(
+            encoding="utf-8"
+        ).strip(), "Written HTML file must not be empty."
+
+    def test_render_existing_parent_still_works(self, tmp_path: Path) -> None:
+        """render() must not raise when the parent directory already exists.
+
+        ``exist_ok=True`` is required — a second render to the same path
+        (e.g. dashboard regeneration) must not raise ``FileExistsError``.
+        """
+        output_path = tmp_path / "dashboard.html"
+        result = AggregateResult()
+        # First render — creates the file
+        render(result, output_path=output_path, open_browser=False)
+        # Second render — parent already exists; must not raise
+        rendered = render(result, output_path=output_path, open_browser=False)
+        assert rendered.exists()
+
+    def test_render_temp_file_branch_unchanged(self, tmp_path: Path) -> None:
+        """render() with output_path=None still uses a temp file (no regression).
+
+        The ``output_path is None`` branch writes to a NamedTemporaryFile and
+        must remain untouched by the mkdir fix.
+        """
+        result = AggregateResult()
+        rendered = render(result, output_path=None, open_browser=False)
+        assert (
+            rendered.exists()
+        ), "render(output_path=None) must still produce a temp file."
+        assert rendered.read_text(
+            encoding="utf-8"
+        ).strip(), "Temp-file HTML must not be empty."
