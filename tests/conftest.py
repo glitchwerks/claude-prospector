@@ -157,8 +157,26 @@ def _assistant_line(
     output_tokens: int,
     uuid: str,
     timestamp: str,
+    cache_read_input_tokens: int = 0,
+    cache_creation_input_tokens: int = 0,
 ) -> dict:
-    """Build a minimal assistant message dict for JSONL."""
+    """Build a minimal assistant message dict for JSONL.
+
+    Args:
+        session_id: The session identifier.
+        model: Full model ID string (e.g. ``"claude-opus-4-8"``).
+        input_tokens: Prompt token count.
+        output_tokens: Completion token count.
+        uuid: Message UUID.
+        timestamp: ISO 8601 timestamp string.
+        cache_read_input_tokens: Tokens served from the prompt cache.
+            Defaults to 0 so existing callers are unaffected.
+        cache_creation_input_tokens: Tokens written to the prompt cache.
+            Defaults to 0 so existing callers are unaffected.
+
+    Returns:
+        A dict shaped like a real Claude Code JSONL assistant entry.
+    """
     return {
         "type": "assistant",
         "timestamp": timestamp,
@@ -171,8 +189,8 @@ def _assistant_line(
             "usage": {
                 "input_tokens": input_tokens,
                 "output_tokens": output_tokens,
-                "cache_read_input_tokens": 0,
-                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": cache_read_input_tokens,
+                "cache_creation_input_tokens": cache_creation_input_tokens,
             },
         },
     }

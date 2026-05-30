@@ -245,6 +245,51 @@ class TestAgentPath:
         )
         assert record.model_short == "claude-future-model-9"
 
+    # ── Version-bump regression guards (issue #196) ───────────────────────
+    # The model_short property uses substring matching, not version-specific
+    # logic.  These tests pin the property's behaviour for the 4-8 version
+    # suffix (and a few hypothetical future ones) so any regression — e.g.
+    # Anthropic renaming a tier — causes an explicit failure here rather than
+    # a silent under-count in the dashboard.
+
+    def test_model_short_opus_4_8(self) -> None:
+        """claude-opus-4-8 must classify as 'opus' (issue #196)."""
+        record = self._make(agent_path=("general-purpose",), model="claude-opus-4-8")
+        assert record.model_short == "opus", (
+            "claude-opus-4-8 must map to 'opus' via substring match. "
+            "If this fails, the model_short property no longer recognises "
+            "the 4-8 version suffix and tokens will be under-counted."
+        )
+
+    def test_model_short_sonnet_4_8(self) -> None:
+        """claude-sonnet-4-8 must classify as 'sonnet' (issue #196)."""
+        record = self._make(agent_path=("general-purpose",), model="claude-sonnet-4-8")
+        assert record.model_short == "sonnet", (
+            "claude-sonnet-4-8 must map to 'sonnet' via substring match. "
+            "If this fails, the JS sonnet7d budget bucket will show 0 "
+            "instead of real Sonnet consumption."
+        )
+
+    def test_model_short_haiku_4_8(self) -> None:
+        """claude-haiku-4-8 must classify as 'haiku' (issue #196)."""
+        record = self._make(agent_path=("general-purpose",), model="claude-haiku-4-8")
+        assert record.model_short == "haiku"
+
+    def test_model_short_opus_future_versions(self) -> None:
+        """Future Opus version suffixes (4-9, 5-0, etc.) remain classified as 'opus'.
+
+        The tier classification is purely substring-based, so any model ID
+        that contains 'opus' maps to 'opus' regardless of the version number.
+        This test documents that intent explicitly so a future renaming of
+        Opus to something without 'opus' in the ID would fail loudly here.
+        """
+        for suffix in ("4-8", "4-9", "5-0", "5-1"):
+            model = f"claude-opus-{suffix}"
+            record = self._make(agent_path=("general-purpose",), model=model)
+            assert record.model_short == "opus", (
+                f"{model!r} must map to 'opus'. " f"Got {record.model_short!r} instead."
+            )
+
     def test_parallel_field_independence(self):
         """agent_type and agent_path are stored independently — neither derived.
 
