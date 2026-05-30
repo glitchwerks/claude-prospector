@@ -266,6 +266,28 @@ python -m claude_prospector session-summary --path ~/.claude/projects/<hash>/<se
 
 On any non-zero exit, stdout is empty and stderr contains exactly one line.
 
+### `audit` — agent/skill inventory and hygiene report
+
+```bash
+python -m claude_prospector audit
+```
+
+Deterministically inventories all agents and skills visible in the effective
+Claude Code configuration (custom and plugin-provided), then reports:
+
+- **Name collisions** — agents or skills with identical names loaded from
+  different sources
+- **Jaccard semantic overlap** — pairs whose description tokens overlap above a
+  configurable threshold, signalling potential duplicate capability
+- **Tool-coupling mismatches** — agents declared without the tools they call,
+  or with tools they never reference
+- **Cache hygiene issues** — stale plugin cache entries that may shadow the
+  live install
+
+The subcommand is read-only — it never modifies files. Output is written to
+stdout; pipe to a file or redirect as needed. The `/claude-prospector:claude-audit`
+skill wraps this subcommand for conversational use inside Claude Code sessions.
+
 ### `config` — inspect configuration
 
 ```bash
