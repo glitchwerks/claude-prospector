@@ -48,7 +48,20 @@ class MessageRecord:
 
     @property
     def model_short(self) -> str:
-        """Extract short model name: 'opus', 'sonnet', 'haiku', or full name."""
+        """Extract the model-tier name from the full model ID string.
+
+        Uses substring matching so the classification is version-agnostic:
+        ``claude-opus-4-7``, ``claude-opus-4-8``, ``claude-opus-5-0``, etc.
+        all return ``"opus"`` because ``"opus"`` appears in the model ID.
+        This avoids hardcoded version numbers and keeps working correctly
+        after a model-version bump (issue #196).
+
+        Returns:
+            ``"opus"``, ``"sonnet"``, or ``"haiku"`` when the tier name is
+            found as a substring of :attr:`model`.  Returns the full
+            :attr:`model` string when no known tier name is present (e.g. a
+            hypothetical future model ID that omits the tier name entirely).
+        """
         for name in ("opus", "sonnet", "haiku"):
             if name in self.model:
                 return name
