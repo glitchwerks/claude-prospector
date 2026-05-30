@@ -293,21 +293,23 @@
 
     // Active days: of the last 7 calendar days (anchored on NOW),
     // how many had any session activity.
+    // Both anchor keys and session keys use localDateKey() so they are
+    // compared in the same timezone (#197).
     const recentDateKeys = new Set();
     for (let i = 0; i < 7; i++) {
       const d = new Date(NOW.getTime() - i * 86_400_000);
-      recentDateKeys.add(d.toISOString().slice(0, 10));
+      recentDateKeys.add(CP.localDateKey(d));
     }
-    const sessionDateKeys = new Set(sessions.map(s => s.start_time.slice(0, 10)));
+    const sessionDateKeys = new Set(sessions.map(s => CP.localDateKey(new Date(s.start_time))));
     const recentDays = [...recentDateKeys].filter(k => sessionDateKeys.has(k)).length;
 
     // Daily totals for the last 14 days
     const daily = [];
     for (let i = 13; i >= 0; i--) {
       const d = new Date(NOW.getTime() - i * 86_400_000);
-      const key = d.toISOString().slice(0, 10);
+      const key = CP.localDateKey(d);
       const dayTokens = sessions
-        .filter(s => s.start_time.slice(0, 10) === key)
+        .filter(s => CP.localDateKey(new Date(s.start_time)) === key)
         .reduce((a, s) => a + s.total_tokens, 0);
       daily.push({ day: key, date: d, total: dayTokens, isToday: i === 0 });
     }
