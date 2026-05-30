@@ -143,9 +143,7 @@ class TestDecodeProjectHashFull:
         """i--games-skyrim-mods-oar-config-manager decodes correctly."""
         from claude_prospector.parser import decode_project_hash_full
 
-        result = decode_project_hash_full(
-            "i--games-skyrim-mods-oar-config-manager"
-        )
+        result = decode_project_hash_full("i--games-skyrim-mods-oar-config-manager")
         assert "games" in result
         assert "oar-config-manager" in result or "oar" in result
 
@@ -233,9 +231,7 @@ class TestSessionRecordProjectPath:
         assert len(sessions) == 1
         assert hasattr(sessions[0], "project_path")
 
-    def test_project_path_is_full_path_when_cwd_available(
-        self, tmp_path: Path
-    ) -> None:
+    def test_project_path_is_full_path_when_cwd_available(self, tmp_path: Path) -> None:
         """When a cwd entry exists, project_path is the full cwd."""
         from claude_prospector.parser import parse_sessions
 
@@ -248,9 +244,7 @@ class TestSessionRecordProjectPath:
         assert len(sessions) == 1
         assert sessions[0].project_path == cwd
 
-    def test_project_path_fallback_is_decoded_slug(
-        self, tmp_path: Path
-    ) -> None:
+    def test_project_path_fallback_is_decoded_slug(self, tmp_path: Path) -> None:
         """When no cwd entry, project_path is decode_project_hash_full(slug)."""
         from claude_prospector.parser import decode_project_hash_full, parse_sessions
 
@@ -352,9 +346,7 @@ class TestProjectExcludeList:
 
         project_dir = tmp_path / "projects" / "some-project"
         project_dir.mkdir(parents=True)
-        self._make_session_with_cwd(
-            project_dir, "sess-a", "/home/user/myproject"
-        )
+        self._make_session_with_cwd(project_dir, "sess-a", "/home/user/myproject")
 
         sessions = parse_sessions(tmp_path)
         assert len(sessions) == 1
@@ -391,14 +383,10 @@ class TestProjectExcludeList:
         # Write config with exclude pattern
         config_path = tmp_path / "config.json"
         config_path.write_text(
-            json.dumps(
-                {"project_exclude_patterns": ["AppData\\Local\\Programs"]}
-            ),
+            json.dumps({"project_exclude_patterns": ["AppData\\Local\\Programs"]}),
             encoding="utf-8",
         )
-        monkeypatch.setenv(
-            "CLAUDE_PROSPECTOR_CONFIG", str(config_path)
-        )
+        monkeypatch.setenv("CLAUDE_PROSPECTOR_CONFIG", str(config_path))
 
         sessions = parse_sessions(tmp_path)
         assert len(sessions) == 1
@@ -420,20 +408,14 @@ class TestProjectExcludeList:
 
         real_dir = tmp_path / "projects" / "my-project"
         real_dir.mkdir(parents=True)
-        self._make_session_with_cwd(
-            real_dir, "sess-good", "/home/user/my-project"
-        )
+        self._make_session_with_cwd(real_dir, "sess-good", "/home/user/my-project")
 
         config_path = tmp_path / "config.json"
         config_path.write_text(
-            json.dumps(
-                {"project_exclude_patterns": ["ElectronApp/resources"]}
-            ),
+            json.dumps({"project_exclude_patterns": ["ElectronApp/resources"]}),
             encoding="utf-8",
         )
-        monkeypatch.setenv(
-            "CLAUDE_PROSPECTOR_CONFIG", str(config_path)
-        )
+        monkeypatch.setenv("CLAUDE_PROSPECTOR_CONFIG", str(config_path))
 
         sessions = parse_sessions(tmp_path)
         project_names = {s.project for s in sessions}
@@ -448,18 +430,14 @@ class TestProjectExcludeList:
 
         project_dir = tmp_path / "projects" / "good-project"
         project_dir.mkdir(parents=True)
-        self._make_session_with_cwd(
-            project_dir, "sess-good", "/home/user/good-project"
-        )
+        self._make_session_with_cwd(project_dir, "sess-good", "/home/user/good-project")
 
         config_path = tmp_path / "config.json"
         config_path.write_text(
             json.dumps({"project_exclude_patterns": []}),
             encoding="utf-8",
         )
-        monkeypatch.setenv(
-            "CLAUDE_PROSPECTOR_CONFIG", str(config_path)
-        )
+        monkeypatch.setenv("CLAUDE_PROSPECTOR_CONFIG", str(config_path))
 
         sessions = parse_sessions(tmp_path)
         assert len(sessions) == 1
@@ -473,7 +451,9 @@ class TestProjectExcludeList:
         """
         from claude_prospector.parser import parse_sessions
 
-        warp_dir = tmp_path / "projects" / "C--Users-chris-warp-Warp-data-worktrees-uuid"
+        warp_dir = (
+            tmp_path / "projects" / "C--Users-chris-warp-Warp-data-worktrees-uuid"
+        )
         warp_dir.mkdir(parents=True)
         self._make_session_with_cwd(
             warp_dir,
@@ -489,14 +469,10 @@ class TestProjectExcludeList:
 
         config_path = tmp_path / "config.json"
         config_path.write_text(
-            json.dumps(
-                {"project_exclude_patterns": ["warp\\Warp\\data\\worktrees"]}
-            ),
+            json.dumps({"project_exclude_patterns": ["warp\\Warp\\data\\worktrees"]}),
             encoding="utf-8",
         )
-        monkeypatch.setenv(
-            "CLAUDE_PROSPECTOR_CONFIG", str(config_path)
-        )
+        monkeypatch.setenv("CLAUDE_PROSPECTOR_CONFIG", str(config_path))
 
         sessions = parse_sessions(tmp_path)
         assert len(sessions) == 1
@@ -510,15 +486,11 @@ class TestProjectExcludeList:
 
         project_dir = tmp_path / "projects" / "project-a"
         project_dir.mkdir(parents=True)
-        self._make_session_with_cwd(
-            project_dir, "sess-a", "/home/user/project-a"
-        )
+        self._make_session_with_cwd(project_dir, "sess-a", "/home/user/project-a")
 
         config_path = tmp_path / "config.json"
         config_path.write_text("this is not json", encoding="utf-8")
-        monkeypatch.setenv(
-            "CLAUDE_PROSPECTOR_CONFIG", str(config_path)
-        )
+        monkeypatch.setenv("CLAUDE_PROSPECTOR_CONFIG", str(config_path))
 
         sessions = parse_sessions(tmp_path)
         assert len(sessions) == 1
@@ -639,9 +611,7 @@ class TestRealSlugRegression:
             ),
         ],
     )
-    def test_decode_project_hash_leaf(
-        self, slug: str, expected_leaf: str
-    ) -> None:
+    def test_decode_project_hash_leaf(self, slug: str, expected_leaf: str) -> None:
         """decode_project_hash returns the last '--'-separated segment.
 
         For slugs with only one '--' the last segment IS the full tail
@@ -661,9 +631,7 @@ class TestRealSlugRegression:
             "i--games-skyrim-mods-oar-config-manager",
         ],
     )
-    def test_decode_project_hash_full_longer_than_leaf(
-        self, slug: str
-    ) -> None:
+    def test_decode_project_hash_full_longer_than_leaf(self, slug: str) -> None:
         """Full decode always returns more than just the leaf segment."""
         from claude_prospector.parser import (
             decode_project_hash,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import warnings
 from datetime import datetime, timezone
 from pathlib import Path
@@ -83,10 +84,11 @@ def derive_project_name(
 
     Strategy (applied in order):
 
-    1. When *cwd* is a non-empty string, return ``Path(cwd).name`` — the
-       leaf directory of the working path.  This is always more accurate
-       than the slug-based decode because it comes directly from the
-       session record.
+    1. When *cwd* is a non-empty string, extract the leaf directory by
+       splitting on both ``/`` and ``\\`` (so Windows paths analysed on
+       Linux still resolve correctly).  This is always more accurate than
+       the slug-based decode because it comes directly from the session
+       record.
     2. When *slug_fallback* is a non-empty string, return
        ``decode_project_hash(slug_fallback)`` — the last ``--``-separated
        segment of the encoded directory name.
@@ -108,7 +110,11 @@ def derive_project_name(
         A non-empty project name string.
     """
     if cwd and isinstance(cwd, str):
-        name = Path(cwd).name
+        # Split on both forward- and back-slashes, ignoring trailing
+        # separators, so Windows paths analysed on Linux (where pathlib
+        # treats '\' as a literal character) still yield the correct leaf.
+        parts = re.split(r"[\\/]+", cwd.rstrip("\\/"))
+        name = parts[-1] if parts else ""
         if name:
             return name
 
@@ -589,9 +595,7 @@ def parse_sessions(data_dir: Path) -> list[SessionRecord]:
             # Derive cwd from the session JSONL, then compute names.
             cwd = _read_cwd_from_jsonl(jsonl_path)
             project_name = derive_project_name(cwd, slug)
-            project_path = (
-                cwd if cwd else decode_project_hash_full(slug)
-            )
+            project_path = cwd if cwd else decode_project_hash_full(slug)
 
             # Config-driven exclude: skip sessions from noise directories.
             if exclude_patterns and _is_excluded(project_path, exclude_patterns):
