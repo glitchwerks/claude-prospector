@@ -1008,11 +1008,13 @@
           else if (s._outlierTpm) flag = '<span class="flag">outlier · expensive/turn</span>';
           else if (s._isBench) flag = '<span class="flag bench">benchmark · cheap/turn</span>';
           const cls = s._outlierTpm ? 'outlier' : '';
+          const fp = s.project_path || '';
+          const ta = fp ? ` title="${fp.replace(/"/g, '&quot;')}"` : '';
           return `
             <div class="sess-row ${cls}">
               <div>
                 <div class="head">
-                  <div class="pn">${s.project}${flag}</div>
+                  <div class="pn"${ta}>${s.project}${flag}</div>
                   <div class="meta">${tStr} · ${CP.fmtDuration(s.duration_minutes)} · ${(s.agents || []).slice(0,3).join(', ')}${(s.agents||[]).length > 3 ? '…' : ''}</div>
                 </div>
               </div>
