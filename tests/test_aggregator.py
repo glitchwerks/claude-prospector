@@ -44,6 +44,7 @@ def _session(
     return SessionRecord(
         session_id=session_id,
         project=project,
+        project_path="",
         start_time=start,
         root_agent=root_agent,
         messages=messages,

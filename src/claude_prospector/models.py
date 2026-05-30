@@ -70,10 +70,29 @@ class MessageRecord:
 
 @dataclass(frozen=True, slots=True)
 class SessionRecord:
-    """A parsed session with all its messages (including subagent messages)."""
+    """A parsed session with all its messages (including subagent messages).
+
+    Attributes:
+        session_id: Unique session identifier (stem of the JSONL filename).
+        project: Human-readable project leaf name, derived cwd-first.
+            When the session's JSONL contains a ``cwd`` field the leaf
+            directory (``Path(cwd).name``) is used; otherwise the last
+            ``--``-separated segment of the encoded slug is used.
+        project_path: Full path for the project.  When a ``cwd`` field
+            is present this is the verbatim ``cwd`` value; otherwise it
+            is the full decoded slug (see
+            :func:`~claude_prospector.parser.decode_project_hash_full`).
+            Empty string when neither is available.
+        start_time: Timestamp of the earliest message in the session.
+        root_agent: Agent-setting value for the root session thread.
+        messages: All messages from this session and its subagents.
+        subagent_types: Sorted, de-duplicated list of subagent type names
+            encountered at any depth.
+    """
 
     session_id: str
     project: str
+    project_path: str
     start_time: datetime
     root_agent: str
     messages: list[MessageRecord]

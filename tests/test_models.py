@@ -116,6 +116,7 @@ class TestSessionRecord:
         session = SessionRecord(
             session_id="abc-123",
             project="my-project",
+            project_path="",
             start_time=datetime(2026, 4, 9, 12, 0, 0, tzinfo=timezone.utc),
             root_agent="general-purpose",
             messages=[
@@ -130,6 +131,7 @@ class TestSessionRecord:
         session = SessionRecord(
             session_id="abc-123",
             project="my-project",
+            project_path="",
             start_time=datetime(2026, 4, 9, 12, 0, 0, tzinfo=timezone.utc),
             root_agent="general-purpose",
             messages=[],
@@ -141,6 +143,7 @@ class TestSessionRecord:
         session = SessionRecord(
             session_id="abc-123",
             project="my-project",
+            project_path="",
             start_time=datetime(2026, 4, 9, 12, 0, 0, tzinfo=timezone.utc),
             root_agent="general-purpose",
             messages=[
@@ -156,6 +159,7 @@ class TestSessionRecord:
         session = SessionRecord(
             session_id="abc-123",
             project="my-project",
+            project_path="",
             start_time=datetime(2026, 4, 9, 12, 0, 0, tzinfo=timezone.utc),
             root_agent="general-purpose",
             messages=[
@@ -169,6 +173,7 @@ class TestSessionRecord:
         session = SessionRecord(
             session_id="abc-123",
             project="my-project",
+            project_path="",
             start_time=datetime(2026, 4, 9, 12, 0, 0, tzinfo=timezone.utc),
             root_agent="general-purpose",
             messages=[],

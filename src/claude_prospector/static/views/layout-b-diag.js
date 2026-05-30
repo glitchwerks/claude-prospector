@@ -593,9 +593,11 @@
     const modelTotal = Object.values(modelSplit).reduce((a,b)=>a+b,0) || 1;
     const segs = Object.entries(modelSplit).map(([m, t]) =>
       `<span class="seg" style="width:${(t/modelTotal*100).toFixed(1)}%;background:${CP.modelColor(m)}"></span>`).join('');
+    const fullPath = info.full_path || '';
+    const titleAttr = fullPath ? ` title="${fullPath.replace(/"/g, '&quot;')}"` : '';
     return `
       <div class="proj-card">
-        <div class="pname">${name}<span class="pct">${pct}%</span></div>
+        <div class="pname"${titleAttr}>${name}<span class="pct">${pct}%</span></div>
         <div class="ptok">${CP.fmtTokens(info.total_tokens)}<span class="small">${info.session_count} sessions</span></div>
         <div class="pbar">${segs}</div>
         <div class="ag-list">
@@ -636,8 +638,10 @@
             <div class="proj-more-list">
               ${rest.map(([n, info]) => {
                 const pct = totalProj > 0 ? Math.round(info.total_tokens / totalProj * 100) : 0;
+                const fp = info.full_path || '';
+                const ta = fp ? ` title="${fp.replace(/"/g, '&quot;')}"` : '';
                 return `<div class="proj-more-row">
-                  <div class="pn">${n}</div>
+                  <div class="pn"${ta}>${n}</div>
                   <div class="pv">${CP.fmtTokens(info.total_tokens)}</div>
                   <div class="ps">${pct}%</div>
                 </div>`;

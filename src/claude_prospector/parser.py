@@ -33,6 +33,180 @@ def decode_project_hash(hash_name: str) -> str:
     return segments[-1]
 
 
+def decode_project_hash_full(hash_name: str) -> str:
+    """Decode a project hash directory name to a full human-readable path.
+
+    Unlike :func:`decode_project_hash`, which returns only the last path
+    segment, this function reconstructs a readable approximation of the
+    full original path by joining all ``--``-separated segments with
+    ``/``.  A single-letter first segment is assumed to be a Windows drive
+    letter and gets a ``:`` appended (e.g. ``C`` → ``C:``).
+
+    The reconstruction is lossy — leading dots (e.g. ``.claude``) and the
+    exact original separator character (``/`` vs ``\\``) are not
+    preserved — but it is always more informative than the leaf-only result
+    for deep paths.
+
+    Examples:
+        'C--Users-chris--claude' -> 'C:/Users/chris/claude'
+        'i--games-skyrim-mods-oar-config-manager'
+            -> 'i:/games/skyrim/mods/oar-config-manager'
+        'C--Users-chris-AppData-Local-Programs-Open-Design-release-stable'
+            -> 'C:/Users/chris-AppData-Local-Programs-Open-Design-release-stable'
+
+    Args:
+        hash_name: The slug directory name as encoded by Claude Code.
+
+    Returns:
+        A forward-slash-separated path string approximating the original
+        path, or the original string when it contains no ``--`` separator.
+    """
+    if not hash_name:
+        return ""
+    segments = hash_name.split("--")
+    if len(segments) == 1:
+        # No '--' separator — return the segment unchanged.
+        return hash_name
+    # Normalise the first segment: single letter → Windows drive with colon.
+    first = segments[0]
+    if len(first) == 1 and first.isalpha():
+        first = first + ":"
+    rest = segments[1:]
+    return "/".join([first] + rest)
+
+
+def derive_project_name(
+    cwd: str | None,
+    slug_fallback: str | None,
+) -> str:
+    """Derive a human-readable project name from a cwd path or a slug.
+
+    Strategy (applied in order):
+
+    1. When *cwd* is a non-empty string, return ``Path(cwd).name`` — the
+       leaf directory of the working path.  This is always more accurate
+       than the slug-based decode because it comes directly from the
+       session record.
+    2. When *slug_fallback* is a non-empty string, return
+       ``decode_project_hash(slug_fallback)`` — the last ``--``-separated
+       segment of the encoded directory name.
+    3. Final fallback: ``"unknown"``.
+
+    This logic is intentionally shared between the dashboard pipeline
+    (``parse_sessions``) and the ``session_summary`` subcommand
+    (``_derive_project``) so both surfaces benefit from the cwd-first
+    strategy without duplication.
+
+    Args:
+        cwd: The ``cwd`` field value from a JSONL entry, or ``None``
+            when no cwd entry exists in the session.
+        slug_fallback: The encoded project directory name (e.g.
+            ``"C--Users-chris--claude"``), used as a fallback when no
+            cwd is available.
+
+    Returns:
+        A non-empty project name string.
+    """
+    if cwd and isinstance(cwd, str):
+        name = Path(cwd).name
+        if name:
+            return name
+
+    if slug_fallback:
+        decoded = decode_project_hash(slug_fallback)
+        if decoded:
+            return decoded
+
+    return "unknown"
+
+
+def _load_exclude_patterns(config_path: Path) -> list[str]:
+    """Load project exclude patterns from config.json.
+
+    Reads ``config_path`` and returns the value of the
+    ``project_exclude_patterns`` key as a list of strings.  Returns an
+    empty list when the file is absent, the key is missing, or the
+    file is not valid JSON.
+
+    The patterns are simple substring matches applied to the full
+    ``project_path`` string.  A session whose ``project_path`` contains
+    any listed pattern is excluded from the parsed output.
+
+    Args:
+        config_path: Path to the ``config.json`` file.
+
+    Returns:
+        List of substring patterns (may be empty).
+    """
+    if not config_path.exists():
+        return []
+    try:
+        cfg = json.loads(config_path.read_text(encoding="utf-8"))
+        patterns = cfg.get("project_exclude_patterns", [])
+        if isinstance(patterns, list):
+            return [str(p) for p in patterns if p]
+        return []
+    except (json.JSONDecodeError, OSError):
+        return []
+
+
+def _is_excluded(project_path: str, patterns: list[str]) -> bool:
+    """Return True when project_path matches any exclude pattern.
+
+    Matching is a case-sensitive substring check.  No glob expansion
+    is performed — each pattern is tested with the ``in`` operator
+    against *project_path*.
+
+    Args:
+        project_path: The full project path string to test.
+        patterns: List of substring patterns from the config.
+
+    Returns:
+        ``True`` when any pattern matches; ``False`` otherwise.
+    """
+    for pattern in patterns:
+        if pattern in project_path:
+            return True
+    return False
+
+
+_CWD_SCAN_LINES = 20
+
+
+def _read_cwd_from_jsonl(jsonl_path: Path) -> str | None:
+    """Read the first non-empty ``cwd`` field from a JSONL session file.
+
+    Scans the first ``_CWD_SCAN_LINES`` lines for any entry with a
+    non-empty ``cwd`` string field.  Returns ``None`` when no such entry
+    is found within the scan window.
+
+    Args:
+        jsonl_path: Path to the session ``.jsonl`` file.
+
+    Returns:
+        The cwd string from the first matching entry, or ``None``.
+    """
+    try:
+        with open(jsonl_path, "r", encoding="utf-8") as f:
+            for _ in range(_CWD_SCAN_LINES):
+                raw = f.readline()
+                if not raw:
+                    break
+                line = raw.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                cwd = entry.get("cwd")
+                if cwd and isinstance(cwd, str):
+                    return cwd
+    except OSError:
+        pass
+    return None
+
+
 def _parse_timestamp(ts_str: str) -> datetime:
     """Parse an ISO 8601 timestamp string to a datetime."""
     ts_str = ts_str.replace("Z", "+00:00")
@@ -268,7 +442,11 @@ def _parse_subagents_recursive(
 _AGENT_SETTING_SCAN_LINES = 10
 
 
-def _parse_session(jsonl_path: Path, project_name: str) -> SessionRecord | None:
+def _parse_session(
+    jsonl_path: Path,
+    project_name: str,
+    project_path: str = "",
+) -> SessionRecord | None:
     """Parse a single session JSONL file and its subagents.
 
     Agent-setting resolution uses a three-branch strategy to handle recent
@@ -361,6 +539,7 @@ def _parse_session(jsonl_path: Path, project_name: str) -> SessionRecord | None:
     return SessionRecord(
         session_id=session_id,
         project=project_name,
+        project_path=project_path,
         start_time=start_time,
         root_agent=root_agent,
         messages=messages,
@@ -371,6 +550,18 @@ def _parse_session(jsonl_path: Path, project_name: str) -> SessionRecord | None:
 def parse_sessions(data_dir: Path) -> list[SessionRecord]:
     """Parse all sessions from a Claude Code data directory.
 
+    Each session's ``project`` field is derived cwd-first: if any JSONL
+    entry in the session carries a ``cwd`` field, the leaf directory of
+    that path is used.  Otherwise the project directory slug is decoded
+    via :func:`decode_project_hash`.  The ``project_path`` field carries
+    the full original ``cwd`` when available, or the full decoded slug
+    from :func:`decode_project_hash_full` as a fallback.
+
+    Sessions whose ``project_path`` matches any entry in the
+    ``project_exclude_patterns`` list in ``config.json`` are silently
+    omitted from the result.  The config file is resolved via
+    :func:`claude_prospector.paths.config_path`.
+
     Args:
         data_dir: Path to the Claude data directory (e.g. ~/.claude).
                   Sessions are in data_dir/projects/<hash>/<session>.jsonl
@@ -378,9 +569,13 @@ def parse_sessions(data_dir: Path) -> list[SessionRecord]:
     Returns:
         List of SessionRecord objects, sorted by start_time descending.
     """
+    from claude_prospector.paths import config_path as _config_path
+
     projects_dir = data_dir / "projects"
     if not projects_dir.is_dir():
         return []
+
+    exclude_patterns = _load_exclude_patterns(_config_path())
 
     sessions: list[SessionRecord] = []
 
@@ -388,10 +583,21 @@ def parse_sessions(data_dir: Path) -> list[SessionRecord]:
         if not project_dir.is_dir():
             continue
 
-        project_name = decode_project_hash(project_dir.name)
+        slug = project_dir.name
 
         for jsonl_path in project_dir.glob("*.jsonl"):
-            session = _parse_session(jsonl_path, project_name)
+            # Derive cwd from the session JSONL, then compute names.
+            cwd = _read_cwd_from_jsonl(jsonl_path)
+            project_name = derive_project_name(cwd, slug)
+            project_path = (
+                cwd if cwd else decode_project_hash_full(slug)
+            )
+
+            # Config-driven exclude: skip sessions from noise directories.
+            if exclude_patterns and _is_excluded(project_path, exclude_patterns):
+                continue
+
+            session = _parse_session(jsonl_path, project_name, project_path)
             if session is not None:
                 sessions.append(session)
 

@@ -121,6 +121,42 @@ When no config file exists, it prints `(no config file yet)` and a redirect note
 
 The authoritative `autoregen` value is whatever is set in the plugin manager — not the legacy `config.json`.
 
+### Hiding noise projects from the dashboard
+
+Claude Code creates session directories for every working directory it opens,
+including Electron app internals, Warp terminal worktrees, and other
+non-project paths. You can hide these from the dashboard's project view by
+adding a `project_exclude_patterns` list to your `config.json`:
+
+```json
+{
+  "project_exclude_patterns": [
+    "AppData\\Local\\Programs",
+    "warp\\Warp\\data\\worktrees",
+    "AppData\\Roaming\\Open-Design"
+  ]
+}
+```
+
+Each entry is a **case-sensitive substring** matched against the full project
+path (the `cwd` field from the session, or the decoded directory slug when no
+`cwd` is available). A session is hidden when its project path contains any
+listed pattern. The default is an empty list — no projects are hidden.
+
+The config file is located at `base_dir() / "config.json"` (override with
+`CLAUDE_PROSPECTOR_CONFIG`). Edit it with any text editor; it is read on every
+`dashboard` invocation.
+
+### Project labels in the dashboard
+
+The dashboard now shows the **leaf directory name** (e.g. `claude-prospector`)
+as the project label instead of the full encoded slug. Hover over any project
+name to see the full path in a tooltip.
+
+The leaf name is derived from the `cwd` field recorded in the session when
+available (most accurate), falling back to the last segment of the encoded
+directory name.
+
 ## Environment variables
 
 | Variable | Controls | Notes |

@@ -148,6 +148,7 @@ def aggregate(
                 {
                     "session_id": session.session_id,
                     "project": session.project,
+                    "project_path": session.project_path,
                     "start_time": min(
                         m.timestamp for m in session_messages
                     ).isoformat(),
@@ -214,6 +215,7 @@ def aggregate(
                 "total_tokens": 0,
                 "session_count": 0,
                 "message_count": 0,
+                "full_path": session_summary.get("project_path", ""),
             }
         result.by_project[proj]["total_tokens"] += session_summary["total_tokens"]
         result.by_project[proj]["message_count"] += session_summary["message_count"]

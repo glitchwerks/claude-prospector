@@ -107,7 +107,7 @@
     for (const s of sessions) {
       totalTokens += s.total_tokens;
 
-      if (!byProject[s.project]) byProject[s.project] = { total_tokens: 0, session_count: 0 };
+      if (!byProject[s.project]) byProject[s.project] = { total_tokens: 0, session_count: 0, full_path: s.project_path || '' };
       byProject[s.project].total_tokens += s.total_tokens;
       byProject[s.project].session_count += 1;
 
