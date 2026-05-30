@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from datetime import datetime, timezone
@@ -185,6 +186,17 @@ def run(args: argparse.Namespace) -> int:
             "limit_sonnet_7d": args.limit_sonnet_7d,
         }
 
+    # Resolve default --output path.  The argparse default is None so that
+    # render() can distinguish "caller omitted --output" (use temp file) from
+    # an explicit path.  When $CLAUDE_PLUGIN_DATA is set we resolve a
+    # persistent, plugin-owned location here in the handler; otherwise we
+    # leave output_path as None and let render() pick a temp file.
+    output_path: Path | None = args.output
+    if output_path is None:
+        plugin_data = os.environ.get("CLAUDE_PLUGIN_DATA")
+        if plugin_data:
+            output_path = Path(plugin_data) / "dashboard.html"
+
     if args.output_format == "json":
         payload = {
             "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -204,7 +216,7 @@ def run(args: argparse.Namespace) -> int:
 
     output = render(
         result,
-        output_path=args.output,
+        output_path=output_path,
         open_browser=not args.no_open,
         limits=limits,
     )

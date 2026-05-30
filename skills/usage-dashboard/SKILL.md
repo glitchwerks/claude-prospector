@@ -26,12 +26,15 @@ For interpretation (budget status, top consumers, recommendations), point the us
 
 ## Default behavior
 
-If the user passes no arguments, regenerate against the **full aggregated session history** and write the dashboard to the platform-appropriate path:
+If the user passes no arguments, regenerate against the **full aggregated session history** and write the dashboard to a known path. Pass `--no-open` so the file lands at the known path without spawning a browser tab — that side effect is usually unwanted from inside a Claude Code session.
 
-- POSIX: `$HOME/.claude/claude-prospector/dashboard.html`
-- Windows: `%USERPROFILE%\.claude\claude-prospector\dashboard.html`
+When `$CLAUDE_PLUGIN_DATA` is set (the normal plugin context), the CLI automatically defaults `--output` to `$CLAUDE_PLUGIN_DATA/dashboard.html` and creates the parent directory if needed — you can omit `--output` entirely:
 
-Pass `--no-open` so the file lands at the known path without spawning a browser tab — that side effect is usually unwanted from inside a Claude Code session.
+```bash
+python -m claude_prospector dashboard --no-open
+```
+
+When running outside the plugin context (`$CLAUDE_PLUGIN_DATA` is unset), pass `--output` explicitly to control where the file lands:
 
 ```bash
 # POSIX
@@ -55,7 +58,7 @@ The user may pass any of these. Forward them through to the underlying CLI; do n
 | `--from YYYY-MM-DD --to YYYY-MM-DD` | Explicit date range. Mutually exclusive with `--window`. If both are supplied, surface the conflict and ask which one to use. |
 | Any other CLI flag (`--limit-5h`, `--limit-7d`, `--limit-sonnet-7d`, `--format json`, `--data-dir`, etc.) | Forward verbatim. See `python -m claude_prospector dashboard --help` for the full surface. |
 
-Always include `--output <path>` and `--no-open` in the final command line, even when the user passed neither — they are quality-of-life defaults for the skill's invocation context.
+Always include `--no-open` in the final command line. When `$CLAUDE_PLUGIN_DATA` is set (the normal plugin context), omitting `--output` is fine — the CLI defaults to `$CLAUDE_PLUGIN_DATA/dashboard.html` automatically. Only pass `--output <path>` explicitly when the user requests a custom path or when running outside the plugin context.
 
 ## When the dashboard already exists
 
