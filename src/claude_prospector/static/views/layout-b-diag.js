@@ -516,7 +516,8 @@
       const pre = (p.byProject[name] && p.byProject[name].total_tokens) || 0;
       const authProj = window.DATA.by_project[name];
       const hasHistory = !!(authProj && authProj.total_tokens > cur);
-      return { name, cur, pre, delta: dlt(cur, pre, hasHistory) };
+      const full_path = (r.byProject[name] && r.byProject[name].full_path) || '';
+      return { name, cur, pre, delta: dlt(cur, pre, hasHistory), full_path };
     }).sort((a,b) => Math.abs(b.delta) - Math.abs(a.delta));
 
     const biggestUp = agents.filter(a => a.delta < 998 && a.delta > 0)
@@ -762,10 +763,12 @@
             const dt = new Date(s.start_time);
             const timeStr = dt.toLocaleString(undefined, { weekday:'short', month:'short', day:'numeric', hour:'numeric', minute:'2-digit' });
             const agents = (s.agents || []).map(a => `<span class="chip">${a}</span>`).join(' ');
+            const fp1 = s.project_path || '';
+            const ta1 = fp1 ? ` title="${fp1.replace(/"/g, '&quot;')}"` : '';
             return `
               <div class="row ${s._isOutlier ? 'outlier' : ''}">
                 <div>
-                  <div class="name">${s.project} ${s._isOutlier ? '<span class="outlier-flag">outlier</span>' : ''}</div>
+                  <div class="name"${ta1}>${s.project} ${s._isOutlier ? '<span class="outlier-flag">outlier</span>' : ''}</div>
                   <div class="meta">${timeStr} · ${CP.fmtDuration(s.duration_minutes)}</div>
                   <div class="agents">${agents}</div>
                 </div>
@@ -829,14 +832,17 @@
           <div class="movers-head">
             <div>Project</div><div class="r">7d</div><div class="r">prior 7d</div><div class="r">Δ</div>
           </div>
-          ${p.map(row => `
+          ${p.map(row => {
+            const fp3 = row.full_path || '';
+            const ta3 = fp3 ? ` title="${fp3.replace(/"/g, '&quot;')}"` : '';
+            return `
             <div class="movers-row">
-              <div class="nm proj">${row.name}</div>
+              <div class="nm proj"${ta3}>${row.name}</div>
               <div class="val">${CP.fmtTokens(row.cur)}</div>
               <div class="pre">${CP.fmtTokens(row.pre)}</div>
               ${dlt(row.delta)}
-            </div>
-          `).join('')}
+            </div>`;
+          }).join('')}
         </div>
       </div>`;
   }
@@ -1086,10 +1092,12 @@
             const parts = Object.entries(split).map(([m, t]) =>
               `<div style="width:${(t/splitTotal*100).toFixed(1)}%;background:${CP.modelColor(m)}"></div>`).join('');
             const agents = (s.agents || []).map(a => `<span class="chip">${a}</span>`).join(' ');
+            const fp2 = s.project_path || '';
+            const ta2 = fp2 ? ` title="${fp2.replace(/"/g, '&quot;')}"` : '';
             return `
               <div class="session-row">
                 <div class="time">${CP.fmtRelTime(s.start_time)}</div>
-                <div class="proj">${s.project}</div>
+                <div class="proj"${ta2}>${s.project}</div>
                 <div>${agents}</div>
                 <div class="tok">${CP.fmtTokens(s.total_tokens)}</div>
                 <div><div class="mini-bar">${parts}</div></div>
