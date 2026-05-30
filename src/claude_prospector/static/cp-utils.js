@@ -63,6 +63,14 @@
   function fmtDay(iso) {
     return new Date(iso + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   }
+  // Return a YYYY-MM-DD string in the viewer's local timezone.
+  // Uses toLocaleDateString('en-CA') which yields ISO-format local date
+  // (e.g. "2026-05-30") without UTC conversion.  This replaces
+  // d.toISOString().slice(0,10) (UTC) for all client-computed day-bucket
+  // keys so that "today" resolves in the viewer's local timezone.
+  function localDateKey(date) {
+    return date.toLocaleDateString('en-CA');
+  }
 
   // ── Model helpers ────────────────────────────────────────────────────────
   function modelColor(model) {
@@ -108,7 +116,7 @@
         byModel[m].total_tokens += t;
       }
 
-      const d = s.start_time.slice(0, 10);
+      const d = localDateKey(new Date(s.start_time));
       if (!byDay[d]) byDay[d] = { total_tokens: 0, by_model: {} };
       byDay[d].total_tokens += s.total_tokens;
       for (const [m, t] of Object.entries(s.model_split || {})) {
@@ -241,7 +249,7 @@
     const out = [];
     for (let i = days - 1; i >= 0; i--) {
       const d = new Date(now.getTime() - i * 86400000);
-      const key = d.toISOString().slice(0, 10);
+      const key = localDateKey(d);
       const row = byDay[key];
       if (!row) { out.push(0); continue; }
       if (!model) out.push(row.total_tokens);
@@ -254,6 +262,7 @@
   window.CP = {
     PALETTE,
     fmtTokens, fmtTokensFull, fmtPct, fmtDuration, fmtRelTime, fmtDay,
+    localDateKey,
     modelColor,
     windowCutoff, filterSessions, reAggregate, computeBuckets, forecastHit,
     sparkline,
