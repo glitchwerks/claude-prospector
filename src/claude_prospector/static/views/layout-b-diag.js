@@ -497,25 +497,30 @@
     const r = CP.reAggregate(recent, window.DATA.by_agent);
     const p = CP.reAggregate(prior,  window.DATA.by_agent);
 
-    function dlt(cur, pre) {
-      if (pre === 0) return cur > 0 ? 999 : 0;
+    // 999 = genuinely new (no history at all); 998 = resumed (history outside prior window)
+    function dlt(cur, pre, hasHistory) {
+      if (pre === 0) return cur > 0 ? (hasHistory ? 998 : 999) : 0;
       return Math.round((cur - pre) / pre * 100);
     }
 
     const agents = Object.keys(r.byAgent).filter(a => a !== 'general').map(a => {
       const cur = r.byAgent[a].total_tokens;
       const pre = (p.byAgent[a] && p.byAgent[a].total_tokens) || 0;
-      return { name: a, cur, pre, delta: dlt(cur, pre), model: r.byAgent[a].primary_model };
+      const auth = window.DATA.by_agent[a];
+      const hasHistory = !!(auth && auth.total_tokens > cur);
+      return { name: a, cur, pre, delta: dlt(cur, pre, hasHistory), model: r.byAgent[a].primary_model };
     }).sort((a,b) => Math.abs(b.delta) - Math.abs(a.delta));
 
     const projects = Object.keys(r.byProject).map(name => {
       const cur = r.byProject[name].total_tokens;
       const pre = (p.byProject[name] && p.byProject[name].total_tokens) || 0;
-      return { name, cur, pre, delta: dlt(cur, pre) };
+      const authProj = window.DATA.by_project[name];
+      const hasHistory = !!(authProj && authProj.total_tokens > cur);
+      return { name, cur, pre, delta: dlt(cur, pre, hasHistory) };
     }).sort((a,b) => Math.abs(b.delta) - Math.abs(a.delta));
 
-    const biggestUp = agents.filter(a => a.delta < 999 && a.delta > 0)
-      .concat(projects.filter(p => p.delta < 999 && p.delta > 0))
+    const biggestUp = agents.filter(a => a.delta < 998 && a.delta > 0)
+      .concat(projects.filter(p => p.delta < 998 && p.delta > 0))
       .sort((a,b) => b.delta - a.delta)[0];
 
     return { agents, projects, biggestUp };
@@ -790,8 +795,8 @@
 
   function tabMovers(diag, ctx) {
     function dlt(d) {
-      const cls = d >= 999 ? 'up' : d > 0 ? 'up' : d < 0 ? 'down' : 'flat';
-      const txt = d >= 999 ? 'new' : `${d > 0 ? '+' : ''}${d}%`;
+      const cls = d >= 998 ? 'up' : d > 0 ? 'up' : d < 0 ? 'down' : 'flat';
+      const txt = d >= 999 ? 'new' : d === 998 ? 'resumed' : `${d > 0 ? '+' : ''}${d}%`;
       return `<div class="delta ${cls}">${txt}</div>`;
     }
     const a = ctx.movers.agents.slice(0, 7);
