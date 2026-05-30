@@ -98,7 +98,13 @@ class SessionSummary:
 def _derive_project(entries: list[dict], slug_fallback: str | None = None) -> str:
     """Derive the project name from transcript entries.
 
-    Strategy:
+    Delegates to the shared
+    :func:`~claude_prospector.parser.derive_project_name` helper,
+    which applies the same cwd-first strategy used by the dashboard
+    pipeline.
+
+    Strategy (applied in order):
+
     1. First entry with a non-empty ``cwd`` field → ``Path(cwd).name``.
     2. Fallback: apply ``decode_project_hash`` to ``slug_fallback``
        (the transcript-directory name passed in by ``run()``).
@@ -113,24 +119,17 @@ def _derive_project(entries: list[dict], slug_fallback: str | None = None) -> st
     Returns:
         A non-empty project name string.
     """
-    from claude_prospector.parser import decode_project_hash
+    from claude_prospector.parser import derive_project_name
 
-    # Strategy 1: cwd field on any entry.
+    # Find the first non-empty cwd field in any entry.
+    cwd: str | None = None
     for entry in entries:
-        cwd = entry.get("cwd")
-        if cwd and isinstance(cwd, str):
-            name = Path(cwd).name
-            if name:
-                return name
+        raw_cwd = entry.get("cwd")
+        if raw_cwd and isinstance(raw_cwd, str):
+            cwd = raw_cwd
+            break
 
-    # Strategy 2: decode the project-hash slug supplied by the caller.
-    if slug_fallback:
-        decoded = decode_project_hash(slug_fallback)
-        if decoded:
-            return decoded
-
-    # Strategy 3: final fallback.
-    return "unknown"
+    return derive_project_name(cwd=cwd, slug_fallback=slug_fallback)
 
 
 def _extract_text_from_content(

@@ -30,7 +30,8 @@
     "fake-project-abc123": {
       "total_tokens": 15,
       "session_count": 1,
-      "message_count": 1
+      "message_count": 1,
+      "full_path": "fake-project-abc123"
     }
   },
   "by_day": {
@@ -50,6 +51,7 @@
     {
       "session_id": "session-001",
       "project": "fake-project-abc123",
+      "project_path": "fake-project-abc123",
       "start_time": "2026-03-01T10:00:01+00:00",
       "root_agent": "main",
       "agents": [
