@@ -7,12 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-05-30
+
 ### Added
 
 - Added `audit` subcommand (`python -m claude_prospector audit`) that
   deterministically inventories agents/skills, detects name collisions,
   computes Jaccard semantic overlaps, detects tool-coupling mismatches,
   and flags cache hygiene issues (closes #191).
+- **cwd-first project names** in the dashboard: the leaf directory name
+  (e.g. `claude-prospector`) is derived from the `cwd` field recorded
+  in the session when available, falling back to the decoded directory
+  slug. Full decoded path is shown on hover. A `project_exclude_patterns`
+  list in `config.json` lets you hide noise directories (Electron
+  internals, Warp worktrees, etc.) from the project breakdown by
+  case-sensitive substring match against the session's full path
+  (#203, closes #205).
 
 ### Changed
 
@@ -25,12 +35,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   format that defers to the user's intent rather than prescribing
   changes (closes #193).
 
+### Fixed
+
+- **Today/daily activity bucketed by local timezone instead of UTC**
+  (#197, closes #199). The dashboard's "today" bucket and per-day
+  activity bars previously used UTC midnight as the day boundary,
+  causing sessions that ran after midnight UTC but before local midnight
+  to appear on the wrong day.
+- **Movers tab distinguishes "resumed" from "new" sessions** (#200,
+  closes #202). The recent-movers pane previously classified all
+  sessions that appeared in the current window as "new". Sessions that
+  were already present in the prior window are now marked "resumed" so
+  the pane reflects only genuinely new activity.
+- **`dashboard --output` creates parent directories and defaults to the
+  plugin data location** (#201, closes #204). Passing an `--output`
+  path whose parent directory did not yet exist previously raised an
+  error. Parent directories are now created automatically. When
+  `--output` is omitted, the dashboard is written to
+  `${CLAUDE_PLUGIN_DATA}/dashboard.html` rather than the current
+  working directory.
+- **Full-path hover tooltip extended to all project-name surfaces**
+  (#206, closes #207). The decoded-path tooltip introduced with
+  cwd-first project names was only wired to the byProject card; it now
+  appears on every surface that displays a project name (session
+  drill-down rows, Movers entries, etc.).
+
 ## [0.9.1] - 2026-05-26
 
 ### Fixed
 
 - **Dashboard `--window` no longer filters out prior-period data needed for week-over-week comparison panes** (#188). The `dashboard` subcommand previously defaulted to `--window 7d`, which made the Economy v1 dashboard's recent-movers / burn-rate-trendline / "Why did total tokens change?" panes effectively unusable because the aggregator pre-dropped everything older than 7 days. Default is now "no window filter; aggregate the full session history". `--window` remains accepted as an explicit opt-in flag for users who want a scoped dashboard.
 
+[0.10.0]: https://github.com/glitchwerks/claude-prospector/releases/tag/v0.10.0
 [0.9.1]: https://github.com/glitchwerks/claude-prospector/releases/tag/v0.9.1
 
 ## [0.9.0] - 2026-05-26
