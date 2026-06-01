@@ -5,7 +5,13 @@ from __future__ import annotations
 import sys
 
 import claude_prospector
-from claude_prospector.cli import audit, config, dashboard, session_summary
+from claude_prospector.cli import (
+    audit,
+    config,
+    dashboard,
+    session_audit,
+    session_summary,
+)
 
 
 def main() -> None:
@@ -31,6 +37,7 @@ def main() -> None:
 
     dashboard.build_parser(subparsers)
     session_summary.build_parser(subparsers)
+    session_audit.build_parser(subparsers)
     config.build_parser(subparsers)
     audit.build_parser(subparsers)
 
@@ -45,6 +52,9 @@ def main() -> None:
 
     if args.subcommand == "session-summary":
         sys.exit(session_summary.run(args))
+
+    if args.subcommand == "session-audit":
+        sys.exit(session_audit.run(args))
 
     if args.subcommand == "config":
         sys.exit(config.run(args))
