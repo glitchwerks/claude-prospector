@@ -266,6 +266,72 @@ python -m claude_prospector session-summary --path ~/.claude/projects/<hash>/<se
 
 On any non-zero exit, stdout is empty and stderr contains exactly one line.
 
+### `session-audit` — ask-vs-action extraction at zero LLM cost
+
+```bash
+python -m claude_prospector session-audit --path <transcript.jsonl>
+```
+
+Reads a single Claude Code session transcript (`.jsonl`) and emits
+structured data capturing what was asked and what file edits were made,
+with **no API calls**.
+
+#### Flags
+
+| Flag | Default | Description |
+|---|---|---|
+| `--path <file>` | *(required)* | Path to the transcript JSONL file |
+| `--format json\|text` | `json` | Output format |
+| `--batch` | off | *(not yet implemented)* Walk `~/.claude/projects/**/*.jsonl` and emit per-session array |
+
+#### JSON schema (`--format json`)
+
+```json
+{
+    "original_ask": "<string or null>",
+    "prior_asks":   ["<string>", "..."],
+    "actions":      [
+        {"tool": "<Edit|Write|NotebookEdit>", "file_path": "<string>"},
+        "..."
+    ]
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `original_ask` | `string \| null` | Verbatim text of the **first** non-system, non-tool-result external user message. `null` when absent. |
+| `prior_asks` | `string[]` | Verbatim text of each subsequent distinct user ask, in transcript order. Empty array for single-ask sessions. |
+| `actions` | `object[]` | Chronologically ordered `Edit`/`Write`/`NotebookEdit` tool_use events. Bash invocations excluded. |
+
+#### Example output
+
+```json
+{
+  "original_ask": "Add a --dry-run flag to the CLI.",
+  "prior_asks": [
+    "Now also write tests for it.",
+    "close the pr"
+  ],
+  "actions": [
+    {"tool": "Edit", "file_path": "src/claude_prospector/__main__.py"},
+    {"tool": "Write", "file_path": "tests/test_dry_run.py"}
+  ]
+}
+```
+
+#### Exit codes
+
+| Code | Meaning | stderr |
+|---|---|---|
+| `0` | Success — output written to stdout | *(silent)* |
+| `1` | IO failure reading `--path` (file missing, permission denied, etc.) | `session-audit: cannot read transcript at '<path>': <OSError class>: <message>` |
+| `2` | File readable but contains no external user turns | `session-audit: transcript '<path>' contains no user turns` |
+| `3` | File has content but none of it parses as JSONL | `session-audit: transcript '<path>' is not valid JSONL` |
+
+On any non-zero exit, stdout is empty and stderr contains exactly one line.
+
+---
+
 ### `audit` — agent/skill inventory and hygiene report
 
 ```bash
