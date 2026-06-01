@@ -94,11 +94,11 @@ def _is_tool_result_entry(entry: dict) -> bool:
     # At least one block must be present, and every block with a
     # recognisable type must be "tool_result".
     tool_result_blocks = [
-        b for b in content
-        if isinstance(b, dict) and b.get("type") == "tool_result"
+        b for b in content if isinstance(b, dict) and b.get("type") == "tool_result"
     ]
     other_typed_blocks = [
-        b for b in content
+        b
+        for b in content
         if isinstance(b, dict)
         and b.get("type") is not None
         and b.get("type") != "tool_result"
@@ -119,10 +119,7 @@ def _is_real_user_ask(entry: dict) -> bool:
     Returns:
         ``True`` for genuine user asks.
     """
-    if not (
-        entry.get("type") == "user"
-        and entry.get("userType") == "external"
-    ):
+    if not (entry.get("type") == "user" and entry.get("userType") == "external"):
         return False
     return not _is_tool_result_entry(entry)
 
@@ -391,8 +388,7 @@ def run(args: argparse.Namespace) -> int:
     skipped = non_blank_lines - len(entries)
     if skipped > 0:
         print(
-            f"session-audit: skipped {skipped} malformed line(s) in "
-            f"'{path}'",
+            f"session-audit: skipped {skipped} malformed line(s) in " f"'{path}'",
             file=sys.stderr,
         )
 

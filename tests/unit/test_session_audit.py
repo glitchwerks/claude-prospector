@@ -375,9 +375,7 @@ class TestAuditSession:
         """User messages with list content blocks have text extracted."""
         mod = _import_module()
         entries = [
-            _user_line(
-                [{"type": "text", "text": "Ask from content block."}]
-            ),
+            _user_line([{"type": "text", "text": "Ask from content block."}]),
         ]
         result = mod.audit_session(entries)
         assert result["original_ask"] == "Ask from content block."
@@ -424,9 +422,7 @@ class TestAuditSession:
 class TestReadTranscriptGraceful:
     """Malformed and edge-case JSONL lines must be skipped gracefully."""
 
-    def test_malformed_lines_skipped_gracefully(
-        self, tmp_path: Path
-    ) -> None:
+    def test_malformed_lines_skipped_gracefully(self, tmp_path: Path) -> None:
         """Garbage JSONL lines must be skipped; valid lines must be parsed.
 
         A file with 1 valid user-ask line and 2 garbage lines must
@@ -436,11 +432,13 @@ class TestReadTranscriptGraceful:
         f = tmp_path / "test.jsonl"
         valid = json.dumps(_user_line("The real ask."))
         f.write_text(
-            "\n".join([
-                "NOT JSON AT ALL }{",
-                valid,
-                "also garbage",
-            ]),
+            "\n".join(
+                [
+                    "NOT JSON AT ALL }{",
+                    valid,
+                    "also garbage",
+                ]
+            ),
             encoding="utf-8",
         )
         entries, _count = mod.read_transcript(f)
@@ -494,11 +492,13 @@ class TestOutputFormats:
     def test_render_json_schema_structure(self) -> None:
         """render_json output must match the documented schema shape."""
         mod = _import_module()
-        result = mod.audit_session([
-            _user_line("First ask."),
-            _user_line("Second ask."),
-            _assistant_with_tool_use("Edit", "src/foo.py"),
-        ])
+        result = mod.audit_session(
+            [
+                _user_line("First ask."),
+                _user_line("Second ask."),
+                _assistant_with_tool_use("Edit", "src/foo.py"),
+            ]
+        )
         parsed = json.loads(mod.render_json(result))
         assert parsed["original_ask"] == "First ask."
         assert parsed["prior_asks"] == ["Second ask."]
@@ -516,10 +516,12 @@ class TestOutputFormats:
     def test_render_text_contains_section_headers(self) -> None:
         """render_text must include labelled sections."""
         mod = _import_module()
-        result = mod.audit_session([
-            _user_line("Fix it."),
-            _assistant_with_tool_use("Write", "out.py"),
-        ])
+        result = mod.audit_session(
+            [
+                _user_line("Fix it."),
+                _assistant_with_tool_use("Write", "out.py"),
+            ]
+        )
         output = mod.render_text(result)
         # Must include labelled headers
         assert "Original ask" in output or "original_ask" in output.lower()
@@ -538,10 +540,9 @@ class TestCLIRouting:
         """'python -m claude_prospector' help must list 'session-audit'."""
         result = _run_cli()
         # Decode with errors="replace" — help text may contain locale chars.
-        combined = (
-            result.stdout.decode("utf-8", errors="replace")
-            + result.stderr.decode("utf-8", errors="replace")
-        )
+        combined = result.stdout.decode(
+            "utf-8", errors="replace"
+        ) + result.stderr.decode("utf-8", errors="replace")
         assert "session-audit" in combined
 
     def test_session_audit_help_exits_0(self) -> None:
@@ -549,9 +550,7 @@ class TestCLIRouting:
         result = _run_cli("session-audit", "--help")
         assert result.returncode == 0
 
-    def test_session_audit_missing_file_exits_nonzero(
-        self, tmp_path: Path
-    ) -> None:
+    def test_session_audit_missing_file_exits_nonzero(self, tmp_path: Path) -> None:
         """Passing a nonexistent --path must exit non-zero."""
         missing = str(tmp_path / "nonexistent.jsonl")
         result = _run_cli("session-audit", "--path", missing)
@@ -574,9 +573,7 @@ class TestCLIRouting:
         assert result.returncode == 0
         assert "Do the thing." in result.stdout.decode("utf-8")
 
-    def test_session_audit_empty_transcript_exits_nonzero(
-        self, tmp_path: Path
-    ) -> None:
+    def test_session_audit_empty_transcript_exits_nonzero(self, tmp_path: Path) -> None:
         """An empty transcript (no user turns) must exit non-zero."""
         f = tmp_path / "empty.jsonl"
         f.write_text("", encoding="utf-8")
