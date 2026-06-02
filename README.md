@@ -11,7 +11,7 @@ Claude Code efficiency and hygiene toolkit. Surfaces token spend across the thre
 | `usage-analysis` | where your tokens are going |
 | `usage-dashboard` | regenerate the cost dashboard surface |
 | `claude-audit` | where your config has agent / skill overlap or bloat |
-| `session-variance` | whether a session stayed on task (opt-in LLM judgment) |
+| `session-analysis` | whether a session stayed on task (opt-in LLM judgment) |
 
 Claude Code's built-in `/usage` shows current-session token totals and — for Max/Pro subscribers — plan-usage bars on the same screen. It doesn't surface multi-day history, per-agent attribution with sub-agent nesting, per-skill invocation counts, or per-project breakdowns, and there's no way to ask "where are my Sonnet-7d tokens going this week?" from inside the session. There's also no built-in way to detect when two installed plugins ship overlapping `code-reviewer` agents or near-duplicate skills.
 
@@ -85,9 +85,9 @@ Audits your project's effective Claude Code configuration — custom and plugin-
 
 The skill is read-only — it does not modify any files. All recommendations are presented for your review.
 
-### `session-variance` skill
+### `session-analysis` skill
 
-The interpretive (LLM) complement to the deterministic `session-audit` CLI. Where `session-audit` extracts ask-vs-done for free, `session-variance` adds the judgment layer: did the agent stay on the original ask, and what did it acknowledge skipping?
+The interpretive (LLM) complement to the deterministic `session-audit` CLI. Where `session-audit` extracts ask-vs-done for free, `session-analysis` adds the judgment layer: did the agent stay on the original ask, and what did it acknowledge skipping?
 
 The skill loads `session-audit`'s extract (the 1a fields), then has the agent produce two judgment fields — `Variance` and `What was NOT done` — and persists a combined record via the `variance-save` subcommand.
 
@@ -96,14 +96,14 @@ The skill loads `session-audit`'s extract (the 1a fields), then has the agent pr
 - **Opt-in, not automatic.** Costs ~1-3k tokens of the current session; run it selectively on sessions you suspect drifted, not on every session.
 - **Sonnet or stronger recommended.** Judgment quality depends on the model.
 
-Trigger phrases: `/session-variance`, "did this session stay on task", "analyze session drift", "did the agent do what I asked", "what did this session skip".
+Trigger phrases: `/session-analysis`, "did this session stay on task", "analyze session drift", "did the agent do what I asked", "what did this session skip".
 
 Cross-references:
 - `session-audit` — free deterministic ask/actions extract (run this first)
 - `usage-analysis` — token-spend insights
 - `claude-audit` — agent/skill config overlap
 
-The full skill definition is at `skills/session-variance/SKILL.md`.
+The full skill definition is at `skills/session-analysis/SKILL.md`.
 
 ### `setup-prospector` skill
 

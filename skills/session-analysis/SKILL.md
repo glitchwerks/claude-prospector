@@ -1,5 +1,5 @@
 ---
-name: session-variance
+name: session-analysis
 description: >
   Use when the user wants a judgment-level read on whether a Claude Code
   session stayed on task — did the agent do what was originally asked, and
@@ -17,13 +17,13 @@ description: >
   agent/skill config overlap. Use THIS skill for "did this session drift from
   what I asked".
 
-  Trigger phrases: "/session-variance", "did this session stay on task",
+  Trigger phrases: "/session-analysis", "did this session stay on task",
   "analyze session drift", "did the agent do what I asked", "what did this
   session skip", "variance analysis for session", "audit this session for
   drift", "check session <id> for variance".
 ---
 
-# Session Variance Skill (1b)
+# Session Analysis Skill (1b)
 
 You are producing the **judgment** half of session drift-detection: given a
 session's deterministic ask-vs-done extract (from 1a), assess whether the
