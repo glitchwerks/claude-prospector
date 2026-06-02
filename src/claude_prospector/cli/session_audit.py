@@ -66,6 +66,56 @@ AuditResult = dict[str, Any]
 
 
 # ---------------------------------------------------------------------------
+# Session-id → path resolver (shared with variance_save)
+# ---------------------------------------------------------------------------
+
+
+def resolve_session_id_to_path(
+    session_id: str,
+    data_dir: Path,
+) -> Path:
+    """Resolve a session-id to its transcript JSONL path.
+
+    Walks ``data_dir/projects/**/<session_id>.jsonl`` (one glob level
+    deep into project directories) and returns the single matching path.
+
+    Args:
+        session_id: The Claude Code session identifier (filename stem).
+        data_dir: Root of the Claude data directory (e.g. ``~/.claude``).
+            The search walks ``<data_dir>/projects/``; if that
+            subdirectory does not exist, zero matches are returned.
+
+    Returns:
+        The resolved ``Path`` to the transcript JSONL file.
+
+    Raises:
+        FileNotFoundError: When no matching transcript is found.
+        ValueError: When more than one transcript matches the session-id.
+    """
+    projects_dir = data_dir / "projects"
+    if not projects_dir.is_dir():
+        raise FileNotFoundError(
+            f"session-id '{session_id}' not found: "
+            f"projects directory '{projects_dir}' does not exist."
+        )
+
+    matches = list(projects_dir.glob(f"*/{session_id}.jsonl"))
+
+    if len(matches) == 0:
+        raise FileNotFoundError(
+            f"session-id '{session_id}' not found under '{projects_dir}'."
+        )
+    if len(matches) > 1:
+        paths_str = ", ".join(str(m) for m in sorted(matches))
+        raise ValueError(
+            f"session-id '{session_id}' is ambiguous — "
+            f"found {len(matches)} transcripts: {paths_str}"
+        )
+
+    return matches[0]
+
+
+# ---------------------------------------------------------------------------
 # Core extraction — pure function, no I/O
 # ---------------------------------------------------------------------------
 
@@ -292,6 +342,11 @@ def build_parser(
 ) -> argparse.ArgumentParser:
     """Register the 'session-audit' subparser and return it.
 
+    Accepts either ``--path <transcript.jsonl>`` or
+    ``--session-id <id>``; exactly one is required.  When
+    ``--session-id`` is used, ``--data-dir`` controls the root of the
+    search (defaults to ``~/.claude``).
+
     Args:
         parent: The subparsers action from the top-level argument parser.
 
@@ -305,10 +360,31 @@ def build_parser(
             "transcript at zero LLM cost."
         ),
     )
-    p.add_argument(
+
+    # Mutually exclusive group: exactly one of --path or --session-id.
+    group = p.add_mutually_exclusive_group(required=True)
+    group.add_argument(
         "--path",
-        required=True,
         help="Path to the transcript JSONL file.",
+    )
+    group.add_argument(
+        "--session-id",
+        dest="session_id",
+        help=(
+            "Claude Code session-id.  Resolved to a transcript by "
+            "walking <data-dir>/projects/**/<id>.jsonl."
+        ),
+    )
+
+    p.add_argument(
+        "--data-dir",
+        dest="data_dir",
+        type=Path,
+        default=Path.home() / ".claude",
+        help=(
+            "Root of the Claude data directory used when resolving "
+            "--session-id (default: ~/.claude)."
+        ),
     )
     p.add_argument(
         "--format",
@@ -333,14 +409,18 @@ def build_parser(
 def run(args: argparse.Namespace) -> int:
     """Entry point for the session-audit subcommand.
 
-    Dispatches ``--path`` through the full parse → audit → render
-    pipeline, printing JSON (or text) to stdout on success and a
-    diagnostic line to stderr on failure.
+    Dispatches ``--path`` or ``--session-id`` through the full parse →
+    audit → render pipeline, printing JSON (or text) to stdout on
+    success and a diagnostic line to stderr on failure.
+
+    When ``--session-id`` is supplied, the id is resolved to a
+    transcript path by walking ``<args.data_dir>/projects/``.
 
     Args:
         args: Parsed CLI namespace.  Expected attributes:
-            ``args.path`` (str), ``args.output_format`` (str),
-            ``args.batch`` (bool).
+            ``args.path`` (str or None), ``args.session_id`` (str or
+            None), ``args.data_dir`` (Path), ``args.output_format``
+            (str), ``args.batch`` (bool).
 
     Returns:
         Integer exit code (one of ``EXIT_OK``, ``EXIT_IO_FAILURE``,
@@ -354,7 +434,19 @@ def run(args: argparse.Namespace) -> int:
         )
         return EXIT_IO_FAILURE
 
-    path = Path(args.path)
+    # Resolve transcript path from --path or --session-id.
+    if getattr(args, "session_id", None):
+        data_dir: Path = getattr(args, "data_dir", Path.home() / ".claude")
+        try:
+            path = resolve_session_id_to_path(args.session_id, data_dir)
+        except (FileNotFoundError, ValueError) as exc:
+            print(
+                f"session-audit: {exc}",
+                file=sys.stderr,
+            )
+            return EXIT_IO_FAILURE
+    else:
+        path = Path(args.path)
 
     # ── IO failure ──────────────────────────────────────────────────────
     try:

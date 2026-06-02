@@ -11,6 +11,7 @@ from claude_prospector.cli import (
     dashboard,
     session_audit,
     session_summary,
+    variance_save,
 )
 
 
@@ -40,6 +41,7 @@ def main() -> None:
     session_audit.build_parser(subparsers)
     config.build_parser(subparsers)
     audit.build_parser(subparsers)
+    variance_save.build_parser(subparsers)
 
     args = parser.parse_args()
 
@@ -61,6 +63,9 @@ def main() -> None:
 
     if args.subcommand == "audit":
         sys.exit(audit.run(args))
+
+    if args.subcommand == "variance-save":
+        sys.exit(variance_save.run(args))
 
 
 if __name__ == "__main__":

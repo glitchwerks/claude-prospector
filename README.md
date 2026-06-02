@@ -11,6 +11,7 @@ Claude Code efficiency and hygiene toolkit. Surfaces token spend across the thre
 | `usage-analysis` | where your tokens are going |
 | `usage-dashboard` | regenerate the cost dashboard surface |
 | `claude-audit` | where your config has agent / skill overlap or bloat |
+| `session-variance` | whether a session stayed on task (opt-in LLM judgment) |
 
 Claude Code's built-in `/usage` shows current-session token totals and — for Max/Pro subscribers — plan-usage bars on the same screen. It doesn't surface multi-day history, per-agent attribution with sub-agent nesting, per-skill invocation counts, or per-project breakdowns, and there's no way to ask "where are my Sonnet-7d tokens going this week?" from inside the session. There's also no built-in way to detect when two installed plugins ship overlapping `code-reviewer` agents or near-duplicate skills.
 
@@ -83,6 +84,26 @@ Audits your project's effective Claude Code configuration — custom and plugin-
 - "what's redundant in my setup"
 
 The skill is read-only — it does not modify any files. All recommendations are presented for your review.
+
+### `session-variance` skill
+
+The interpretive (LLM) complement to the deterministic `session-audit` CLI. Where `session-audit` extracts ask-vs-done for free, `session-variance` adds the judgment layer: did the agent stay on the original ask, and what did it acknowledge skipping?
+
+The skill loads `session-audit`'s extract (the 1a fields), then has the agent produce two judgment fields — `Variance` and `What was NOT done` — and persists a combined record via the `variance-save` subcommand.
+
+**Key constraints:**
+
+- **Opt-in, not automatic.** Costs ~1-3k tokens of the current session; run it selectively on sessions you suspect drifted, not on every session.
+- **Sonnet or stronger recommended.** Judgment quality depends on the model.
+
+Trigger phrases: `/session-variance`, "did this session stay on task", "analyze session drift", "did the agent do what I asked", "what did this session skip".
+
+Cross-references:
+- `session-audit` — free deterministic ask/actions extract (run this first)
+- `usage-analysis` — token-spend insights
+- `claude-audit` — agent/skill config overlap
+
+The full skill definition is at `skills/session-variance/SKILL.md`.
 
 ### `setup-prospector` skill
 
@@ -269,7 +290,11 @@ On any non-zero exit, stdout is empty and stderr contains exactly one line.
 ### `session-audit` — ask-vs-action extraction at zero LLM cost
 
 ```bash
+# By path
 python -m claude_prospector session-audit --path <transcript.jsonl>
+
+# By session-id (resolves transcript under ~/.claude/projects/)
+python -m claude_prospector session-audit --session-id <id>
 ```
 
 Reads a single Claude Code session transcript (`.jsonl`) and emits
@@ -280,7 +305,8 @@ with **no API calls**.
 
 | Flag | Default | Description |
 |---|---|---|
-| `--path <file>` | *(required)* | Path to the transcript JSONL file |
+| `--path <file>` | *(mutually exclusive with `--session-id`)* | Path to the transcript JSONL file |
+| `--session-id <id>` | *(mutually exclusive with `--path`)* | Session id; the transcript is resolved under `~/.claude/projects/` (override root with `--data-dir`) |
 | `--format json\|text` | `json` | Output format |
 | `--batch` | off | *(not yet implemented)* Walk `~/.claude/projects/**/*.jsonl` and emit per-session array |
 
@@ -329,6 +355,60 @@ with **no API calls**.
 | `3` | File has content but none of it parses as JSONL | `session-audit: transcript '<path>' is not valid JSONL` |
 
 On any non-zero exit, stdout is empty and stderr contains exactly one line.
+
+---
+
+### `variance-save` — persist combined audit + judgment
+
+```bash
+# Judgment supplied as a file
+python -m claude_prospector variance-save --session-id <id> --judgment-file <f>
+
+# Judgment supplied on stdin (--judgment-file omitted)
+python -m claude_prospector variance-save --session-id <id> < judgment.json
+```
+
+Re-runs `session-audit` internally (1a), merges the result with the supplied judgment JSON, and writes a combined record. Transcript search and output location are independent — the transcript is resolved under `~/.claude/projects/` (override with `--data-dir`); output goes to `<plugin-data-dir>/variance/<session-id>.json` by default (override with `--out <path>`). Prints the written path on success.
+
+#### Judgment input shape
+
+```json
+{"variance": "<str>", "not_done": "<str>", "severity": <int|null>}
+```
+
+`severity` is optional (0 = on task, 1 = minor drift, 2 = notable scope or skipped ask, 3 = session largely off task).
+
+#### Combined output schema
+
+```json
+{
+  "session_id": "<id>",
+  "original_ask": "<str|null>",
+  "prior_asks": ["<str>"],
+  "actions": [{"tool": "<Edit|Write|NotebookEdit>", "file_path": "<str>"}],
+  "variance": "<str>",
+  "not_done": "<str>",
+  "severity": "<int|null>"
+}
+```
+
+This artifact is the intended input for future drift-aggregation work (see issue #63).
+
+| Flag | Default | Description |
+|---|---|---|
+| `--session-id <id>` | *(required)* | Session id; transcript resolved under `--data-dir` |
+| `--judgment-file <f>` | stdin | Path to the judgment JSON file; omit to read from stdin |
+| `--data-dir <dir>` | `~/.claude` | Root under which `projects/` is searched for the transcript |
+| `--out <path>` | `<plugin-data-dir>/variance/<id>.json` | Override the output path |
+
+#### Exit codes
+
+| Code | Meaning | stderr |
+|---|---|---|
+| `0` | Success — combined record written; path printed to stdout | *(silent)* |
+| `1` | IO failure (transcript missing, judgment unreadable, output unwritable) | `variance-save: <reason>` |
+| `2` | Transcript found but contains no user turns | `variance-save: transcript '<path>' contains no user turns` |
+| `3` | Judgment input is not valid JSON or missing required fields | `variance-save: judgment: <reason>` |
 
 ---
 
