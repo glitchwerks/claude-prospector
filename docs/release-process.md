@@ -15,6 +15,12 @@ The **Quick reference card** at the end is the section to keep open during a rel
 - [ ] `.claude-plugin/plugin.json` `version` = target version
 - [ ] Release PR body lists `Closes #N` for every issue being closed (one keyword per issue)
 
+## Post-release checklist
+
+- [ ] `publish-pypi` workflow job is green
+- [ ] `github-release` workflow job is green — GitHub Release exists at `https://github.com/glitchwerks/claude-prospector/releases/tag/vX.Y.Z`
+- [ ] Marketplace pin bumped (steps 7–9)
+
 ---
 
 ## Release classification
@@ -54,7 +60,7 @@ git -C <repo> tag -a vX.Y.Z <merge-sha> -m "vX.Y.Z"
 git -C <repo> push origin vX.Y.Z
 ```
 
-This triggers `release.yml`: build → wheel-smoke → publish-pypi, in sequence. Pre-release tags (`-rc`, `-alpha`, `-beta`) publish to TestPyPI instead.
+This triggers `release.yml`: build → wheel-smoke → publish-pypi → github-release, in sequence. Pre-release tags (`-rc`, `-alpha`, `-beta`) publish to TestPyPI instead and do **not** create a GitHub Release.
 
 **5. Wait for the release workflow**
 
@@ -63,7 +69,28 @@ gh run list --repo glitchwerks/claude-prospector
 gh run view <run-id> --repo glitchwerks/claude-prospector
 ```
 
-All three jobs must be green. The `wheel-smoke` job gates publish: it installs the wheel into a fresh venv and runs `python -m claude_prospector dashboard` against a fixture. Do not proceed until publish-pypi is green.
+All four jobs must be green: `build`, `wheel-smoke`, `publish-pypi`, and `github-release`. The `wheel-smoke` job gates `publish-pypi`; `publish-pypi` gates `github-release`. Do not proceed until all four are green.
+
+**5a. Verify the GitHub Release was created**
+
+The `github-release` workflow job creates the Release automatically. Verify it exists:
+
+```bash
+gh release view vX.Y.Z --repo glitchwerks/claude-prospector
+```
+
+If the `github-release` job failed, create the Release manually using the extracted release notes:
+
+```bash
+python scripts/extract-changelog-section.py X.Y.Z CHANGELOG.md > /tmp/release-notes.md
+gh release create vX.Y.Z --repo glitchwerks/claude-prospector \
+  --verify-tag \
+  --title "vX.Y.Z" \
+  --notes-file /tmp/release-notes.md \
+  --latest
+```
+
+Do not proceed to step 6 until the GitHub Release exists.
 
 **6. Dereference the annotated tag**
 
@@ -166,6 +193,16 @@ Then open a new Claude Code session and run `/reload-plugins`.
 
 ---
 
+### GitHub Releases were silently skipped for v0.8.2–v0.10.0
+
+**Rule:** Always verify the `github-release` workflow job is green after pushing a tag. Do not consider a release complete until a GitHub Release exists at `https://github.com/glitchwerks/claude-prospector/releases/tag/vX.Y.Z`.
+
+**Source of truth:** Issue #214. Tags and PyPI packages were shipped for v0.8.2, v0.9.0, v0.9.1, and v0.10.0 with no corresponding GitHub Releases, because neither the runbook nor the workflow had a GitHub Release step. The releases were backfilled manually from `CHANGELOG.md`.
+
+**Comply:** The `github-release` workflow job (added in PR #214) automates this. Verify it is green in step 5 above. If it fails, use the manual fallback in step 5a before proceeding.
+
+---
+
 ## Rollback procedure
 
 1. **Yank from PyPI** — use the PyPI web UI (`https://pypi.org/manage/project/claude-prospector/releases/`) to yank the version. Yank hides it from unconstrained installs; Delete is irreversible.
@@ -191,7 +228,10 @@ Pre-flight
     git -C <repo> tag -a vX.Y.Z <sha> -m "vX.Y.Z"
 4.  git -C <repo> push origin vX.Y.Z
 5.  gh run view <run-id> --repo glitchwerks/claude-prospector
-    # wait for build + wheel-smoke + publish-pypi all green
+    # wait for build + wheel-smoke + publish-pypi + github-release all green
+5a. gh release view vX.Y.Z --repo glitchwerks/claude-prospector
+    # verify GitHub Release exists; use manual fallback in step 5a if job failed
+    # [ ] GitHub Release at https://github.com/glitchwerks/claude-prospector/releases/tag/vX.Y.Z
 6.  git -C <repo> rev-parse 'vX.Y.Z^{commit}'   # commit SHA (not tag-obj SHA)
 7.  Open PR on glitchwerks/plugins: bump sha + version in marketplace.json
 8.  Merge marketplace PR

@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Automated GitHub Release creation** in `release.yml` (#214). A new
+  `github-release` workflow job runs after `publish-pypi` succeeds on
+  stable tags (same `!contains(-rc/-alpha/-beta)` guard). It extracts the
+  matching `## [X.Y.Z]` section from `CHANGELOG.md` via
+  `scripts/extract-changelog-section.py` and creates the GitHub Release via
+  `gh release create --verify-tag --latest`. Pre-release tags continue to
+  publish to TestPyPI only and do not produce a GitHub Release.
+- `scripts/extract-changelog-section.py` — helper script that extracts a
+  single version's section from a Keep-a-Changelog formatted file. Accepts
+  `<version>` (with or without a leading `v`) and an optional
+  `<changelog-path>`; exits non-zero when the version is absent. Used by the
+  `github-release` workflow job; covered by unit tests in
+  `tests/unit/test_extract_changelog_section.py`.
+
+### Changed
+
+- `docs/release-process.md` updated with a post-release checklist, a revised
+  step 5 (verify all four workflow jobs), a new step 5a (verify/fallback for
+  GitHub Release), an updated Quick Reference Card, and a new Footguns entry
+  documenting the v0.8.2–v0.10.0 incident where GitHub Releases were silently
+  skipped (#214).
+
 ## [0.10.0] - 2026-05-30
 
 ### Added
