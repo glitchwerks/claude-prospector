@@ -68,9 +68,7 @@ def extract_section(changelog_text: str, version: str) -> str | None:
     # Lines like "[0.10.0]: https://..."  are not release notes.
     lines = section_body.splitlines()
     content_lines = [
-        line
-        for line in lines
-        if not re.match(r"^\[[\d.]+\]:\s+https?://", line)
+        line for line in lines if not re.match(r"^\[[\d.]+\]:\s+https?://", line)
     ]
 
     return "\n".join(content_lines).strip()
