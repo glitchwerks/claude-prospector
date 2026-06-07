@@ -44,7 +44,8 @@ Combined JSON schema::
                           "file_path": "<str>"}, ...],
         "variance":     "<str>",
         "not_done":     "<str>",
-        "severity":     <int | null>
+        "severity":     <int | null>,
+        "timestamp":    "<ISO-8601 UTC str | null>"
     }
 
 Fields:
@@ -65,6 +66,10 @@ Fields:
     severity:
         Integer severity rating (caller-defined scale), or ``null``.
         Optional.
+    timestamp:
+        ISO-8601 UTC string of the earliest transcript entry that carries
+        a top-level ``"timestamp"`` key, or ``null`` when no such entry
+        exists.  Derived from the raw transcript entries at write time.
 
 Exit codes:
     0  Success — path of written file printed to stdout.
@@ -77,6 +82,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -97,6 +103,59 @@ EXIT_VALIDATION_FAILURE = 2
 
 JudgmentDict = dict[str, Any]
 VarianceRecord = dict[str, Any]
+
+# ---------------------------------------------------------------------------
+# Timestamp derivation — pure helper, no I/O
+# ---------------------------------------------------------------------------
+
+
+def _earliest_transcript_timestamp(
+    entries: list[dict],
+) -> str | None:
+    """Derive the earliest timestamp from raw transcript entry dicts.
+
+    Collects every top-level ``"timestamp"`` value found in *entries*,
+    normalises each using the ``Z``→``+00:00`` substitution (mirroring
+    ``parser._parse_timestamp``), takes the minimum, and returns it as
+    an ISO-8601 UTC string.
+
+    When no entry carries a ``"timestamp"`` key the function returns
+    ``None`` — the aggregator's mtime fallback handles this at read time.
+
+    The entries are **raw** ``json.loads`` dicts as returned by
+    :func:`~claude_prospector.cli.session_summary.read_transcript`;
+    they are not ``parser.Message`` objects.
+
+    Args:
+        entries: List of raw dicts parsed from a JSONL transcript.
+
+    Returns:
+        ISO-8601 UTC string for the earliest entry timestamp, or
+        ``None`` when no entry carries a ``"timestamp"`` key.
+    """
+    ts_candidates = [e["timestamp"] for e in entries if "timestamp" in e]
+    if not ts_candidates:
+        return None
+
+    # Normalise each candidate string (Z → +00:00) and parse to datetime.
+    parsed: list[datetime] = []
+    for raw_ts in ts_candidates:
+        normalised = raw_ts.replace("Z", "+00:00")
+        try:
+            parsed.append(datetime.fromisoformat(normalised))
+        except ValueError:
+            # Malformed timestamp — skip this entry.
+            continue
+
+    if not parsed:
+        return None
+
+    earliest = min(parsed)
+    # Ensure result is UTC-aware and format as ISO-8601.
+    if earliest.tzinfo is None:
+        earliest = earliest.replace(tzinfo=timezone.utc)
+    return earliest.isoformat()
+
 
 # ---------------------------------------------------------------------------
 # Validation
@@ -130,6 +189,7 @@ def combine_variance(
     session_id: str,
     audit: dict[str, Any],
     judgment: JudgmentDict,
+    timestamp: str | None = None,
 ) -> VarianceRecord:
     """Merge 1a audit data with judgment fields into the combined schema.
 
@@ -138,6 +198,9 @@ def combine_variance(
     (via :func:`validate_judgment`).
 
     ``severity`` defaults to ``None`` when absent from *judgment*.
+    ``timestamp`` defaults to ``None`` (legacy path); pass the value
+    returned by :func:`_earliest_transcript_timestamp` from
+    :func:`save_variance_record` to populate the field.
 
     Args:
         session_id: The Claude Code session identifier.
@@ -145,6 +208,10 @@ def combine_variance(
             and ``actions`` (as returned by :func:`audit_session`).
         judgment: Dict with keys ``variance`` (str), ``not_done`` (str),
             and optionally ``severity`` (int or None).
+        timestamp: ISO-8601 UTC string of the earliest transcript entry
+            timestamp, or ``None`` when no entry carries a timestamp.
+            Defaults to ``None`` so existing positional callers are
+            unaffected.
 
     Returns:
         A combined :data:`VarianceRecord` dict matching the module-level
@@ -158,6 +225,7 @@ def combine_variance(
         "variance": judgment["variance"],
         "not_done": judgment["not_done"],
         "severity": judgment.get("severity"),
+        "timestamp": timestamp,
     }
 
 
@@ -240,7 +308,11 @@ def save_variance_record(
     entries, _non_blank = read_transcript(transcript_path)
     audit = audit_session(entries)
 
-    record = combine_variance(session_id, audit, judgment)
+    # Derive earliest timestamp from raw entry dicts while `entries` is in
+    # scope (raw json.loads dicts — not parser.Message objects).
+    timestamp = _earliest_transcript_timestamp(entries)
+
+    record = combine_variance(session_id, audit, judgment, timestamp=timestamp)
 
     if out_path is None:
         effective_base = (

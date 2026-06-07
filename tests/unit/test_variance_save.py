@@ -378,7 +378,10 @@ class TestCombineVariance:
         self,
         good_judgment: dict,
     ) -> None:
-        """combine_variance output has all required combined-schema keys."""
+        """combine_variance output has all required combined-schema keys.
+
+        Phase 0: schema now includes 'timestamp'.
+        """
         mod = _import_variance_save()
         audit = {
             "original_ask": "Do the thing.",
@@ -394,8 +397,30 @@ class TestCombineVariance:
             "variance",
             "not_done",
             "severity",
+            "timestamp",
         }
         assert required == set(result.keys())
+
+    def test_timestamp_default_is_none(
+        self,
+        good_judgment: dict,
+    ) -> None:
+        """timestamp defaults to None when not passed to combine_variance."""
+        mod = _import_variance_save()
+        audit = {"original_ask": None, "prior_asks": [], "actions": []}
+        result = mod.combine_variance("s-ts-default", audit, good_judgment)
+        assert result["timestamp"] is None
+
+    def test_timestamp_populated_when_passed(
+        self,
+        good_judgment: dict,
+    ) -> None:
+        """timestamp field is preserved when a value is passed explicitly."""
+        mod = _import_variance_save()
+        audit = {"original_ask": None, "prior_asks": [], "actions": []}
+        ts = "2026-01-15T10:30:00+00:00"
+        result = mod.combine_variance("s-ts-value", audit, good_judgment, timestamp=ts)
+        assert result["timestamp"] == ts
 
     def test_session_id_in_output(
         self,
@@ -543,6 +568,7 @@ class TestVarianceSaveIntegration:
             "variance",
             "not_done",
             "severity",
+            "timestamp",
         }
         assert required == set(record.keys())
         assert record["session_id"] == session_id
@@ -1041,3 +1067,181 @@ class TestDecoupledRoots:
         assert (
             args.data_dir == expected_default
         ), f"Expected data_dir default {expected_default}, got {args.data_dir}"
+
+
+# ===========================================================================
+# TestTimestampProducer — Phase 0: timestamp derivation in save_variance_record
+# ===========================================================================
+
+
+def _user_line_with_ts(
+    text: str,
+    timestamp: str,
+    session_id: str = "test-session",
+) -> dict:
+    """Build a minimal user message dict with a top-level timestamp.
+
+    Args:
+        text: Plain-text message content.
+        timestamp: ISO-8601 timestamp string.
+        session_id: The session identifier string.
+
+    Returns:
+        A dict shaped like a real Claude Code JSONL user entry with
+        a top-level ``"timestamp"`` key.
+    """
+    return {
+        "type": "user",
+        "userType": "external",
+        "sessionId": session_id,
+        "timestamp": timestamp,
+        "message": {"role": "user", "content": text},
+    }
+
+
+class TestTimestampProducer:
+    """save_variance_record must compute earliest transcript timestamp.
+
+    Phase 0 regression tests:
+    - Earliest timestamp from raw entry dicts is written to the record.
+    - When no entry carries a timestamp, the field is null.
+    - The saved record JSON file includes the ``timestamp`` key.
+    """
+
+    @pytest.fixture()
+    def transcript_with_timestamps(
+        self,
+        tmp_path: Path,
+    ) -> tuple[Path, str]:
+        """Transcript where entries carry ``timestamp`` keys.
+
+        Two entries: later timestamp first, earlier timestamp second.
+        The producer must pick the earliest (second entry).
+
+        Returns:
+            Tuple of ``(data_dir, session_id)``.
+        """
+        session_id = "ts-session-001"
+        project_dir = tmp_path / "projects" / "C--ts-project"
+        project_dir.mkdir(parents=True)
+        transcript = project_dir / f"{session_id}.jsonl"
+        _write_jsonl(
+            transcript,
+            [
+                _user_line_with_ts(
+                    "Later ask.",
+                    "2026-03-10T12:00:00Z",
+                    session_id=session_id,
+                ),
+                _user_line_with_ts(
+                    "Earlier ask.",
+                    "2026-03-10T09:15:30Z",
+                    session_id=session_id,
+                ),
+                _assistant_with_edit("Edit", "src/foo.py", session_id=session_id),
+            ],
+        )
+        return tmp_path, session_id
+
+    @pytest.fixture()
+    def transcript_without_timestamps(
+        self,
+        tmp_path: Path,
+    ) -> tuple[Path, str]:
+        """Transcript where no entry carries a ``timestamp`` key.
+
+        Returns:
+            Tuple of ``(data_dir, session_id)``.
+        """
+        session_id = "no-ts-session-001"
+        project_dir = tmp_path / "projects" / "C--no-ts-project"
+        project_dir.mkdir(parents=True)
+        transcript = project_dir / f"{session_id}.jsonl"
+        _write_jsonl(
+            transcript,
+            [
+                _user_line("Build it.", session_id=session_id),
+                _assistant_with_edit("Edit", "src/bar.py", session_id=session_id),
+            ],
+        )
+        return tmp_path, session_id
+
+    def test_earliest_timestamp_written_to_record(
+        self,
+        transcript_with_timestamps: tuple[Path, str],
+        good_judgment: dict,
+    ) -> None:
+        """Record timestamp equals the earliest entry timestamp in the transcript."""
+        data_dir, session_id = transcript_with_timestamps
+        mod = _import_variance_save()
+        out_path = mod.save_variance_record(
+            session_id=session_id,
+            data_dir=data_dir,
+            judgment=good_judgment,
+            out_base_dir=data_dir,
+        )
+        with open(out_path, encoding="utf-8") as fh:
+            record = json.load(fh)
+        # Earliest raw entry is "2026-03-10T09:15:30Z" → normalised UTC
+        assert record["timestamp"] is not None
+        assert "2026-03-10" in record["timestamp"]
+        assert "09:15:30" in record["timestamp"]
+
+    def test_timestamp_is_utc_iso_string(
+        self,
+        transcript_with_timestamps: tuple[Path, str],
+        good_judgment: dict,
+    ) -> None:
+        """Record timestamp is a valid ISO-8601 UTC string (parseable)."""
+        from datetime import datetime
+
+        data_dir, session_id = transcript_with_timestamps
+        mod = _import_variance_save()
+        out_path = mod.save_variance_record(
+            session_id=session_id,
+            data_dir=data_dir,
+            judgment=good_judgment,
+            out_base_dir=data_dir,
+        )
+        with open(out_path, encoding="utf-8") as fh:
+            record = json.load(fh)
+        ts = record["timestamp"]
+        assert ts is not None
+        parsed = datetime.fromisoformat(ts)
+        assert parsed.tzinfo is not None, "timestamp must be tz-aware"
+
+    def test_timestamp_null_when_no_entries_carry_timestamp(
+        self,
+        transcript_without_timestamps: tuple[Path, str],
+        good_judgment: dict,
+    ) -> None:
+        """timestamp is null when no transcript entry carries a timestamp key."""
+        data_dir, session_id = transcript_without_timestamps
+        mod = _import_variance_save()
+        out_path = mod.save_variance_record(
+            session_id=session_id,
+            data_dir=data_dir,
+            judgment=good_judgment,
+            out_base_dir=data_dir,
+        )
+        with open(out_path, encoding="utf-8") as fh:
+            record = json.load(fh)
+        assert record["timestamp"] is None
+
+    def test_record_json_includes_timestamp_key(
+        self,
+        transcript_with_timestamps: tuple[Path, str],
+        good_judgment: dict,
+    ) -> None:
+        """Written JSON record must always contain the 'timestamp' key."""
+        data_dir, session_id = transcript_with_timestamps
+        mod = _import_variance_save()
+        out_path = mod.save_variance_record(
+            session_id=session_id,
+            data_dir=data_dir,
+            judgment=good_judgment,
+            out_base_dir=data_dir,
+        )
+        with open(out_path, encoding="utf-8") as fh:
+            record = json.load(fh)
+        assert "timestamp" in record
