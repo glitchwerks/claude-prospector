@@ -419,9 +419,7 @@ class TestCombineVariance:
         mod = _import_variance_save()
         audit = {"original_ask": None, "prior_asks": [], "actions": []}
         ts = "2026-01-15T10:30:00+00:00"
-        result = mod.combine_variance(
-            "s-ts-value", audit, good_judgment, timestamp=ts
-        )
+        result = mod.combine_variance("s-ts-value", audit, good_judgment, timestamp=ts)
         assert result["timestamp"] == ts
 
     def test_session_id_in_output(
@@ -1140,9 +1138,7 @@ class TestTimestampProducer:
                     "2026-03-10T09:15:30Z",
                     session_id=session_id,
                 ),
-                _assistant_with_edit(
-                    "Edit", "src/foo.py", session_id=session_id
-                ),
+                _assistant_with_edit("Edit", "src/foo.py", session_id=session_id),
             ],
         )
         return tmp_path, session_id
@@ -1165,9 +1161,7 @@ class TestTimestampProducer:
             transcript,
             [
                 _user_line("Build it.", session_id=session_id),
-                _assistant_with_edit(
-                    "Edit", "src/bar.py", session_id=session_id
-                ),
+                _assistant_with_edit("Edit", "src/bar.py", session_id=session_id),
             ],
         )
         return tmp_path, session_id

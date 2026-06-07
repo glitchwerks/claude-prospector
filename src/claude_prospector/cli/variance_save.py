@@ -133,9 +133,7 @@ def _earliest_transcript_timestamp(
         ISO-8601 UTC string for the earliest entry timestamp, or
         ``None`` when no entry carries a ``"timestamp"`` key.
     """
-    ts_candidates = [
-        e["timestamp"] for e in entries if "timestamp" in e
-    ]
+    ts_candidates = [e["timestamp"] for e in entries if "timestamp" in e]
     if not ts_candidates:
         return None
 
