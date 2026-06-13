@@ -76,6 +76,74 @@ def decode_project_hash_full(hash_name: str) -> str:
     return "/".join([first] + rest)
 
 
+def _fold_worktree_cwd_parts(parts: list[str]) -> str | None:
+    """Return the owner-repo name from cwd parts when inside a worktree.
+
+    Recognises two worktree layouts:
+
+    * ``<repo>/.worktrees/<branch>`` — ``.worktrees`` at index *i* means
+      the owner repo leaf is ``parts[i - 1]``.
+    * ``<repo>/.claude/worktrees/<name>`` — ``worktrees`` at index *i*
+      with ``parts[i - 1] == ".claude"`` means the owner repo leaf is
+      ``parts[i - 2]``.
+
+    Returns the owner-repo leaf string, or ``None`` when the parts list
+    does not match either worktree pattern.
+
+    Args:
+        parts: Path components produced by splitting a cwd string on
+            ``/`` and ``\\`` (trailing separators already stripped).
+
+    Returns:
+        Owner repo leaf name, or ``None`` if no worktree pattern matched.
+    """
+    for i, part in enumerate(parts):
+        if part == ".worktrees" and i >= 1:
+            return parts[i - 1]
+        if part == "worktrees" and i >= 2 and parts[i - 1] == ".claude":
+            return parts[i - 2]
+    return None
+
+
+def _fold_worktree_slug_segments(segments: list[str]) -> str | None:
+    """Return the owner-repo name from slug ``--``-segments for worktrees.
+
+    In the Claude Code slug encoding each path component separator becomes
+    ``--``, while hyphens within a component name stay as ``-``.  The
+    ``.`` in ``.worktrees`` is dropped, producing a segment that starts
+    with ``"worktrees-"``.  For ``.claude/worktrees`` the two components
+    merge into a segment starting with ``"claude-worktrees-"``.
+
+    When a matching segment is found at index *i*, the owner repo is the
+    segment at ``i - 1``.  Because the segment may encode several path
+    components joined by ``-`` (due to the lossiness of the slug encoding),
+    we extract the project name as the **last two ``-``-separated tokens**
+    of the owner segment — a heuristic that recovers a two-word repo name
+    such as ``"my-api"`` from a composite segment such as
+    ``"repos-my-api"``.
+
+    Args:
+        segments: The ``--``-split components of a Claude Code project
+            slug, e.g. ``["I", "ai-claude-claude-prospector",
+            "worktrees-fix-auth"]``.
+
+    Returns:
+        Owner repo name string, or ``None`` if no worktree segment found.
+    """
+    for i, seg in enumerate(segments):
+        if (
+            seg.startswith("worktrees-") or seg.startswith("claude-worktrees-")
+        ) and i >= 1:
+            owner_seg = segments[i - 1]
+            # The owner segment may encode a chain of path components
+            # as hyphen-separated tokens (lossy).  Take the last two
+            # tokens to recover a two-word project name; single-token
+            # names fall out naturally.
+            tokens = owner_seg.split("-")
+            return "-".join(tokens[-2:]) if len(tokens) >= 2 else owner_seg
+    return None
+
+
 def derive_project_name(
     cwd: str | None,
     slug_fallback: str | None,
@@ -84,14 +152,18 @@ def derive_project_name(
 
     Strategy (applied in order):
 
-    1. When *cwd* is a non-empty string, extract the leaf directory by
-       splitting on both ``/`` and ``\\`` (so Windows paths analysed on
-       Linux still resolve correctly).  This is always more accurate than
-       the slug-based decode because it comes directly from the session
-       record.
-    2. When *slug_fallback* is a non-empty string, return
-       ``decode_project_hash(slug_fallback)`` — the last ``--``-separated
-       segment of the encoded directory name.
+    1. When *cwd* is a non-empty string, split on both ``/`` and ``\\``
+       (so Windows paths analysed on Linux still resolve correctly) and
+       check for a git worktree layout:
+
+       * ``<repo>/.worktrees/<branch>`` → resolve to ``<repo>`` leaf.
+       * ``<repo>/.claude/worktrees/<name>`` → resolve to ``<repo>`` leaf.
+       * Otherwise fall back to the plain leaf directory (existing
+         behaviour — no regression for non-worktree paths).
+
+    2. When *slug_fallback* is a non-empty string, apply the equivalent
+       worktree-folding logic on the ``--``-separated segments, then fall
+       back to ``decode_project_hash`` for non-worktree slugs.
     3. Final fallback: ``"unknown"``.
 
     This logic is intentionally shared between the dashboard pipeline
@@ -114,11 +186,16 @@ def derive_project_name(
         # separators, so Windows paths analysed on Linux (where pathlib
         # treats '\' as a literal character) still yield the correct leaf.
         parts = re.split(r"[\\/]+", cwd.rstrip("\\/"))
-        name = parts[-1] if parts else ""
+        # Attempt worktree folding before falling back to the leaf.
+        name = _fold_worktree_cwd_parts(parts) or (parts[-1] if parts else "")
         if name:
             return name
 
     if slug_fallback:
+        segments = slug_fallback.split("--")
+        folded = _fold_worktree_slug_segments(segments)
+        if folded:
+            return folded
         decoded = decode_project_hash(slug_fallback)
         if decoded:
             return decoded
