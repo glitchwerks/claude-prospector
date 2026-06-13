@@ -302,9 +302,7 @@ class TestAgentPath:
         matching, so any ID containing 'fable' must return 'fable', not the
         full model string.
         """
-        record = self._make(
-            agent_path=("general-purpose",), model="claude-fable-1-0"
-        )
+        record = self._make(agent_path=("general-purpose",), model="claude-fable-1-0")
         assert record.model_short == "fable", (
             "claude-fable-1-0 must map to 'fable' via substring match. "
             "If this fails, 'fable' is not yet in the model_short tier tuple "
