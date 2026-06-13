@@ -57,12 +57,13 @@ class MessageRecord:
         after a model-version bump (issue #196).
 
         Returns:
-            ``"opus"``, ``"sonnet"``, or ``"haiku"`` when the tier name is
-            found as a substring of :attr:`model`.  Returns the full
-            :attr:`model` string when no known tier name is present (e.g. a
-            hypothetical future model ID that omits the tier name entirely).
+            ``"opus"``, ``"sonnet"``, ``"haiku"``, or ``"fable"`` when the
+            tier name is found as a substring of :attr:`model`.  Returns the
+            full :attr:`model` string when no known tier name is present
+            (e.g. a hypothetical future model ID that omits the tier name
+            entirely).
         """
-        for name in ("opus", "sonnet", "haiku"):
+        for name in ("opus", "sonnet", "haiku", "fable"):
             if name in self.model:
                 return name
         return self.model

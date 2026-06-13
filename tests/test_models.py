@@ -295,6 +295,22 @@ class TestAgentPath:
                 f"{model!r} must map to 'opus'. " f"Got {record.model_short!r} instead."
             )
 
+    def test_model_short_fable(self) -> None:
+        """claude-fable-* model IDs must classify as 'fable' (issue #224).
+
+        'fable' is a new Anthropic model tier.  model_short uses substring
+        matching, so any ID containing 'fable' must return 'fable', not the
+        full model string.
+        """
+        record = self._make(
+            agent_path=("general-purpose",), model="claude-fable-1-0"
+        )
+        assert record.model_short == "fable", (
+            "claude-fable-1-0 must map to 'fable' via substring match. "
+            "If this fails, 'fable' is not yet in the model_short tier tuple "
+            "and the property falls back to returning the full model string."
+        )
+
     def test_parallel_field_independence(self):
         """agent_type and agent_path are stored independently — neither derived.
 
