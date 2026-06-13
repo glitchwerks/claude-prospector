@@ -129,6 +129,16 @@ def _fold_worktree_slug_segments(segments: list[str]) -> str | None:
 
     Returns:
         Owner repo name string, or ``None`` if no worktree segment found.
+
+    Note:
+        **Known limitation (accepted, issue #232):** this path is
+        best-effort.  The slug encoding flattens ``/`` boundaries into
+        ``-``, so a multi-token repo name (e.g. ``my-awesome-api``) may
+        be truncated to its last two tokens (``awesome-api``).  This can
+        split such a repo across dashboard rows for sessions that have no
+        ``cwd``.  The cwd-based path in ``derive_project_name`` is
+        unaffected and correct.  Do not change this heuristic without
+        revisiting issue #232.
     """
     for i, seg in enumerate(segments):
         if (
