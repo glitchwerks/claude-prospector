@@ -7,6 +7,7 @@ import pytest
 
 from claude_prospector.parser import (
     decode_project_hash,
+    derive_project_name,
     parse_sessions,
     _parse_session,
     _parse_jsonl_messages,
@@ -967,3 +968,135 @@ class TestEmptyAgentTypeDefense:
             assert (
                 msg.agent_path[-1] == "unknown"
             ), f"Expected agent_path leaf='unknown', got {msg.agent_path!r}"
+
+
+# ---------------------------------------------------------------------------
+# TestDeriveProjectNameWorktreeRollup  (issue #229)
+# ---------------------------------------------------------------------------
+
+
+class TestDeriveProjectNameWorktreeRollup:
+    """Tests for worktree-aware project name derivation (issue #229).
+
+    The current implementation returns the leaf directory, which is wrong
+    for git worktrees — the leaf is the branch/worktree name, not the
+    owner repo name.  All tests in this class must FAIL until the fix
+    lands in derive_project_name.
+    """
+
+    # ------------------------------------------------------------------
+    # AC1: cwd under <repo>/.worktrees/<branch>
+    # ------------------------------------------------------------------
+
+    def test_dot_worktrees_cwd_returns_owner_repo(self) -> None:
+        """cwd inside .worktrees/<branch> resolves to owner repo leaf.
+
+        e.g. I:/ai/claude/claude-prospector/.worktrees/fix-auth
+             -> 'claude-prospector', NOT 'fix-auth'.
+        """
+        cwd = "I:/ai/claude/claude-prospector/.worktrees/fix-auth"
+        result = derive_project_name(cwd, None)
+        assert result == "claude-prospector"
+
+    def test_dot_worktrees_cwd_windows_backslash(self) -> None:
+        """Back-slash Windows paths under .worktrees resolve correctly."""
+        cwd = r"I:\ai\claude\claude-prospector\.worktrees\fix-auth"
+        result = derive_project_name(cwd, None)
+        assert result == "claude-prospector"
+
+    def test_dot_worktrees_cwd_mixed_separators(self) -> None:
+        """Mixed separators under .worktrees resolve to owner repo."""
+        cwd = r"C:\repos\my-app/.worktrees/feature-branch"
+        result = derive_project_name(cwd, None)
+        assert result == "my-app"
+
+    # ------------------------------------------------------------------
+    # AC2: cwd under <repo>/.claude/worktrees/<name>
+    # ------------------------------------------------------------------
+
+    def test_dot_claude_worktrees_cwd_returns_owner_repo(self) -> None:
+        """cwd inside .claude/worktrees/<name> resolves to owner repo leaf.
+
+        e.g. I:/ai/claude/claude-prospector/.claude/worktrees/amazing-hodgkin
+             -> 'claude-prospector', NOT 'amazing-hodgkin'.
+        """
+        cwd = (
+            "I:/ai/claude/claude-prospector" "/.claude/worktrees/amazing-hodgkin-3b436a"
+        )
+        result = derive_project_name(cwd, None)
+        assert result == "claude-prospector"
+
+    def test_dot_claude_worktrees_cwd_windows_backslash(self) -> None:
+        """Back-slash .claude/worktrees path resolves to owner repo."""
+        cwd = r"C:\Users\chris\projects\my-api" r"\.claude\worktrees\some-session-id"
+        result = derive_project_name(cwd, None)
+        assert result == "my-api"
+
+    # ------------------------------------------------------------------
+    # AC3: normal (non-worktree) cwd -- no regression
+    # ------------------------------------------------------------------
+
+    @pytest.mark.parametrize(
+        "cwd, expected",
+        [
+            ("/home/user/projects/my-service", "my-service"),
+            ("C:/repos/cool-app", "cool-app"),
+            (r"C:\repos\cool-app", "cool-app"),
+            ("/home/user/project/", "project"),
+            ("/myrepo", "myrepo"),
+        ],
+    )
+    def test_normal_cwd_unchanged(self, cwd: str, expected: str) -> None:
+        """Non-worktree cwd still returns the leaf directory (no regression)."""
+        assert derive_project_name(cwd, None) == expected
+
+    def test_none_cwd_falls_through_to_slug(self) -> None:
+        """None cwd falls through to slug_fallback, not 'unknown'.
+
+        Uses a slug that ends cleanly on the project leaf (no worktree
+        segment), so the existing decode_project_hash path is exercised
+        in its happy-path form.
+        """
+        # "C--Users-chris--repos--my-project" -> last segment is
+        # "my-project" after decode_project_hash strips drive+parents.
+        slug = "C--Users-chris--repos--my-project"
+        result = derive_project_name(None, slug)
+        assert result == "my-project"
+
+    def test_both_none_returns_unknown(self) -> None:
+        """Both args None returns 'unknown'."""
+        assert derive_project_name(None, None) == "unknown"
+
+    # ------------------------------------------------------------------
+    # AC4: slug-only fallback for worktree-encoded paths
+    # ------------------------------------------------------------------
+
+    def test_slug_dot_worktrees_segment_folds_to_owner_repo(self) -> None:
+        """Slug with '--worktrees-' fold returns owner repo, not branch name.
+
+        e.g. 'I--ai-claude-claude-prospector--worktrees-fix-auth'
+             -> 'claude-prospector', NOT 'fix-auth'.
+        """
+        slug = "I--ai-claude-claude-prospector--worktrees-fix-auth"
+        result = derive_project_name(None, slug)
+        assert result == "claude-prospector"
+
+    def test_slug_dot_claude_worktrees_segment_folds_to_owner_repo(
+        self,
+    ) -> None:
+        """Slug with '--claude-worktrees-' fold returns owner repo.
+
+        e.g. 'I--ai-claude-claude-prospector--claude-worktrees-amazing-hodgkin'
+             -> 'claude-prospector'.
+        """
+        slug = (
+            "I--ai-claude-claude-prospector" "--claude-worktrees-amazing-hodgkin-3b436a"
+        )
+        result = derive_project_name(None, slug)
+        assert result == "claude-prospector"
+
+    def test_slug_worktrees_with_hyphenated_branch_name(self) -> None:
+        """Multi-hyphen branch names in slug still resolve to owner repo."""
+        slug = "C--repos-my-api--worktrees-fix-issue-229-rollup"
+        result = derive_project_name(None, slug)
+        assert result == "my-api"
