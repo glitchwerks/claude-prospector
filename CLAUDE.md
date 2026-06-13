@@ -37,7 +37,7 @@ uv build --wheel                           # local wheel build (used by release 
 
 ## CI gates
 
-CI runs Lint, Test (Ubuntu + Windows), Skill Smoke (Ubuntu + Windows), and — on the release workflow only — **`wheel-smoke`** (added in PR #139 for issue #138). The wheel-smoke job installs the built wheel into a fresh venv and runs `python -m claude_prospector dashboard` end-to-end. Any change touching wheel contents — `pyproject.toml` `package-data`, `MANIFEST.in`, `[build-system]`, the template loader, or anything that affects what gets packaged — MUST be verified locally before PR:
+CI runs Lint, Test (Ubuntu + Windows), Skill Smoke (Ubuntu + Windows), and — on the release workflow only — **`wheel-smoke`**. **The Lint gate = TWO commands: `uv run ruff check .` AND `uv run ruff format --check .`.** Local verification must run both — `ruff check` alone misses unformatted files that `ruff format --check` flags (caused a CI lint failure on PR #225). (added in PR #139 for issue #138). The wheel-smoke job installs the built wheel into a fresh venv and runs `python -m claude_prospector dashboard` end-to-end. Any change touching wheel contents — `pyproject.toml` `package-data`, `MANIFEST.in`, `[build-system]`, the template loader, or anything that affects what gets packaged — MUST be verified locally before PR:
 
 ```bash
 uv build --wheel
