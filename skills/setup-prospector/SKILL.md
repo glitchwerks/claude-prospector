@@ -26,10 +26,13 @@ and after any plugin version update.
 Read the `CLAUDE_PLUGIN_DATA` environment variable, but **do not trust it
 blindly**. When this skill is driven from a main session, `CLAUDE_PLUGIN_DATA`
 may be set to a *different* plugin's data dir (observed in the wild as
-`.../data/codex-openai-codex`). Before using it, confirm its basename matches
-this plugin's slug `claude-prospector-glitchwerks`. If `CLAUDE_PLUGIN_DATA` is
-unset, empty, or its basename points at another plugin, ignore it and compute
-the default instead:
+`.../data/codex-openai-codex`). Before using it, confirm its basename begins
+with `claude-prospector-` — i.e. it is *this* plugin's data dir. The marketplace
+suffix may legitimately differ (`-glitchwerks` for the public install, or
+another suffix for a local/forked marketplace), so match the `claude-prospector-`
+prefix, **not** a hardcoded marketplace. If `CLAUDE_PLUGIN_DATA` is unset, empty,
+or its basename belongs to a *different* plugin, ignore it and compute the
+default instead (using the canonical `glitchwerks` marketplace slug):
 
 ```
 ~/.claude/plugins/data/claude-prospector-glitchwerks/
