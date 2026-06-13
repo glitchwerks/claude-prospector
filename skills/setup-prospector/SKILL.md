@@ -23,14 +23,21 @@ and after any plugin version update.
 
 ## Step 1: Resolve `${CLAUDE_PLUGIN_DATA}`
 
-Read the `CLAUDE_PLUGIN_DATA` environment variable. If unset, compute the default:
+Read the `CLAUDE_PLUGIN_DATA` environment variable, but **do not trust it
+blindly**. When this skill is driven from a main session, `CLAUDE_PLUGIN_DATA`
+may be set to a *different* plugin's data dir (observed in the wild as
+`.../data/codex-openai-codex`). Before using it, confirm its basename matches
+this plugin's slug `claude-prospector-glitchwerks`. If `CLAUDE_PLUGIN_DATA` is
+unset, empty, or its basename points at another plugin, ignore it and compute
+the default instead:
 
 ```
-~/.claude/plugins/data/claude-prospector-claude-prospector/
+~/.claude/plugins/data/claude-prospector-glitchwerks/
 ```
 
-The slug is the plugin ID `claude-prospector@claude-prospector` with every
-character outside `[a-zA-Z0-9_-]` replaced by a hyphen.
+The slug is `<plugin>-<marketplace>` — `claude-prospector` published from the
+`glitchwerks` marketplace — with every character outside `[a-zA-Z0-9_-]`
+replaced by a hyphen.
 
 Create the directory if it does not exist.
 
@@ -116,7 +123,7 @@ Write `${CLAUDE_PLUGIN_DATA}/setup-state.json` with this shape:
 ```
 
 The `venv_path` is the absolute path to the venv root (e.g.
-`C:/Users/alice/.claude/plugins/data/claude-prospector-claude-prospector/venv`).
+`C:/Users/alice/.claude/plugins/data/claude-prospector-glitchwerks/venv`).
 The `interpreter` is the raw command string from Step 2 (e.g. `py -3` or
 `python3`), not an absolute path, so re-setup can reuse it.
 
