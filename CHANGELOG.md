@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.1] - 2026-06-13
+
+### Fixed
+
+- **`setup-prospector` Step 1 named the wrong default plugin-data slug.**
+  The slug was incorrectly rendered as `claude-prospector-claude-prospector`;
+  corrected to `<plugin>-<marketplace>` = `claude-prospector-glitchwerks`.
+  Also hardened `CLAUDE_PLUGIN_DATA` handling: if the environment variable
+  points at a directory whose basename does not start with `claude-prospector-`,
+  the computed default slug is used instead of trusting the foreign path
+  (#209, closes #209, PR #230).
+- **`derive_project_name` now folds git-worktree sessions into their owner
+  repo.** Sessions whose `cwd` matches `<repo>/.worktrees/<branch>` or
+  `<repo>/.claude/worktrees/<name>` are attributed to the owner repository
+  instead of appearing as separate dashboard projects (PR #231, closes #229).
+- **Documented the accepted best-effort limitation of the no-`cwd` worktree
+  fallback.** When no `cwd` is recorded, slug-only heuristics may truncate
+  multi-token repo names and lose path-boundary information; this is a known
+  limitation and is now noted in the relevant docstring and docs
+  (PR #234, closes #232).
+
 ## [0.11.0] - 2026-06-13
 
 ### Added
@@ -124,6 +145,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Dashboard `--window` no longer filters out prior-period data needed for week-over-week comparison panes** (#188). The `dashboard` subcommand previously defaulted to `--window 7d`, which made the Economy v1 dashboard's recent-movers / burn-rate-trendline / "Why did total tokens change?" panes effectively unusable because the aggregator pre-dropped everything older than 7 days. Default is now "no window filter; aggregate the full session history". `--window` remains accepted as an explicit opt-in flag for users who want a scoped dashboard.
 
+[0.11.1]: https://github.com/glitchwerks/claude-prospector/releases/tag/v0.11.1
 [0.11.0]: https://github.com/glitchwerks/claude-prospector/releases/tag/v0.11.0
 [0.10.0]: https://github.com/glitchwerks/claude-prospector/releases/tag/v0.10.0
 [0.9.1]: https://github.com/glitchwerks/claude-prospector/releases/tag/v0.9.1
