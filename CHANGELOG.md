@@ -5,10 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.11.0] - 2026-06-13
 
 ### Added
 
+- **`session-audit` CLI subcommand** (`python -m claude_prospector session-audit
+  --path <transcript.jsonl>`) — deterministic, zero-LLM-cost extractor that
+  reads a Claude Code session transcript and emits structured
+  `original_ask / prior_asks / actions` data. Supersedes the abandoned
+  Stop-hook self-audit spike (#129). `--session-id` lookup and
+  `--format text` output also supported (#212).
+- **`session-analysis` skill** — LLM-assisted interpretive complement to
+  `session-audit`. Runs inside the current Claude session to produce
+  `variance / not_done / severity` judgments and persists a combined record
+  via `variance-save` for downstream drift aggregation (#213).
+- **`drift-report` CLI subcommand** (`python -m claude_prospector drift-report`)
+  — reads accumulated `variance/<id>.json` records and reports drift
+  frequency, severity distribution, and a per-day trend over a configurable
+  window (`--window` or `--from`/`--to`). Implements the drift-aggregation
+  spec (Phase 1 of #219; #220).
 - **Automated GitHub Release creation** in `release.yml` (#214). A new
   `github-release` workflow job runs after `publish-pypi` succeeds on
   stable tags (same `!contains(-rc/-alpha/-beta)` guard). It extracts the
@@ -25,11 +40,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`timestamp` field added to variance records** (`variance/<id>.json`).
+  Derived from the earliest raw transcript entry (with mtime fallback for
+  pre-field records), giving the forthcoming `drift-report` aggregator a
+  reliable time anchor. Phase 0 of #217 (#218).
+- **`model_short` recognizes the `fable` model tier.** Token usage for Fable
+  model variants (e.g. `claude-fable-1-0`) now groups under a dedicated
+  `fable` tier instead of falling through to the raw model-ID string in
+  aggregation output (#225).
 - `docs/release-process.md` updated with a post-release checklist, a revised
   step 5 (verify all four workflow jobs), a new step 5a (verify/fallback for
   GitHub Release), an updated Quick Reference Card, and a new Footguns entry
   documenting the v0.8.2–v0.10.0 incident where GitHub Releases were silently
   skipped (#214).
+- `docs/spikes/2026-05-19-self-audit-spike.md` salvaged from the retired
+  `self-audit-spike-129` branch, reframed as concluded/cancelled exploratory
+  work retained for historical record. The spike's elicitation evidence (5/5
+  session shapes met the rubric) is preserved; the Stop-hook mechanism was
+  rejected on cost/UX grounds and superseded by `session-audit` (#211).
+- `docs/superpowers/specs/drift-aggregation.md` finalized after adversarial
+  inquisitor review. Four blocking errors corrected (timestamp anchor location,
+  raw-dict data path, `_parse_window` return type, stale sequencing note) and
+  verified against the producer code (#216).
+- `CLAUDE.md § CI gates` updated to spell out both Lint commands explicitly:
+  `uv run ruff check .` and `uv run ruff format --check .` (#227).
 
 ## [0.10.0] - 2026-05-30
 
@@ -90,6 +124,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Dashboard `--window` no longer filters out prior-period data needed for week-over-week comparison panes** (#188). The `dashboard` subcommand previously defaulted to `--window 7d`, which made the Economy v1 dashboard's recent-movers / burn-rate-trendline / "Why did total tokens change?" panes effectively unusable because the aggregator pre-dropped everything older than 7 days. Default is now "no window filter; aggregate the full session history". `--window` remains accepted as an explicit opt-in flag for users who want a scoped dashboard.
 
+[0.11.0]: https://github.com/glitchwerks/claude-prospector/releases/tag/v0.11.0
 [0.10.0]: https://github.com/glitchwerks/claude-prospector/releases/tag/v0.10.0
 [0.9.1]: https://github.com/glitchwerks/claude-prospector/releases/tag/v0.9.1
 
