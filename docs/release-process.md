@@ -20,6 +20,7 @@ The **Quick reference card** at the end is the section to keep open during a rel
 - [ ] `publish-pypi` workflow job is green
 - [ ] `github-release` workflow job is green — GitHub Release exists at `https://github.com/glitchwerks/claude-prospector/releases/tag/vX.Y.Z`
 - [ ] Marketplace pin bumped (steps 7–9)
+- [ ] buildwithclaude listing synced (PR to `davepoon/buildwithclaude`) — see § Sync the buildwithclaude listing
 
 ---
 
@@ -203,6 +204,33 @@ Then open a new Claude Code session and run `/reload-plugins`.
 
 ---
 
+## Sync the buildwithclaude listing (external marketplace)
+
+`claude-prospector` is also listed in the community marketplace [davepoon/buildwithclaude](https://github.com/davepoon/buildwithclaude) as a github-source entry (added in davepoon/buildwithclaude#181). That entry mirrors `version` (plus `description` / `keywords`) from this repo's `.claude-plugin/plugin.json`. It is **separate** from the `glitchwerks` marketplace pin (steps 7–9): that pin gates installs; this one only refreshes the public community listing.
+
+After each release, refresh the buildwithclaude entry.
+
+> **Why this is manual — and stays out of `release.yml`.** The target is an *external* repo. A CI-driven cross-repo PR would require a long-lived PAT with write access to a buildwithclaude fork, which we do not want to provision or manage. This is a deliberate manual checklist step. **Do not automate it in `release.yml`.**
+>
+> **Scope.** For a github-source entry the listed `version` is display/discovery metadata only — installs resolve this repo's live `plugin.json`, so a stale entry never breaks installs.
+
+**Steps**
+
+1. Sync your `cbeaulieu-gt/buildwithclaude` fork's `main` with upstream:
+   ```bash
+   git -C <fork> fetch upstream
+   git -C <fork> push origin upstream/main:main
+   ```
+2. Branch, then edit `.claude-plugin/marketplace.json` → the `claude-prospector` entry → set `version` to `X.Y.Z` (and `description` / `keywords` if they changed) to match `plugin.json`.
+3. Open the PR to upstream:
+   ```bash
+   gh pr create --repo davepoon/buildwithclaude --base main \
+     --head cbeaulieu-gt:sync-claude-prospector-vX.Y.Z \
+     --title "Update claude-prospector to vX.Y.Z"
+   ```
+
+---
+
 ## Rollback procedure
 
 1. **Yank from PyPI** — use the PyPI web UI (`https://pypi.org/manage/project/claude-prospector/releases/`) to yank the version. Yank hides it from unconstrained installs; Delete is irreversible.
@@ -237,6 +265,10 @@ Pre-flight
 8.  Merge marketplace PR
 9.  gh api repos/glitchwerks/plugins/contents/.claude-plugin/marketplace.json \
       --jq '.content' | base64 -d | grep -A 6 '"claude-prospector"'
+9b. [External] Sync buildwithclaude listing:
+      sync cbeaulieu-gt/buildwithclaude fork → edit marketplace.json claude-prospector entry (version/desc/keywords)
+      gh pr create --repo davepoon/buildwithclaude --base main \
+        --head cbeaulieu-gt:sync-claude-prospector-vX.Y.Z --title "Update claude-prospector to vX.Y.Z"
 
 Repo move only (source.repo changed):
 10. rm -rf ~/.claude/plugins/cache/glitchwerks/claude-prospector/
