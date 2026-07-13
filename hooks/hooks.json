@@ -26,7 +26,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"${CLAUDE_PLUGIN_ROOT}/hooks/dashboard-regen.py\" --autoregen \"${user_config.autoregen}\""
+            "command": "python",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/hooks/dashboard-regen.py",
+              "--autoregen",
+              "${user_config.autoregen}"
+            ]
           }
         ]
       }
