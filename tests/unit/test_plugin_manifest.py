@@ -86,7 +86,22 @@ def test_stop_hook_dashboard_regen_uses_exec_form() -> None:
     `args` array, with `command` reduced to the bare executable name.
     """
     data = _load_hooks_json()
-    stop_entry = data["hooks"]["Stop"][0]["hooks"][0]
+
+    stop_entry = None
+    for group in data["hooks"]["Stop"]:
+        for entry in group.get("hooks", []):
+            haystack = list(entry.get("args", [])) + [entry.get("command", "")]
+            if any("dashboard-regen.py" in str(item) for item in haystack):
+                stop_entry = entry
+                break
+        if stop_entry is not None:
+            break
+
+    assert stop_entry is not None, (
+        "Could not find a Stop hook entry referencing "
+        "'dashboard-regen.py' in hooks/hooks.json's 'Stop' hooks. "
+        "Searched all hook groups and entries under data['hooks']['Stop']."
+    )
 
     assert "args" in stop_entry, (
         "Stop hook's dashboard-regen entry has no 'args' key, so it is "
@@ -111,20 +126,15 @@ def test_stop_hook_dashboard_regen_uses_exec_form() -> None:
     )
 
     args = stop_entry["args"]
-    assert any(
-        "${CLAUDE_PLUGIN_ROOT}/hooks/dashboard-regen.py" == arg for arg in args
-    ), (
-        "Stop hook's 'args' must contain the literal element "
-        '"${CLAUDE_PLUGIN_ROOT}/hooks/dashboard-regen.py" (unquoted — '
-        "exec-form args are passed literally, with no shell quoting "
-        f"needed). Got args: {args!r}."
-    )
-    assert "--autoregen" in args, (
-        f"Stop hook's 'args' must still contain the '--autoregen' flag. "
-        f"Got args: {args!r}."
-    )
-    assert "${user_config.autoregen}" in args, (
-        "Stop hook's 'args' must still contain the literal element "
-        '"${user_config.autoregen}" — the flag\'s value must be '
-        f"relocated into args, not dropped. Got args: {args!r}."
+    expected_args = [
+        "${CLAUDE_PLUGIN_ROOT}/hooks/dashboard-regen.py",
+        "--autoregen",
+        "${user_config.autoregen}",
+    ]
+    assert args == expected_args, (
+        "Stop hook's 'args' must be exactly "
+        f"{expected_args!r} (script path, then '--autoregen', then its "
+        f"value, in that order — unquoted, since exec-form args are "
+        f"passed literally with no shell quoting needed). Got args: "
+        f"{args!r}."
     )
