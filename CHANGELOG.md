@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.2] - 2026-07-14
+
+### Fixed
+
+- **Stop hook failed with a hard error on Claude Code v2.1.207+** (#236). `hooks/hooks.json`'s `Stop` entry registered `dashboard-regen.py` as a shell-form command interpolating `${user_config.autoregen}`, which v2.1.207+ rejects as a shell re-parse risk. Converted the entry to exec form (`command` as the bare executable, `args` as an array), so `${user_config.autoregen}` substitutes as a plain string with no shell involved. `SessionStart` and `PreToolUse` entries were untouched (PR #237).
+
 ## [0.11.1] - 2026-06-13
 
 ### Fixed
@@ -145,6 +151,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Dashboard `--window` no longer filters out prior-period data needed for week-over-week comparison panes** (#188). The `dashboard` subcommand previously defaulted to `--window 7d`, which made the Economy v1 dashboard's recent-movers / burn-rate-trendline / "Why did total tokens change?" panes effectively unusable because the aggregator pre-dropped everything older than 7 days. Default is now "no window filter; aggregate the full session history". `--window` remains accepted as an explicit opt-in flag for users who want a scoped dashboard.
 
+[0.11.2]: https://github.com/glitchwerks/claude-prospector/releases/tag/v0.11.2
 [0.11.1]: https://github.com/glitchwerks/claude-prospector/releases/tag/v0.11.1
 [0.11.0]: https://github.com/glitchwerks/claude-prospector/releases/tag/v0.11.0
 [0.10.0]: https://github.com/glitchwerks/claude-prospector/releases/tag/v0.10.0
