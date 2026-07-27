@@ -388,11 +388,12 @@ Re-runs `session-audit` internally (1a), merges the result with the supplied jud
   "actions": [{"tool": "<Edit|Write|NotebookEdit>", "file_path": "<str>"}],
   "variance": "<str>",
   "not_done": "<str>",
-  "severity": "<int|null>"
+  "severity": "<int|null>",
+  "timestamp": "<ISO-8601 UTC str|null>"
 }
 ```
 
-This artifact is the intended input for future drift-aggregation work (see issue #63).
+`timestamp` is the earliest raw-transcript-entry timestamp, or `null` when none is found. This artifact is the input to the `drift-report` subcommand below, which reads every record under `<base_dir>/variance/`.
 
 | Flag | Default | Description |
 |---|---|---|
@@ -409,6 +410,138 @@ This artifact is the intended input for future drift-aggregation work (see issue
 | `1` | IO failure (transcript missing, judgment unreadable, output unwritable) | `variance-save: <reason>` |
 | `2` | Transcript found but contains no user turns | `variance-save: transcript '<path>' contains no user turns` |
 | `3` | Judgment input is not valid JSON or missing required fields | `variance-save: judgment: <reason>` |
+
+---
+
+### `drift-report` — aggregate drift across variance records
+
+```bash
+# Default: last 7 days, machine-readable JSON
+python -m claude_prospector drift-report
+
+# Relative window
+python -m claude_prospector drift-report --window 48h
+
+# Absolute date range
+python -m claude_prospector drift-report --from 2026-07-01 --to 2026-07-08
+
+# Human-readable text summary
+python -m claude_prospector drift-report --format text
+
+# Custom variance-records root
+python -m claude_prospector drift-report --base-dir /path/to/base
+```
+
+Reads every `<base_dir>/variance/*.json` record written by `variance-save`, filters to a time window, and computes drift frequency, severity distribution, and a per-day trend. No LLM cost — purely deterministic aggregation over records already on disk.
+
+This is the last acceptance criterion from the drift-aggregation epic (issue #63, closed); the aggregation logic itself shipped in PR #220.
+
+#### Flags
+
+| Flag | Default | Description |
+|---|---|---|
+| `--window WINDOW` | `7d` | Relative time window, e.g. `7d` or `48h`. Maximum effective range is 366 days. Mutually exclusive with `--from` |
+| `--from YYYY-MM-DD` | *(none)* | Absolute start date (inclusive). Defaults `--to` to now if omitted. Mutually exclusive with `--window`. Range must not exceed 366 days |
+| `--to YYYY-MM-DD` | now | Absolute end date (exclusive). Not part of the `--window`/`--from` mutually exclusive group — pairs with `--from`; ignored if `--window` is also given |
+| `--format {json,text}` | `json` | `json` is the machine-readable contract; `text` renders an ASCII summary with a per-day trend bar chart |
+| `--base-dir PATH` | plugin data base dir | Root whose `variance/` sub-directory is scanned. Resolved from `CLAUDE_PROSPECTOR_BASE_DIR` > `CLAUDE_PLUGIN_DATA` > `~/.claude/claude-prospector` when omitted. This is the **variance-records root**, independent of `session-audit`/`variance-save`'s `--data-dir` (transcript root) — if `variance-save --out` wrote records elsewhere, point `--base-dir` there too |
+
+#### JSON schema (`--format json`)
+
+```json
+{
+    "window": {
+        "from": "<ISO-8601 UTC>",
+        "to":   "<ISO-8601 UTC>"
+    },
+    "total_records":             "<int>",
+    "skipped_records":           "<int>",
+    "records_without_timestamp": "<int>",
+    "drift": {
+        "drifted":    "<int>",
+        "clean":      "<int>",
+        "drift_rate": "<float, 3 dp>"
+    },
+    "severity_distribution": {
+        "0": "<int>", "1": "<int>", "2": "<int>",
+        "3": "<int>", "null": "<int>"
+    },
+    "trend": [
+        {
+            "date":       "YYYY-MM-DD",
+            "total":      "<int>",
+            "drifted":    "<int>",
+            "drift_rate": "<float, 3 dp>"
+        }
+    ]
+}
+```
+
+Invariant: `sum(severity_distribution.values()) == total_records`.
+
+`skipped_records` counts variance files that failed to parse as JSON — this is not an error condition; malformed records are silently skipped and the run still exits `0`. `records_without_timestamp` counts records anchored by file mtime rather than the `timestamp` field, for legacy records that pre-date it (see the `timestamp` note in the `variance-save` section above); a non-zero count means the trend's day placement for those records may be unreliable.
+
+Drift classification is severity-primary: `severity` of 1, 2, or 3 counts as drifted, `0` counts as clean, and a `null`/absent `severity` falls back to a prose check on the `variance` field (empty string or `"no variance"`, case-insensitively, counts as clean; any other non-empty text counts as drifted).
+
+#### Example output (`--format json`)
+
+```json
+{
+  "window": {
+    "from": "2026-07-19T00:00:00+00:00",
+    "to": "2026-07-23T00:00:00+00:00"
+  },
+  "total_records": 4,
+  "skipped_records": 0,
+  "records_without_timestamp": 0,
+  "drift": {
+    "drifted": 1,
+    "clean": 3,
+    "drift_rate": 0.25
+  },
+  "severity_distribution": {
+    "0": 2,
+    "1": 0,
+    "2": 1,
+    "3": 0,
+    "null": 1
+  },
+  "trend": [
+    {"date": "2026-07-19", "total": 0, "drifted": 0, "drift_rate": 0.0},
+    {"date": "2026-07-20", "total": 1, "drifted": 0, "drift_rate": 0.0},
+    {"date": "2026-07-21", "total": 2, "drifted": 1, "drift_rate": 0.5},
+    {"date": "2026-07-22", "total": 1, "drifted": 0, "drift_rate": 0.0}
+  ]
+}
+```
+
+#### Example output (`--format text`)
+
+```
+Drift report -- 2026-07-19 to 2026-07-23
+  Sessions analyzed:  4
+  Drifted:            1 / 4  (25%)
+  Severity:           0:2  1:0  2:1  3:0  null:1
+
+  Trend (drift rate by day):
+    07-19  (no sessions)
+    07-20                          0%  (0/1)
+    07-21  ##########             50%  (1/2)
+    07-22                          0%  (0/1)
+```
+
+Both samples were generated from the same four synthetic records over `--from 2026-07-19 --to 2026-07-23`.
+
+#### Exit codes
+
+| Code | Meaning | stderr |
+|---|---|---|
+| `0` | Success — JSON or text written to stdout | *(silent)* |
+| `1` | Invalid range: `--from` is not strictly before `--to` | `drift-report: invalid range: --from must precede --to` |
+| `1` | Range exceeds 366 days | `drift-report: window exceeds 366 days -- use a narrower range` |
+| `1` | I/O error reading the variance directory | `drift-report: I/O error reading variance dir: <reason>` |
+
+All three `1` cases are validated or raised before any output is written; stdout is empty on failure.
 
 ---
 
