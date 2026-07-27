@@ -389,7 +389,7 @@ Re-runs `session-audit` internally (1a), merges the result with the supplied jud
   "variance": "<str>",
   "not_done": "<str>",
   "severity": "<int|null>",
-  "timestamp": "<ISO-8601 UTC str|null>"
+  "timestamp": "<ISO-8601 str, UTC-assumed|null>"
 }
 ```
 
@@ -481,7 +481,7 @@ The block below is a type-annotated illustration, not literal output: `int`/`flo
 
 Invariant: `sum(severity_distribution.values()) == total_records`.
 
-`skipped_records` counts variance files that failed to parse as JSON — this is not an error condition; malformed records are silently skipped and the run still exits `0`. `records_without_timestamp` counts records anchored by file mtime rather than the `timestamp` field, for legacy records that pre-date it (see the `timestamp` note in the `variance-save` section above); a non-zero count means the trend's day placement for those records may be unreliable.
+`skipped_records` counts variance files that failed to parse as JSON — this is not an error condition; malformed records are silently skipped and the run still exits `0`. `records_without_timestamp` counts records anchored by file mtime rather than the `timestamp` field, for legacy records that pre-date it (see the `timestamp` note in the `variance-save` section above); a non-zero count means the trend's day placement for those records may be unreliable. When a `timestamp` *is* present, it is used as-is to anchor the record: a naive (offset-less) value is tagged UTC, but a value carrying an explicit non-UTC offset is not converted, so its trend-day placement reflects that offset rather than UTC.
 
 Drift classification is severity-primary: `severity` of 1, 2, or 3 counts as drifted, `0` counts as clean, and a `null`/absent `severity` falls back to a prose check on the `variance` field (empty string or `"no variance"`, case-insensitively, counts as clean; any other non-empty text counts as drifted).
 
