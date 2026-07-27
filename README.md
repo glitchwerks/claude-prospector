@@ -393,7 +393,7 @@ Re-runs `session-audit` internally (1a), merges the result with the supplied jud
 }
 ```
 
-`timestamp` is the earliest raw-transcript-entry timestamp, or `null` when none is found. This artifact is the input to the `drift-report` subcommand below, which reads every record under `<base_dir>/variance/`.
+`timestamp` is the earliest raw-transcript-entry timestamp, or `null` when none is found. It is assumed already UTC — a naive (offset-less) value is tagged as UTC, but a value carrying an explicit non-UTC offset (e.g. `+05:00`) is preserved as-is, not converted. This artifact is the input to the `drift-report` subcommand below, which reads every record under `<base_dir>/variance/`.
 
 | Flag | Default | Description |
 |---|---|---|
@@ -448,30 +448,32 @@ This is the last acceptance criterion from the drift-aggregation epic (issue #63
 
 #### JSON schema (`--format json`)
 
-```json
+The block below is a type-annotated illustration, not literal output: `int`/`float` fields are shown unquoted with a trailing comment giving their type, while `<...>` placeholders mark string fields whose actual value varies.
+
+```jsonc
 {
     "window": {
         "from": "<ISO-8601 UTC>",
         "to":   "<ISO-8601 UTC>"
     },
-    "total_records":             "<int>",
-    "skipped_records":           "<int>",
-    "records_without_timestamp": "<int>",
+    "total_records":             0,    // int
+    "skipped_records":           0,    // int
+    "records_without_timestamp": 0,    // int
     "drift": {
-        "drifted":    "<int>",
-        "clean":      "<int>",
-        "drift_rate": "<float, 3 dp>"
+        "drifted":    0,               // int
+        "clean":      0,               // int
+        "drift_rate": 0.0              // float, 3 dp
     },
     "severity_distribution": {
-        "0": "<int>", "1": "<int>", "2": "<int>",
-        "3": "<int>", "null": "<int>"
+        "0": 0, "1": 0, "2": 0,        // int
+        "3": 0, "null": 0              // int
     },
     "trend": [
         {
             "date":       "YYYY-MM-DD",
-            "total":      "<int>",
-            "drifted":    "<int>",
-            "drift_rate": "<float, 3 dp>"
+            "total":      0,           // int
+            "drifted":    0,           // int
+            "drift_rate": 0.0          // float, 3 dp
         }
     ]
 }
@@ -517,7 +519,7 @@ Drift classification is severity-primary: `severity` of 1, 2, or 3 counts as dri
 
 #### Example output (`--format text`)
 
-```
+```text
 Drift report -- 2026-07-19 to 2026-07-23
   Sessions analyzed:  4
   Drifted:            1 / 4  (25%)
