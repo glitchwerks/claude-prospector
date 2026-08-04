@@ -338,6 +338,17 @@ class TestAgentSettingResolution:
 class TestParseJsonlMessages:
     """Tests for _parse_jsonl_messages path-tuple assignment."""
 
+    def test_deduplicates_message_fragments_and_merges_skill(self):
+        """Duplicate message IDs produce one record with merged skill metadata."""
+        fixture_path = Path(__file__).parent / "fixtures/duplicate_message_id.jsonl"
+
+        messages = _parse_jsonl_messages(fixture_path, agent_type="main")
+
+        assert len(messages) == 2
+        assert messages[0].output_tokens == 309
+        assert messages[0].skill == "claude-wayfinder:dispatch"
+        assert messages[1].output_tokens == 23
+
     def test_assigns_full_path(self, tmp_path: Path):
         """Messages carry the full agent_path tuple passed to the function."""
         session_id = "sess-path"

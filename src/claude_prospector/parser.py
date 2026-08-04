@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import warnings
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -325,6 +326,7 @@ def _parse_jsonl_messages(
 ) -> list[MessageRecord]:
     """Parse assistant messages from a JSONL file, attributing to agent."""
     messages: list[MessageRecord] = []
+    message_indexes: dict[str, int] = {}
     with open(jsonl_path, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
@@ -346,6 +348,16 @@ def _parse_jsonl_messages(
 
             content = msg.get("content", [])
             skill = _extract_skill(content) if isinstance(content, list) else None
+            message_id = msg.get("id")
+
+            if message_id is not None and message_id in message_indexes:
+                message_index = message_indexes[message_id]
+                existing = messages[message_index]
+                if existing.skill is None and skill is not None:
+                    messages[message_index] = replace(existing, skill=skill)
+                # Fragment lines repeat the message's final usage snapshot;
+                # summing duplicate IDs would multiply every usage field.
+                continue
 
             timestamp = _parse_timestamp(entry["timestamp"])
 
@@ -362,6 +374,8 @@ def _parse_jsonl_messages(
                     agent_path=agent_path,
                 )
             )
+            if message_id is not None:
+                message_indexes[message_id] = len(messages) - 1
     return messages
 
 
