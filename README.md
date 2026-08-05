@@ -621,11 +621,42 @@ When Claude Code sessions dispatch sub-agents that themselves dispatch further s
 
 - **Deferred.** Dashboard tree visualization (sunburst, indented tree, expand/collapse) is out of scope for the current release. The existing flat agent list in the dashboard JS receives path-keyed entries but no hierarchical rendering yet.
 
-### State storage
+### State storage and local data
 
-When running as a plugin, state (dashboard HTML, hook log, skill-tracking JSONL files) is stored under `${CLAUDE_PLUGIN_DATA}` — the Anthropic-documented persistent state location that survives plugin updates.
+When running as a plugin, state is stored under `${CLAUDE_PLUGIN_DATA}` — the Anthropic-documented persistent state location that survives plugin updates. Outside the plugin host it falls back to `~/.claude/claude-prospector/` (override either with `CLAUDE_PROSPECTOR_BASE_DIR`; see [Environment variables](#environment-variables)).
 
 Users upgrading from v0.4.0 get a one-time automatic migration: on the first session after upgrade, any existing files from `~/.claude/claude-prospector/` are moved into `${CLAUDE_PLUGIN_DATA}` and the legacy directory is removed.
+
+The table below lists everything `claude-prospector` writes under that base directory, and whether it can contain your prompt/message text:
+
+| Path | Contents | Written by | Contains prompt text? |
+|---|---|---|---|
+| `dashboard.html` | Aggregated token/cost stats | `dashboard` subcommand, or the opt-in `dashboard-regen` Stop hook | No |
+| `hook.log` | One diagnostic line, e.g. `skipped: no skills found in Agent prompt for <agent>`; truncated and overwritten on every hook run | All hooks | No — logs the target agent *name*, never prompt content |
+| `config.json` | User settings (`project_exclude_patterns`, legacy `autoregen`) | `config` subcommand / manual edit | No |
+| `skill-tracking/<YYYY-MM-DD>.jsonl` | Skill name, timestamp, session-id, and (for Agent dispatches) target agent name, for each `Skill`/`Agent` tool-use event | `skill-tracker` PreToolUse hook — runs automatically on every `Skill`/`Agent` tool call once setup is `VALID` | No — only the matched skill *name* is stored, never the surrounding prompt |
+| `variance/<session-id>.json` | **Verbatim** first and subsequent user messages (`original_ask`, `prior_asks`) for the analyzed session, the file paths it edited, and an LLM-written variance judgment | `variance-save` subcommand — invoked only by the opt-in `/session-analysis` skill or a manual CLI call, **never automatically** | **Yes** — full user prompt text |
+| `setup-state.json` | Plugin version and venv path | `/setup-prospector` | No |
+
+**`variance/<session-id>.json` is the only file that stores prompt content, and it is opt-in.** It is written exclusively when you (or the `/session-analysis` skill acting on your behalf) run `session-analysis` or `variance-save` for a specific session — see the [`variance-save` subcommand](#variance-save--persist-combined-audit--judgment) above for the exact schema. Nothing else `claude-prospector` writes contains message text.
+
+**Clearing local data.** Each of these files/directories is regenerated on demand and safe to delete on its own at any time. `cd` into your base directory first (the plugin-managed path, or `~/.claude/claude-prospector/` under the legacy layout — see above), then:
+
+```bash
+rm -rf variance/          # the prompt-bearing records
+rm -rf skill-tracking/    # skill-name events (no prompt text)
+rm -f  hook.log dashboard.html
+```
+
+Deleting `variance/` only shrinks `drift-report`'s aggregation window (fewer or zero records to summarize) — it never breaks other features. Deleting `skill-tracking/`, `hook.log`, or `dashboard.html` is likewise harmless; each is recreated the next time its triggering event occurs.
+
+Do **not** `rm -rf` the whole base directory as a shortcut — under the plugin-managed path it also holds `venv/` (the Python environment `/setup-prospector` built) and `setup-state.json`; deleting those forces a full `/setup-prospector` re-run.
+
+**Disabling.**
+
+- `variance-save` and `/session-analysis` are opt-in by design — don't invoke them and no prompt text is ever written to disk.
+- `skill-tracker` — the only *automatic* hook that persists per-event records — has no dedicated on/off toggle today. It runs on every `Skill`/`Agent` tool call once `/setup-prospector` has completed; there is currently no way to disable it alone while keeping the rest of the plugin (dashboard, usage-analysis) active. Skipping `/setup-prospector` keeps it inactive, at the cost of every other feature. Use `CLAUDE_PROSPECTOR_SKILL_TRACKING_DIR` if you want its (prompt-text-free) output redirected somewhere else.
+- `dashboard-regen` (Stop hook) is opt-in and off by default — toggle via `/plugin reconfigure claude-prospector` (see [Configuration](#configuration)).
 
 ## Development
 
