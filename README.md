@@ -184,6 +184,10 @@ directory name.
 |---|---|---|
 | `CLAUDE_PLUGIN_DATA` | Venv placement and default state/dashboard storage | Set by the Claude Code plugin host; do not override in normal use |
 | `CLAUDE_PROSPECTOR_BASE_DIR` | State and dashboard storage for hooks and CLI | Overrides `CLAUDE_PLUGIN_DATA` for hooks/CLI only; does not affect the venv location |
+| `CLAUDE_PROSPECTOR_CONFIG` | `config.json` path | Overrides the default `<base_dir>/config.json` |
+| `CLAUDE_PROSPECTOR_DASHBOARD` | `dashboard.html` path | Overrides the default `<base_dir>/dashboard.html`; the `dashboard` subcommand's `--output` flag overrides a single run without setting this |
+| `CLAUDE_PROSPECTOR_HOOK_LOG` | `hook.log` path | Overrides the default `<base_dir>/hook.log` |
+| `CLAUDE_PROSPECTOR_SKILL_TRACKING_DIR` | `skill-tracking/` directory path | Overrides the default `<base_dir>/skill-tracking/` |
 | `CLAUDE_PROSPECTOR_PIP_SPEC` | The pip spec used by `/setup-prospector` | Overrides the default `claude-prospector==<version>` — used in CI and dev to install from TestPyPI or a local checkout |
 
 ## Troubleshooting
@@ -625,9 +629,9 @@ When Claude Code sessions dispatch sub-agents that themselves dispatch further s
 
 When running as a plugin, state is stored under `${CLAUDE_PLUGIN_DATA}` — the Anthropic-documented persistent state location that survives plugin updates. Outside the plugin host it falls back to `~/.claude/claude-prospector/` (override either with `CLAUDE_PROSPECTOR_BASE_DIR`; see [Environment variables](#environment-variables)).
 
-Users upgrading from v0.4.0 get a one-time automatic migration: on the first session after upgrade, any existing files from `~/.claude/claude-prospector/` are moved into `${CLAUDE_PLUGIN_DATA}` and the legacy directory is removed.
+Users upgrading from v0.4.0 get a one-time migration attempt: the first time `${CLAUDE_PLUGIN_DATA}` is resolved, if the legacy `~/.claude/claude-prospector/` directory exists and has content, its files are moved into `${CLAUDE_PLUGIN_DATA}` and the legacy directory is removed. Migration is **skipped** (legacy directory left in place) if `CLAUDE_PROSPECTOR_BASE_DIR` is set, or if `${CLAUDE_PLUGIN_DATA}` already exists and is non-empty. Migration can also **fail partway** — files are moved one at a time, so an I/O error mid-move can leave some files already relocated and others still in the legacy directory; the error is swallowed and logged to `hook.log`, and files may end up split across both locations. Verify both locations before deleting old data.
 
-The table below lists everything `claude-prospector` writes under that base directory, and whether it can contain your prompt/message text:
+The table below lists everything `claude-prospector` writes under that base directory, and whether it can contain your prompt/message text. Each path can be overridden independently — see [Environment variables](#environment-variables) for `CLAUDE_PROSPECTOR_CONFIG`, `CLAUDE_PROSPECTOR_DASHBOARD`, `CLAUDE_PROSPECTOR_HOOK_LOG`, and `CLAUDE_PROSPECTOR_SKILL_TRACKING_DIR`; the `dashboard` subcommand's `--output` flag and the `variance-save` subcommand's `--out` flag override a single invocation's output path without touching the environment:
 
 | Path | Contents | Written by | Contains prompt text? |
 |---|---|---|---|
@@ -648,6 +652,8 @@ rm -rf skill-tracking/    # skill-name events (no prompt text)
 rm -f  hook.log dashboard.html
 ```
 
+These commands assume the default, unoverridden paths. If you've set any of the `CLAUDE_PROSPECTOR_*` path overrides above, `skill-tracking/`, `hook.log`, and `dashboard.html` may live elsewhere — adjust the paths (or target the overridden location directly) accordingly. `variance/` has no env-var override — it is always `<base_dir>/variance/` — though `variance-save --out` can place a single record anywhere.
+
 Deleting `variance/` only shrinks `drift-report`'s aggregation window (fewer or zero records to summarize) — it never breaks other features. Deleting `skill-tracking/`, `hook.log`, or `dashboard.html` is likewise harmless; each is recreated the next time its triggering event occurs.
 
 Do **not** `rm -rf` the whole base directory as a shortcut — under the plugin-managed path it also holds `venv/` (the Python environment `/setup-prospector` built) and `setup-state.json`; deleting those forces a full `/setup-prospector` re-run.
@@ -655,7 +661,7 @@ Do **not** `rm -rf` the whole base directory as a shortcut — under the plugin-
 **Disabling.**
 
 - `variance-save` and `/session-analysis` are opt-in by design — don't invoke them and no prompt text is ever written to disk.
-- `skill-tracker` — the only *automatic* hook that persists per-event records — has no dedicated on/off toggle today. It runs on every `Skill`/`Agent` tool call once `/setup-prospector` has completed; there is currently no way to disable it alone while keeping the rest of the plugin (dashboard, usage-analysis) active. Skipping `/setup-prospector` keeps it inactive, at the cost of every other feature. Use `CLAUDE_PROSPECTOR_SKILL_TRACKING_DIR` if you want its (prompt-text-free) output redirected somewhere else.
+- `skill-tracker` — the only *automatic* hook that persists per-event records — has no dedicated on/off toggle today, and its gating is one-directional. **Before** `/setup-prospector` has ever completed successfully, skipping it keeps `skill-tracker` inactive — at the cost of every other feature (dashboard, usage-analysis), since none of them work without setup either. **After** setup has completed and the setup-state flag reads `VALID`, `skill-tracker` runs on every `Skill`/`Agent` tool call regardless of whether you run `/setup-prospector` again — there is no way to disable it alone while keeping the rest of the plugin active, and *not* re-running `/setup-prospector` does not retroactively turn it off (the flag only goes stale on a plugin-version bump, or breaks if the venv is later removed/corrupted — see [Troubleshooting](#troubleshooting)). Use `CLAUDE_PROSPECTOR_SKILL_TRACKING_DIR` if you want its (prompt-text-free) output redirected somewhere else.
 - `dashboard-regen` (Stop hook) is opt-in and off by default — toggle via `/plugin reconfigure claude-prospector` (see [Configuration](#configuration)).
 
 ## Development
