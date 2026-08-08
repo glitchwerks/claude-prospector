@@ -393,11 +393,12 @@ Re-runs `session-audit` internally (1a), merges the result with the supplied jud
   "variance": "<str>",
   "not_done": "<str>",
   "severity": "<int|null>",
-  "timestamp": "<ISO-8601 str, UTC-assumed|null>"
+  "timestamp": "<ISO-8601 str, UTC-assumed|null>",
+  "prompts_redacted": "<bool>"
 }
 ```
 
-`timestamp` is the earliest raw-transcript-entry timestamp, or `null` when none is found. It is assumed already UTC — a naive (offset-less) value is tagged as UTC, but a value carrying an explicit non-UTC offset (e.g. `+05:00`) is preserved as-is, not converted. This artifact is the input to the `drift-report` subcommand below, which reads every record under `<base_dir>/variance/`.
+`timestamp` is the earliest raw-transcript-entry timestamp, or `null` when none is found. It is assumed already UTC — a naive (offset-less) value is tagged as UTC, but a value carrying an explicit non-UTC offset (e.g. `+05:00`) is preserved as-is, not converted. `prompts_redacted` reflects whether `--redact-prompts` was passed: `true` means `original_ask` is `null` and `prior_asks` is `[]`; `false` (the default) means both fields hold the verbatim captured text. This artifact is the input to the `drift-report` subcommand below, which reads every record under `<base_dir>/variance/`.
 
 | Flag | Default | Description |
 |---|---|---|
@@ -405,6 +406,7 @@ Re-runs `session-audit` internally (1a), merges the result with the supplied jud
 | `--judgment-file <f>` | stdin | Path to the judgment JSON file; omit to read from stdin |
 | `--data-dir <dir>` | `~/.claude` | Root under which `projects/` is searched for the transcript |
 | `--out <path>` | `<plugin-data-dir>/variance/<id>.json` | Override the output path |
+| `--redact-prompts` | `False` | Write `null`/`[]` for `original_ask`/`prior_asks` instead of the verbatim text, and set `prompts_redacted: true` in the output record |
 
 #### Exit codes
 
@@ -639,10 +641,10 @@ The table below lists everything `claude-prospector` writes under that base dire
 | `hook.log` | One diagnostic line, e.g. `skipped: no skills found in Agent prompt for <agent>`; truncated and overwritten on every hook run | All hooks | No — logs the target agent *name*, never prompt content |
 | `config.json` | User settings (`project_exclude_patterns`, legacy `autoregen`) | `config` subcommand / manual edit | No |
 | `skill-tracking/<YYYY-MM-DD>.jsonl` | Skill name, timestamp, session-id, and (for Agent dispatches) target agent name, for each `Skill`/`Agent` tool-use event | `skill-tracker` PreToolUse hook — runs automatically on every `Skill`/`Agent` tool call once setup is `VALID` | No — only the matched skill *name* is stored, never the surrounding prompt |
-| `variance/<session-id>.json` | **Verbatim** first and subsequent user messages (`original_ask`, `prior_asks`) for the analyzed session, the file paths it edited, and an LLM-written variance judgment | `variance-save` subcommand — invoked only by the opt-in `/session-analysis` skill or a manual CLI call, **never automatically** | **Yes** — full user prompt text |
+| `variance/<session-id>.json` | **Verbatim** first and subsequent user messages (`original_ask`, `prior_asks`) for the analyzed session, the file paths it edited, and an LLM-written variance judgment — or, when `variance-save` is run with `--redact-prompts`, `null`/`[]` in place of that text plus a `prompts_redacted: true` marker | `variance-save` subcommand — invoked only by the opt-in `/session-analysis` skill or a manual CLI call, **never automatically** | **Yes**, unless written with `--redact-prompts` |
 | `setup-state.json` | Plugin version and venv path | `/setup-prospector` | No |
 
-**`variance/<session-id>.json` is the only file that stores prompt content, and it is opt-in.** It is written exclusively when you (or the `/session-analysis` skill acting on your behalf) run `session-analysis` or `variance-save` for a specific session — see the [`variance-save` subcommand](#variance-save--persist-combined-audit--judgment) above for the exact schema. Nothing else `claude-prospector` writes contains message text.
+**`variance/<session-id>.json` is the only file that can store prompt content, and it is opt-in at two levels.** It is written exclusively when you (or the `/session-analysis` skill acting on your behalf) run `session-analysis` or `variance-save` for a specific session — see the [`variance-save` subcommand](#variance-save--persist-combined-audit--judgment) above for the exact schema. Within that, pass `--redact-prompts` to `variance-save` to keep the record's `original_ask`/`prior_asks` fields empty (`null`/`[]`) while still writing everything else (actions, variance judgment, severity, timestamp) — the record gains a `prompts_redacted: true` field so readers can tell redaction happened. Nothing else `claude-prospector` writes contains message text.
 
 **Clearing local data.** Each of these files/directories is regenerated on demand and safe to delete on its own at any time. `cd` into your base directory first (the plugin-managed path, or `~/.claude/claude-prospector/` under the legacy layout — see above), then:
 
@@ -660,7 +662,7 @@ Do **not** `rm -rf` the whole base directory as a shortcut — under the plugin-
 
 **Disabling.**
 
-- `variance-save` and `/session-analysis` are opt-in by design — don't invoke them and no prompt text is ever written to disk.
+- `variance-save` and `/session-analysis` are opt-in by design — don't invoke them and no prompt text is ever written to disk. When you do invoke `variance-save`, pass `--redact-prompts` to keep the written record free of verbatim prompt text while still capturing the variance/severity judgment.
 - `skill-tracker` — the only *automatic* hook that persists per-event records — has no dedicated on/off toggle today, and its gating is one-directional. **Before** `/setup-prospector` has ever completed successfully, skipping it keeps `skill-tracker` inactive — at the cost of every other feature (dashboard, usage-analysis), since none of them work without setup either. **After** setup has completed and the setup-state flag reads `VALID`, `skill-tracker` runs on every `Skill`/`Agent` tool call regardless of whether you run `/setup-prospector` again — there is no way to disable it alone while keeping the rest of the plugin active, and *not* re-running `/setup-prospector` does not retroactively turn it off (the flag only goes stale on a plugin-version bump, or breaks if the venv is later removed/corrupted — see [Troubleshooting](#troubleshooting)). Use `CLAUDE_PROSPECTOR_SKILL_TRACKING_DIR` if you want its (prompt-text-free) output redirected somewhere else.
 - `dashboard-regen` (Stop hook) is opt-in and off by default — toggle via `/plugin reconfigure claude-prospector` (see [Configuration](#configuration)).
 
