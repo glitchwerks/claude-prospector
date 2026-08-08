@@ -381,6 +381,7 @@ class TestCombineVariance:
         """combine_variance output has all required combined-schema keys.
 
         Phase 0: schema now includes 'timestamp'.
+        Issue #246: schema now includes 'prompts_redacted' unconditionally.
         """
         mod = _import_variance_save()
         audit = {
@@ -398,6 +399,7 @@ class TestCombineVariance:
             "not_done",
             "severity",
             "timestamp",
+            "prompts_redacted",
         }
         assert required == set(result.keys())
 
@@ -569,6 +571,7 @@ class TestVarianceSaveIntegration:
             "not_done",
             "severity",
             "timestamp",
+            "prompts_redacted",
         }
         assert required == set(record.keys())
         assert record["session_id"] == session_id
@@ -1245,3 +1248,272 @@ class TestTimestampProducer:
         with open(out_path, encoding="utf-8") as fh:
             record = json.load(fh)
         assert "timestamp" in record
+
+
+# ===========================================================================
+# TestRedactPrompts — --redact-prompts opt-out for verbatim prompt capture
+# ===========================================================================
+
+
+class TestRedactPrompts:
+    """redact_prompts suppresses verbatim original_ask/prior_asks capture.
+
+    Issue #246: variance-save persists original_ask/prior_asks as full
+    verbatim user-message text. redact_prompts=True (and the CLI
+    --redact-prompts flag) must suppress that while leaving all other
+    fields (variance, not_done, severity, actions, timestamp) untouched.
+    """
+
+    @pytest.fixture()
+    def transcript_with_prior_asks(self, tmp_path: Path) -> tuple[Path, str]:
+        """Transcript with two user asks, so prior_asks is non-empty pre-redaction.
+
+        A single-ask transcript can't discriminate "prior_asks correctly
+        redacted" from "prior_asks was already empty" -- this fixture gives
+        redaction something non-trivial to actually suppress.
+
+        Returns:
+            Tuple of ``(data_dir, session_id)``.
+        """
+        session_id = "redact-multi-ask-001"
+        project_dir = tmp_path / "projects" / "C--redact-project"
+        project_dir.mkdir(parents=True)
+        transcript = project_dir / f"{session_id}.jsonl"
+        _write_jsonl(
+            transcript,
+            [
+                _user_line("Build the secret widget.", session_id=session_id),
+                _user_line("Also add tests.", session_id=session_id),
+                _assistant_with_edit("Edit", "src/widget.py", session_id=session_id),
+            ],
+        )
+        return tmp_path, session_id
+
+    def test_combine_variance_redacts_prompts_when_true(
+        self,
+        good_judgment: dict,
+    ) -> None:
+        """redact_prompts=True nulls original_ask and empties prior_asks."""
+        mod = _import_variance_save()
+        audit = {
+            "original_ask": "Build the secret widget.",
+            "prior_asks": ["also add tests", "also add docs"],
+            "actions": [{"tool": "Edit", "file_path": "src/widget.py"}],
+        }
+        result = mod.combine_variance(
+            "sid-redact",
+            audit,
+            good_judgment,
+            redact_prompts=True,
+        )
+        assert result["original_ask"] is None
+        assert result["prior_asks"] == []
+        assert result["prompts_redacted"] is True
+
+    def test_combine_variance_redaction_leaves_other_fields_untouched(
+        self,
+        good_judgment: dict,
+    ) -> None:
+        """redact_prompts=True must not affect variance/not_done/severity/actions/timestamp."""
+        mod = _import_variance_save()
+        audit = {
+            "original_ask": "Build the secret widget.",
+            "prior_asks": ["also add tests"],
+            "actions": [{"tool": "Edit", "file_path": "src/widget.py"}],
+        }
+        ts = "2026-01-15T10:30:00+00:00"
+        result = mod.combine_variance(
+            "sid-redact-2",
+            audit,
+            good_judgment,
+            timestamp=ts,
+            redact_prompts=True,
+        )
+        assert result["actions"] == [{"tool": "Edit", "file_path": "src/widget.py"}]
+        assert result["variance"] == good_judgment["variance"]
+        assert result["not_done"] == good_judgment["not_done"]
+        assert result["severity"] == good_judgment["severity"]
+        assert result["timestamp"] == ts
+        assert result["session_id"] == "sid-redact-2"
+
+    def test_combine_variance_preserves_prompts_when_explicitly_false(
+        self,
+        good_judgment: dict,
+    ) -> None:
+        """redact_prompts=False (explicit) keeps verbatim original_ask/prior_asks."""
+        mod = _import_variance_save()
+        audit = {
+            "original_ask": "Build the widget.",
+            "prior_asks": ["also add tests"],
+            "actions": [],
+        }
+        result = mod.combine_variance(
+            "sid-no-redact",
+            audit,
+            good_judgment,
+            redact_prompts=False,
+        )
+        assert result["original_ask"] == "Build the widget."
+        assert result["prior_asks"] == ["also add tests"]
+        assert result["prompts_redacted"] is False
+
+    def test_combine_variance_default_does_not_redact(
+        self,
+        good_judgment: dict,
+    ) -> None:
+        """Omitting redact_prompts entirely preserves current (pre-#246) behavior."""
+        mod = _import_variance_save()
+        audit = {
+            "original_ask": "Build the widget.",
+            "prior_asks": ["also add tests"],
+            "actions": [],
+        }
+        result = mod.combine_variance("sid-default", audit, good_judgment)
+        assert result["original_ask"] == "Build the widget."
+        assert result["prior_asks"] == ["also add tests"]
+        assert result["prompts_redacted"] is False
+
+    def test_combine_variance_output_includes_prompts_redacted_key_unconditionally(
+        self,
+        good_judgment: dict,
+    ) -> None:
+        """prompts_redacted key is present in the schema regardless of value."""
+        mod = _import_variance_save()
+        audit = {"original_ask": None, "prior_asks": [], "actions": []}
+        result_default = mod.combine_variance("sid-key-a", audit, good_judgment)
+        result_redacted = mod.combine_variance(
+            "sid-key-b", audit, good_judgment, redact_prompts=True
+        )
+        assert "prompts_redacted" in result_default
+        assert "prompts_redacted" in result_redacted
+
+    def test_save_variance_record_redacts_prompts_on_disk(
+        self,
+        transcript_with_prior_asks: tuple[Path, str],
+        good_judgment: dict,
+    ) -> None:
+        """save_variance_record(redact_prompts=True) writes null/empty prompts to disk.
+
+        Uses a transcript with a non-empty prior_asks so the assertion
+        actually discriminates redacted-vs-not (a single-ask transcript
+        yields prior_asks == [] either way).
+        """
+        data_dir, session_id = transcript_with_prior_asks
+        mod = _import_variance_save()
+        out_path = mod.save_variance_record(
+            session_id=session_id,
+            data_dir=data_dir,
+            judgment=good_judgment,
+            out_base_dir=data_dir,
+            redact_prompts=True,
+        )
+        with open(out_path, encoding="utf-8") as fh:
+            record = json.load(fh)
+        assert record["original_ask"] is None
+        assert record["prior_asks"] == []
+        assert record["prompts_redacted"] is True
+
+    def test_save_variance_record_default_does_not_redact(
+        self,
+        transcript_in_data_dir: tuple[Path, str],
+        good_judgment: dict,
+    ) -> None:
+        """save_variance_record without redact_prompts keeps verbatim capture on disk."""
+        data_dir, session_id = transcript_in_data_dir
+        mod = _import_variance_save()
+        out_path = mod.save_variance_record(
+            session_id=session_id,
+            data_dir=data_dir,
+            judgment=good_judgment,
+            out_base_dir=data_dir,
+        )
+        with open(out_path, encoding="utf-8") as fh:
+            record = json.load(fh)
+        assert record["original_ask"] == "Implement the feature."
+        assert record["prompts_redacted"] is False
+
+    def test_build_parser_registers_redact_prompts_flag_defaulting_false(
+        self,
+    ) -> None:
+        """--redact-prompts must be a registered store_true flag defaulting False."""
+        import argparse
+
+        mod = _import_variance_save()
+        top_parser = argparse.ArgumentParser()
+        subparsers = top_parser.add_subparsers()
+        mod.build_parser(subparsers)
+        args = top_parser.parse_args(
+            [
+                "variance-save",
+                "--session-id",
+                "dummy",
+                "--judgment-file",
+                "/dev/null",
+            ]
+        )
+        assert args.redact_prompts is False
+
+    def test_redact_prompts_flag_sets_true_when_passed(self) -> None:
+        """Passing --redact-prompts sets args.redact_prompts to True."""
+        import argparse
+
+        mod = _import_variance_save()
+        top_parser = argparse.ArgumentParser()
+        subparsers = top_parser.add_subparsers()
+        mod.build_parser(subparsers)
+        args = top_parser.parse_args(
+            [
+                "variance-save",
+                "--session-id",
+                "dummy",
+                "--judgment-file",
+                "/dev/null",
+                "--redact-prompts",
+            ]
+        )
+        assert args.redact_prompts is True
+
+    def test_cli_redact_prompts_end_to_end_writes_redacted_record(
+        self,
+        transcript_with_prior_asks: tuple[Path, str],
+        good_judgment: dict,
+        tmp_path: Path,
+    ) -> None:
+        """--redact-prompts on the CLI threads through run() into the written record.
+
+        Uses a transcript with a non-empty prior_asks so the assertion
+        actually discriminates redacted-vs-not (a single-ask transcript
+        yields prior_asks == [] either way).
+        """
+        data_dir, session_id = transcript_with_prior_asks
+        judgment_file = tmp_path / "judgment.json"
+        judgment_file.write_text(json.dumps(good_judgment), encoding="utf-8")
+        out_path = tmp_path / "redacted_output.json"
+        import os
+
+        env = {**os.environ, "CLAUDE_PROSPECTOR_BASE_DIR": str(data_dir)}
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "claude_prospector",
+                "variance-save",
+                "--session-id",
+                session_id,
+                "--judgment-file",
+                str(judgment_file),
+                "--data-dir",
+                str(data_dir),
+                "--out",
+                str(out_path),
+                "--redact-prompts",
+            ],
+            capture_output=True,
+            env=env,
+        )
+        assert result.returncode == 0, result.stderr.decode("utf-8")
+        with open(out_path, encoding="utf-8") as fh:
+            record = json.load(fh)
+        assert record["original_ask"] is None
+        assert record["prior_asks"] == []
+        assert record["prompts_redacted"] is True
