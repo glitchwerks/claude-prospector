@@ -45,7 +45,8 @@ Combined JSON schema::
         "variance":     "<str>",
         "not_done":     "<str>",
         "severity":     <int | null>,
-        "timestamp":    "<ISO-8601 UTC str | null>"
+        "timestamp":    "<ISO-8601 UTC str | null>",
+        "prompts_redacted": <bool>
     }
 
 Fields:
@@ -70,6 +71,8 @@ Fields:
         ISO-8601 UTC string of the earliest transcript entry that carries
         a top-level ``"timestamp"`` key, or ``null`` when no such entry
         exists.  Derived from the raw transcript entries at write time.
+    prompts_redacted:
+        Whether ``original_ask`` and ``prior_asks`` were redacted.
 
 Exit codes:
     0  Success — path of written file printed to stdout.
@@ -190,6 +193,7 @@ def combine_variance(
     audit: dict[str, Any],
     judgment: JudgmentDict,
     timestamp: str | None = None,
+    redact_prompts: bool = False,
 ) -> VarianceRecord:
     """Merge 1a audit data with judgment fields into the combined schema.
 
@@ -212,6 +216,8 @@ def combine_variance(
             timestamp, or ``None`` when no entry carries a timestamp.
             Defaults to ``None`` so existing positional callers are
             unaffected.
+        redact_prompts: Whether to replace captured prompt text with
+            ``None`` and an empty list.
 
     Returns:
         A combined :data:`VarianceRecord` dict matching the module-level
@@ -219,13 +225,14 @@ def combine_variance(
     """
     return {
         "session_id": session_id,
-        "original_ask": audit.get("original_ask"),
-        "prior_asks": audit.get("prior_asks", []),
+        "original_ask": (None if redact_prompts else audit.get("original_ask")),
+        "prior_asks": [] if redact_prompts else audit.get("prior_asks", []),
         "actions": audit.get("actions", []),
         "variance": judgment["variance"],
         "not_done": judgment["not_done"],
         "severity": judgment.get("severity"),
         "timestamp": timestamp,
+        "prompts_redacted": redact_prompts,
     }
 
 
@@ -255,6 +262,7 @@ def save_variance_record(
     judgment: JudgmentDict,
     out_path: Path | None = None,
     out_base_dir: Path | None = None,
+    redact_prompts: bool = False,
 ) -> Path:
     """Load 1a audit data, merge with judgment, and write the combined record.
 
@@ -295,6 +303,8 @@ def save_variance_record(
         out_base_dir: Base directory for the default output path.  When
             ``None`` and *out_path* is also ``None``, :func:`base_dir`
             is called to resolve the plugin-data root.
+        redact_prompts: Whether to suppress captured prompt text in the
+            persisted record.
 
     Returns:
         The resolved output path where the record was written.
@@ -312,7 +322,13 @@ def save_variance_record(
     # scope (raw json.loads dicts — not parser.Message objects).
     timestamp = _earliest_transcript_timestamp(entries)
 
-    record = combine_variance(session_id, audit, judgment, timestamp=timestamp)
+    record = combine_variance(
+        session_id,
+        audit,
+        judgment,
+        timestamp=timestamp,
+        redact_prompts=redact_prompts,
+    )
 
     if out_path is None:
         effective_base = (
@@ -439,6 +455,15 @@ def build_parser(
             "> ~/.claude/claude-prospector."
         ),
     )
+    p.add_argument(
+        "--redact-prompts",
+        action="store_true",
+        default=False,
+        help=(
+            "Suppress persisting verbatim prompt text, writing null/[] "
+            "instead of the captured original_ask/prior_asks."
+        ),
+    )
     return p
 
 
@@ -453,7 +478,8 @@ def run(args: argparse.Namespace) -> int:
         args: Parsed CLI namespace.  Expected attributes:
             ``args.session_id`` (str), ``args.judgment_file`` (str or
             None), ``args.data_dir`` (Path or None),
-            ``args.out_path`` (Path or None).
+            ``args.out_path`` (Path or None), and
+            ``args.redact_prompts`` (bool).
 
     Returns:
         Integer exit code (0 on success, 1 on IO failure, 2 on
@@ -483,6 +509,7 @@ def run(args: argparse.Namespace) -> int:
             data_dir=data_dir,
             judgment=judgment,
             out_path=getattr(args, "out_path", None),
+            redact_prompts=args.redact_prompts,
         )
     except (FileNotFoundError, ValueError) as exc:
         print(f"variance-save: {exc}", file=sys.stderr)
