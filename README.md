@@ -184,6 +184,10 @@ directory name.
 |---|---|---|
 | `CLAUDE_PLUGIN_DATA` | Venv placement and default state/dashboard storage | Set by the Claude Code plugin host; do not override in normal use |
 | `CLAUDE_PROSPECTOR_BASE_DIR` | State and dashboard storage for hooks and CLI | Overrides `CLAUDE_PLUGIN_DATA` for hooks/CLI only; does not affect the venv location |
+| `CLAUDE_PROSPECTOR_CONFIG` | `config.json` path | Overrides the default `<base_dir>/config.json` |
+| `CLAUDE_PROSPECTOR_DASHBOARD` | `dashboard.html` path | Overrides the default `<base_dir>/dashboard.html`; the `dashboard` subcommand's `--output` flag overrides a single run without setting this |
+| `CLAUDE_PROSPECTOR_HOOK_LOG` | `hook.log` path | Overrides the default `<base_dir>/hook.log` |
+| `CLAUDE_PROSPECTOR_SKILL_TRACKING_DIR` | `skill-tracking/` directory path | Overrides the default `<base_dir>/skill-tracking/` |
 | `CLAUDE_PROSPECTOR_PIP_SPEC` | The pip spec used by `/setup-prospector` | Overrides the default `claude-prospector==<version>` — used in CI and dev to install from TestPyPI or a local checkout |
 
 ## Troubleshooting
@@ -621,11 +625,44 @@ When Claude Code sessions dispatch sub-agents that themselves dispatch further s
 
 - **Deferred.** Dashboard tree visualization (sunburst, indented tree, expand/collapse) is out of scope for the current release. The existing flat agent list in the dashboard JS receives path-keyed entries but no hierarchical rendering yet.
 
-### State storage
+### State storage and local data
 
-When running as a plugin, state (dashboard HTML, hook log, skill-tracking JSONL files) is stored under `${CLAUDE_PLUGIN_DATA}` — the Anthropic-documented persistent state location that survives plugin updates.
+When running as a plugin, state is stored under `${CLAUDE_PLUGIN_DATA}` — the Anthropic-documented persistent state location that survives plugin updates. Outside the plugin host it falls back to `~/.claude/claude-prospector/` (override either with `CLAUDE_PROSPECTOR_BASE_DIR`; see [Environment variables](#environment-variables)).
 
-Users upgrading from v0.4.0 get a one-time automatic migration: on the first session after upgrade, any existing files from `~/.claude/claude-prospector/` are moved into `${CLAUDE_PLUGIN_DATA}` and the legacy directory is removed.
+Users upgrading from v0.4.0 get a one-time migration attempt: the first time `${CLAUDE_PLUGIN_DATA}` is resolved, if the legacy `~/.claude/claude-prospector/` directory exists and has content, its files are moved into `${CLAUDE_PLUGIN_DATA}` and the legacy directory is removed. Migration is **skipped** (legacy directory left in place) if `CLAUDE_PROSPECTOR_BASE_DIR` is set, or if `${CLAUDE_PLUGIN_DATA}` already exists and is non-empty. Migration can also **fail partway** — files are moved one at a time, so an I/O error mid-move can leave some files already relocated and others still in the legacy directory; the error is swallowed and logged to `hook.log`, and files may end up split across both locations. Verify both locations before deleting old data.
+
+The table below lists everything `claude-prospector` writes under that base directory, and whether it can contain your prompt/message text. Each path can be overridden independently — see [Environment variables](#environment-variables) for `CLAUDE_PROSPECTOR_CONFIG`, `CLAUDE_PROSPECTOR_DASHBOARD`, `CLAUDE_PROSPECTOR_HOOK_LOG`, and `CLAUDE_PROSPECTOR_SKILL_TRACKING_DIR`; the `dashboard` subcommand's `--output` flag and the `variance-save` subcommand's `--out` flag override a single invocation's output path without touching the environment:
+
+| Path | Contents | Written by | Contains prompt text? |
+|---|---|---|---|
+| `dashboard.html` | Aggregated token/cost stats | `dashboard` subcommand, or the opt-in `dashboard-regen` Stop hook | No |
+| `hook.log` | One diagnostic line, e.g. `skipped: no skills found in Agent prompt for <agent>`; truncated and overwritten on every hook run | All hooks | No — logs the target agent *name*, never prompt content |
+| `config.json` | User settings (`project_exclude_patterns`, legacy `autoregen`) | `config` subcommand / manual edit | No |
+| `skill-tracking/<YYYY-MM-DD>.jsonl` | Skill name, timestamp, session-id, and (for Agent dispatches) target agent name, for each `Skill`/`Agent` tool-use event | `skill-tracker` PreToolUse hook — runs automatically on every `Skill`/`Agent` tool call once setup is `VALID` | No — only the matched skill *name* is stored, never the surrounding prompt |
+| `variance/<session-id>.json` | **Verbatim** first and subsequent user messages (`original_ask`, `prior_asks`) for the analyzed session, the file paths it edited, and an LLM-written variance judgment | `variance-save` subcommand — invoked only by the opt-in `/session-analysis` skill or a manual CLI call, **never automatically** | **Yes** — full user prompt text |
+| `setup-state.json` | Plugin version and venv path | `/setup-prospector` | No |
+
+**`variance/<session-id>.json` is the only file that stores prompt content, and it is opt-in.** It is written exclusively when you (or the `/session-analysis` skill acting on your behalf) run `session-analysis` or `variance-save` for a specific session — see the [`variance-save` subcommand](#variance-save--persist-combined-audit--judgment) above for the exact schema. Nothing else `claude-prospector` writes contains message text.
+
+**Clearing local data.** Each of these files/directories is regenerated on demand and safe to delete on its own at any time. `cd` into your base directory first (the plugin-managed path, or `~/.claude/claude-prospector/` under the legacy layout — see above), then:
+
+```bash
+rm -rf variance/          # the prompt-bearing records
+rm -rf skill-tracking/    # skill-name events (no prompt text)
+rm -f  hook.log dashboard.html
+```
+
+These commands assume the default, unoverridden paths. If you've set any of the `CLAUDE_PROSPECTOR_*` path overrides above, `skill-tracking/`, `hook.log`, and `dashboard.html` may live elsewhere — adjust the paths (or target the overridden location directly) accordingly. `variance/` has no env-var override — it is always `<base_dir>/variance/` — though `variance-save --out` can place a single record anywhere.
+
+Deleting `variance/` only shrinks `drift-report`'s aggregation window (fewer or zero records to summarize) — it never breaks other features. Deleting `skill-tracking/`, `hook.log`, or `dashboard.html` is likewise harmless; each is recreated the next time its triggering event occurs.
+
+Do **not** `rm -rf` the whole base directory as a shortcut — under the plugin-managed path it also holds `venv/` (the Python environment `/setup-prospector` built) and `setup-state.json`; deleting those forces a full `/setup-prospector` re-run.
+
+**Disabling.**
+
+- `variance-save` and `/session-analysis` are opt-in by design — don't invoke them and no prompt text is ever written to disk.
+- `skill-tracker` — the only *automatic* hook that persists per-event records — has no dedicated on/off toggle today, and its gating is one-directional. **Before** `/setup-prospector` has ever completed successfully, skipping it keeps `skill-tracker` inactive — at the cost of every other feature (dashboard, usage-analysis), since none of them work without setup either. **After** setup has completed and the setup-state flag reads `VALID`, `skill-tracker` runs on every `Skill`/`Agent` tool call regardless of whether you run `/setup-prospector` again — there is no way to disable it alone while keeping the rest of the plugin active, and *not* re-running `/setup-prospector` does not retroactively turn it off (the flag only goes stale on a plugin-version bump, or breaks if the venv is later removed/corrupted — see [Troubleshooting](#troubleshooting)). Use `CLAUDE_PROSPECTOR_SKILL_TRACKING_DIR` if you want its (prompt-text-free) output redirected somewhere else.
+- `dashboard-regen` (Stop hook) is opt-in and off by default — toggle via `/plugin reconfigure claude-prospector` (see [Configuration](#configuration)).
 
 ## Development
 
