@@ -394,7 +394,7 @@ Re-runs `session-audit` internally (1a), merges the result with the supplied jud
   "not_done": "<str>",
   "severity": "<int|null>",
   "timestamp": "<ISO-8601 str, UTC-assumed|null>",
-  "prompts_redacted": "<bool>"
+  "prompts_redacted": <true|false>
 }
 ```
 
