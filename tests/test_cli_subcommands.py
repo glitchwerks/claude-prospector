@@ -87,3 +87,35 @@ def test_dashboard_explicit_window_flag_still_works() -> None:
         f"Expected args.window == 168.0 when --window 7d is passed, "
         f"got {args.window!r}."
     )
+
+
+# ---------------------------------------------------------------------------
+# tool-usage subcommand smoke tests
+# ---------------------------------------------------------------------------
+
+
+class TestToolUsageSubcommand:
+    def test_help_exits_zero(self) -> None:
+        """'claude-prospector tool-usage --help' must exit 0 and self-identify."""
+        result = _run("tool-usage", "--help")
+        assert result.returncode == 0
+        assert "tool-usage" in result.stdout
+
+    def test_track_mcp_calls_flag_is_rejected(self) -> None:
+        """Spec D1(a): the flag belongs to dashboard/#248, not here."""
+        result = _run("tool-usage", "--track-mcp-calls")
+        assert result.returncode != 0
+        assert "unrecognized arguments" in result.stderr
+
+    def test_defaults(self) -> None:
+        from claude_prospector.cli import tool_usage
+
+        parser = argparse.ArgumentParser()
+        sub = parser.add_subparsers(dest="subcommand")
+        tool_usage.build_parser(sub)
+        args = parser.parse_args(["tool-usage"])
+
+        assert args.days == 7
+        assert args.compact is False
+        assert args.tool is None
+        assert args.server is None

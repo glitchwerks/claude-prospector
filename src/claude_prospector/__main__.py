@@ -12,6 +12,7 @@ from claude_prospector.cli import (
     drift_report,
     session_audit,
     session_summary,
+    tool_usage,
     variance_save,
 )
 
@@ -44,6 +45,7 @@ def main() -> None:
     audit.build_parser(subparsers)
     variance_save.build_parser(subparsers)
     drift_report.build_parser(subparsers)
+    tool_usage.build_parser(subparsers)
 
     args = parser.parse_args()
 
@@ -71,6 +73,9 @@ def main() -> None:
 
     if args.subcommand == "drift-report":
         sys.exit(drift_report.run(args))
+
+    if args.subcommand == "tool-usage":
+        sys.exit(tool_usage.run(args))
 
 
 if __name__ == "__main__":

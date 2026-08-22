@@ -7,11 +7,14 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
 from claude_prospector.constants import AGENT_PATH_SEPARATOR as _AGENT_PATH_SEPARATOR
+from claude_prospector.mcp_names import normalize_mcp_tool_name
 from claude_prospector.models import (
+    AgentAvailability,
     MessageRecord,
     SessionRecord,
     SkillPassedEvent,
     SkillInvokedEvent,
+    ToolUseRecord,
 )
 
 #: Delimiter joining agent_path segments into a by_agent key string.
@@ -291,3 +294,133 @@ def compute_skill_adoption(
         }
 
     return result
+
+
+#: Bucket key for all non-MCP tool calls under ``--compact``.
+BUILTIN_BUCKET = "_builtin"
+
+
+def compute_tool_usage(
+    per_session: list[tuple[str, list[ToolUseRecord], list[AgentAvailability]]],
+    compact: bool = False,
+) -> dict[str, dict]:
+    """Aggregate collected tool calls into the ``tool-usage`` report body.
+
+    Pure aggregation: no IO, no time filtering, no session selection. The
+    caller supplies exactly the sessions that belong in the window.
+
+    Availability semantics: ``sessions_seen_in`` for a given server is
+    ``None`` (not ``0``) when no session in the entire ``per_session`` set
+    carried an availability signal at all — i.e. every session's
+    availability entries had ``signal_present`` False. ``None`` means "we
+    could not tell"; ``0`` means "we could tell, and it was available in no
+    session". Within one session, availability is unioned across every
+    agent transcript in that session (spec D8(a)) before it is rolled into
+    ``sessions_seen_in``.
+
+    Args:
+        per_session: One ``(session_id, tool_uses, availabilities)`` tuple
+            per in-window session. Session selection and time filtering are
+            the caller's responsibility.
+        compact: When True, ``by_agent`` buckets MCP calls by server name
+            and collapses every non-MCP call into a single
+            :data:`BUILTIN_BUCKET` count. Only ``by_agent`` is affected —
+            ``by_tool`` and ``by_server`` are identical either way.
+
+    Returns:
+        A dict with exactly the keys ``by_tool``, ``by_server``,
+        ``by_agent``, ``availability_signal``, and ``warnings``.
+    """
+    by_tool: Counter[str] = Counter()
+    server_calls: Counter[str] = Counter()
+    server_methods: dict[str, Counter] = defaultdict(Counter)
+    server_used_sessions: dict[str, set[str]] = defaultdict(set)
+    server_seen_sessions: dict[str, set[str]] = defaultdict(set)
+    server_sources: dict[str, set[str]] = defaultdict(set)
+    by_agent: dict[str, Counter] = defaultdict(Counter)
+    malformed = 0
+    sessions_with_signal = 0
+    sessions_without_signal = 0
+    # Attachment types actually observed. Tracked separately from
+    # server_sources: a delta that named only built-in tools proves the
+    # signal was present even though it contributed no MCP server, and the
+    # envelope must not claim signal coverage with an empty `sources` list.
+    observed_sources: set[str] = set()
+
+    for session_id, tool_uses, availabilities in per_session:
+        if any(a.signal_present for a in availabilities):
+            sessions_with_signal += 1
+        else:
+            sessions_without_signal += 1
+
+        # D8(a): union availability across every agent in the session.
+        for availability in availabilities:
+            observed_sources.update(availability.observed_sources)
+            for server, sources in availability.server_sources.items():
+                server_seen_sessions[server].add(session_id)
+                server_sources[server].update(sources)
+
+        for record in tool_uses:
+            by_tool[record.tool_name] += 1
+            agent_key = AGENT_PATH_SEPARATOR.join(record.agent_path)
+
+            normalised = (
+                normalize_mcp_tool_name(record.tool_name)
+                if record.tool_name.startswith("mcp__")
+                else None
+            )
+            if record.tool_name.startswith("mcp__") and normalised is None:
+                malformed += 1
+
+            if normalised is None:
+                if compact:
+                    by_agent[agent_key][BUILTIN_BUCKET] += 1
+                else:
+                    by_agent[agent_key][record.tool_name] += 1
+                continue
+
+            server, _, method = normalised.partition(".")
+            server_calls[server] += 1
+            server_methods[server][method] += 1
+            server_used_sessions[server].add(session_id)
+            if compact:
+                by_agent[agent_key][server] += 1
+            else:
+                by_agent[agent_key][record.tool_name] += 1
+
+    any_signal = sessions_with_signal > 0
+
+    by_server: dict[str, dict] = {}
+    for server in sorted(set(server_calls) | set(server_seen_sessions)):
+        used_in = len(server_used_sessions.get(server, set()))
+        total = server_calls.get(server, 0)
+        seen_in: int | None = (
+            len(server_seen_sessions.get(server, set())) if any_signal else None
+        )
+        by_server[server] = {
+            "total_calls": total,
+            "sessions_seen_in": seen_in,
+            "sessions_used_in": used_in,
+            "avg_calls_per_active_session": (
+                round(total / used_in, 2) if used_in else None
+            ),
+            "by_method": dict(server_methods.get(server, Counter())),
+        }
+
+    return {
+        "by_tool": dict(by_tool),
+        "by_server": by_server,
+        "by_agent": {k: dict(v) for k, v in by_agent.items()},
+        "availability_signal": {
+            "sessions_with_signal": sessions_with_signal,
+            "sessions_without_signal": sessions_without_signal,
+            "sources": sorted(observed_sources),
+            "by_server_sources": {
+                k: sorted(v) for k, v in sorted(server_sources.items())
+            },
+        },
+        "warnings": {
+            "malformed_mcp_names": malformed,
+            "workflow_agents_unattributed": True,
+        },
+    }

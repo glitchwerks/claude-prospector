@@ -553,6 +553,75 @@ All three `1` cases are validated or raised before any output is written; stdout
 
 ---
 
+### `tool-usage` — per-tool, per-server, per-agent call counts
+
+Aggregates every tool invocation recorded in your local transcripts. Answers
+"which MCP servers do I actually use?" and "did exposing a server to
+sub-agents change their behaviour?" without any runtime instrumentation — it
+reads the transcripts Claude Code already writes.
+
+```bash
+python -m claude_prospector tool-usage --days 30
+python -m claude_prospector tool-usage --server codegraph --days 30
+python -m claude_prospector tool-usage --agent code-writer --compact
+```
+
+#### Flags
+
+| Flag | Default | Description |
+|---|---|---|
+| `--data-dir PATH` | `~/.claude` | Claude data directory to scan |
+| `--days N` | `7` | Rolling window: sessions starting in the last N days. Ignored if `--from` is given |
+| `--from YYYY-MM-DD` | *(none)* | Absolute start date (inclusive). Overrides `--days` |
+| `--to YYYY-MM-DD` | *(none)* | Absolute end date (exclusive) |
+| `--repo NAME` | *(none)* | Only sessions whose project matches `NAME` exactly |
+| `--agent NAME` | *(none)* | Only calls/availability made by an agent whose path contains `NAME` (any segment, not just the leaf) |
+| `--tool GLOB` | *(none)* | `fnmatch` glob over raw tool names, e.g. `mcp__azure__*`. Mutually exclusive with `--server` |
+| `--server NAME` | *(none)* | Shorthand for `--tool 'mcp__*NAME__*'`. Mutually exclusive with `--tool` |
+| `--compact` | off | Collapse `by_agent` to MCP server names plus a single `_builtin` bucket (see below) |
+| `--format {json}` | `json` | Accepted for symmetry with other subcommands; JSON is the only supported format |
+
+Output is JSON on stdout. Key fields:
+
+- `by_tool` — raw call counts, built-ins and MCP tools alike, keyed by the
+  literal tool name as it appears in the transcript.
+- `by_server` — per-MCP-server rollup, keyed by server name: `total_calls`,
+  `sessions_used_in` (sessions with at least one call to that server),
+  `sessions_seen_in` (sessions where the server was available), a per-method
+  `by_method` split, and `avg_calls_per_active_session` (`total_calls /
+  sessions_used_in`, rounded to 2 decimals, or `null` when the server was
+  never called).
+- `by_agent` — per-agent breakdown, keyed by the full agent path
+  (`general-purpose→code-writer`). By default each agent maps raw tool name
+  to call count; pass `--compact` to collapse it to MCP server names plus a
+  single `_builtin` count for all non-MCP calls.
+
+**Validating a config change.** To check whether granting CodeGraph to
+sub-agents actually changed their behaviour, compare the two weeks either
+side of the change:
+
+```bash
+python -m claude_prospector tool-usage --from 2026-07-01 --to 2026-07-15 --server codegraph
+python -m claude_prospector tool-usage --from 2026-07-15 --to 2026-07-29 --server codegraph
+```
+
+Rising `sessions_used_in` against a flat `sessions_seen_in` means adoption
+went up without the exposure changing.
+
+**`sessions_seen_in` can be `null` — never treat that as `0`.** Availability
+is derived from tool-inventory records in the transcript. `null` means "no
+session in the window carried that inventory signal at all — we could not
+tell", which is deliberately distinct from `0` ("we could tell, and the
+server was available in no session"). Do not treat `null` as zero when
+deciding to prune a server.
+
+**Known gap.** Agents dispatched inside a workflow
+(`subagents/workflows/wf_*/`) are not yet traversed, so their calls are
+missing from all output. `warnings.workflow_agents_unattributed` flags this
+on every run, unconditionally.
+
+---
+
 ### `audit` — agent/skill inventory and hygiene report
 
 ```bash
