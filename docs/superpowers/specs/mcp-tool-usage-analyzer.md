@@ -371,8 +371,14 @@ in dashboard output. Issue #195's AC bullet "Collection gated behind opt-in flag
   (§7, `AGENT_PATH_SEPARATOR`-joined) whose final (rightmost) segment equals
   `<name>` — e.g. `--agent code-writer` matches both `code-writer` and
   `general-purpose→code-writer`. When multiple distinct paths share the same
-  leaf name, their results are **summed** into one aggregate total for that
-  `--agent` value, rather than picking one path or erroring on ambiguity.
+  leaf name, rather than picking one path or erroring on ambiguity: call
+  totals are summed; session-derived metrics use the union of matching
+  session IDs. Concretely, `total_calls` and the `by_tool`/`by_server` counts
+  under that `--agent` value are **summed** across the matching paths, but
+  `sessions_seen_in`, `sessions_used_in`, and `avg_calls_per_active_session`
+  are recomputed from the **union** of session IDs across those paths —
+  summing per-path session counts would double-count any session in which
+  the same leaf-named agent was invoked from more than one parent path.
 - **F4** `by_tool` counts **every** tool, MCP and built-in alike, keyed by raw
   tool name (issue #195's example includes `Read` and `Grep`).
 - **F5** `by_server` rolls up MCP calls via `normalize_mcp_tool_name`
