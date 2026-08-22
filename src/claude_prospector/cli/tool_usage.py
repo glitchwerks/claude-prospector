@@ -6,6 +6,8 @@ window, including MCP servers that were available but never called.
 Exit codes:
     0  Success — JSON written to stdout.
     1  IO failure — the data directory could not be read.
+    2  Invalid window — the resolved --from/--to bounds are inverted
+       (from_date >= to_date).
 """
 
 from __future__ import annotations
@@ -19,12 +21,14 @@ from pathlib import Path
 
 from claude_prospector.aggregator import compute_tool_usage
 from claude_prospector.cli.dashboard import _parse_date
+from claude_prospector.mcp_names import normalize_mcp_tool_name
 from claude_prospector.models import AgentAvailability, ToolUseRecord
 from claude_prospector.parser import parse_sessions
 from claude_prospector.tool_collection import collect_session
 
 EXIT_OK = 0
 EXIT_IO_FAILURE = 1
+EXIT_INVALID_WINDOW = 2
 
 DEFAULT_DAYS: int = 7
 
@@ -79,7 +83,7 @@ def build_parser(parent: argparse._SubParsersAction) -> argparse.ArgumentParser:
     group.add_argument(
         "--server",
         default=None,
-        help="Shorthand for --tool 'mcp__*<name>__*'.",
+        help="Only calls to this MCP server (exact match, e.g. 'azure').",
     )
     p.add_argument(
         "--compact",
@@ -95,20 +99,29 @@ def build_parser(parent: argparse._SubParsersAction) -> argparse.ArgumentParser:
     return p
 
 
-def _tool_pattern(args: argparse.Namespace) -> str | None:
-    """Resolve --tool / --server into a single fnmatch pattern.
+def _matches_server(tool_name: str, wanted: str) -> bool:
+    """Return True when *tool_name*'s normalized server equals *wanted*.
+
+    Unlike the raw ``--tool`` glob filter, ``--server`` must match the
+    server component of an MCP tool name exactly (after normalization),
+    not as an fnmatch substring/prefix. A naive
+    ``f"mcp__*{wanted}__*"`` pattern lets a leading ``*`` swallow a
+    prefix (e.g. ``--server azure`` would wrongly match
+    ``mcp__myazure__storage``).
 
     Args:
-        args: Parsed CLI arguments.
+        tool_name: Raw tool name from the transcript.
+        wanted: The exact server name requested via ``--server``.
 
     Returns:
-        The glob to match raw tool names against, or None for no filter.
+        True if *tool_name* is a well-formed MCP tool name whose server
+        component equals *wanted* exactly.
     """
-    if args.tool:
-        return args.tool
-    if args.server:
-        return f"mcp__*{args.server}__*"
-    return None
+    normalized = normalize_mcp_tool_name(tool_name)
+    if normalized is None:
+        return False
+    server, _, _method = normalized.partition(".")
+    return server == wanted
 
 
 def _window_bounds(
@@ -125,6 +138,8 @@ def _window_bounds(
     if args.from_date is not None:
         return args.from_date, args.to_date
     if args.days is not None and args.days > 0:
+        if args.to_date is not None:
+            return args.to_date - timedelta(days=args.days), args.to_date
         return datetime.now(timezone.utc) - timedelta(days=args.days), args.to_date
     return None, args.to_date
 
@@ -151,10 +166,19 @@ def run(args: argparse.Namespace) -> int:
 
     Returns:
         EXIT_OK on success, EXIT_IO_FAILURE when the data directory is
-        unreadable.
+        unreadable, EXIT_INVALID_WINDOW when the resolved --from/--to
+        window is inverted or empty.
     """
     from_date, to_date = _window_bounds(args)
-    pattern = _tool_pattern(args)
+    if from_date is not None and to_date is not None and from_date >= to_date:
+        print(
+            "Invalid date window: --from "
+            f"({from_date.date().isoformat()}) is not before --to "
+            f"({to_date.date().isoformat()}); the from/to range must "
+            "not be empty or inverted.",
+            file=sys.stderr,
+        )
+        return EXIT_INVALID_WINDOW
 
     try:
         sessions = parse_sessions(args.data_dir)
@@ -197,8 +221,14 @@ def run(args: argparse.Namespace) -> int:
             availabilities = [
                 a for a in availabilities if _matches_agent(a.agent_path, args.agent)
             ]
-        if pattern is not None:
-            tool_uses = [r for r in tool_uses if fnmatch.fnmatch(r.tool_name, pattern)]
+        if args.tool is not None:
+            tool_uses = [
+                r for r in tool_uses if fnmatch.fnmatch(r.tool_name, args.tool)
+            ]
+        elif args.server is not None:
+            tool_uses = [
+                r for r in tool_uses if _matches_server(r.tool_name, args.server)
+            ]
 
         per_session.append((session.session_id, tool_uses, availabilities))
 
