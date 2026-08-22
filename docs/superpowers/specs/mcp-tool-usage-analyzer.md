@@ -193,11 +193,14 @@ can judge coverage instead of guessing.
 
 ### 2.4 Version-drift caveat
 
-A probe for `"version":"(1\.|2\.0\.)` across all `*.jsonl` under
-`~/.claude/projects` returned **no files on this host as of 2026-08-21**. That is
-evidence about this machine only — it does not establish when these attachment
-types were introduced upstream. Implementation must treat their absence as
-"signal missing" (→ `null`), never as an error and never as `0`.
+The corpus probed in §2.1 is entirely Claude Code `2.1.225` (per the `version`
+field read on every entry, §2.1). A probe for `"version":"(1\.|2\.0\.)` across
+that same corpus returning no matches is therefore not meaningful evidence of
+anything — it could not have matched, because no file in the corpus carries any
+version other than `2.1.225`. It does **not** establish that older-version
+transcripts lack these attachment types, nor when they were introduced
+upstream. Implementation must treat their absence as "signal missing"
+(→ `null`), never as an error and never as `0`.
 
 `unverified:` the Claude Code version that introduced `deferred_tools_delta` /
 `mcp_instructions_delta` is not documented in any source checked. If the
@@ -364,6 +367,12 @@ in dashboard output. Issue #195's AC bullet "Collection gated behind opt-in flag
   Also `--data-dir` for parity with every other subcommand
   (`cli/dashboard.py:77-80`), and `--compact` per F6.
   **No `--track-mcp-calls` (D1 = a)** — the subcommand runs unconditionally.
+  **`--agent <name>` matches by leaf name:** it matches any `by_agent` path
+  (§7, `AGENT_PATH_SEPARATOR`-joined) whose final (rightmost) segment equals
+  `<name>` — e.g. `--agent code-writer` matches both `code-writer` and
+  `general-purpose→code-writer`. When multiple distinct paths share the same
+  leaf name, their results are **summed** into one aggregate total for that
+  `--agent` value, rather than picking one path or erroring on ambiguity.
 - **F4** `by_tool` counts **every** tool, MCP and built-in alike, keyed by raw
   tool name (issue #195's example includes `Read` and `Grep`).
 - **F5** `by_server` rolls up MCP calls via `normalize_mcp_tool_name`
@@ -391,6 +400,19 @@ in dashboard output. Issue #195's AC bullet "Collection gated behind opt-in flag
   session by union per **D8 = (a)**: a server counts as seen in a session if it
   was available to **any** agent in that session. Per-agent availability is
   retained internally so `--agent <name>` narrows to that agent's own grant.
+  **Canonical `by_server` key mapping:** availability-signal server strings —
+  `mcp_instructions_delta.addedNames` entries (server-level, e.g.
+  `plugin:microsoft-docs:microsoft-learn`) and `deferred_tools_delta.addedNames`
+  entries (tool-level, fully-qualified names like `mcp__azure__advisor`) — must
+  be routed through the same server-extraction logic `normalize_mcp_tool_name`
+  uses to pull a server component out of call names, rather than a separate
+  alias table. This guarantees availability data and call data land on one
+  canonical `by_server` key instead of two representations of the same server
+  producing duplicate or mismatched entries. When this is implemented (Phase
+  1b / Task 3-4), add a plugin-scoped availability fixture exercising a
+  `plugin:<plugin>:<server>`-shaped `mcp_instructions_delta` name alongside its
+  corresponding `mcp__plugin_<plugin>_<server>__<method>` call name, and assert
+  both resolve to the same `by_server` key.
 - **F7a** Availability is time-filtered by the session's inclusion in the
   window, not per-entry: the delta entries appear once near the start of a
   transcript and carry timestamps that may fall outside a narrow `--days`
@@ -408,9 +430,20 @@ in dashboard output. Issue #195's AC bullet "Collection gated behind opt-in flag
 - **F8** Missing / unreadable / non-JSONL transcripts are skipped without
   aborting the run, and counted in `warnings` (§7). Issue #195: "Sessions with
   missing transcripts should be skipped gracefully."
-- **F9** Malformed MCP names (`normalize_mcp_tool_name` → `None`) are counted
-  in `by_tool` under their raw name and excluded from `by_server`, with a count
-  surfaced in `warnings.malformed_mcp_names`.
+  **Partial/all-invalid transcripts:** a transcript file containing a mix of
+  valid and malformed JSONL lines is not skipped — its valid lines are still
+  processed normally, and malformed lines are silently skipped line-by-line,
+  matching existing `session_summary.py` behaviour. `window.sessions_skipped`
+  increments only when a transcript file has **zero** valid lines (every line
+  in it is malformed or unparseable) — not merely when it contains any
+  malformed line.
+- **F9** Malformed MCP names — a raw tool name that **starts with `mcp__`** but
+  for which `normalize_mcp_tool_name` returns `None` — are counted in `by_tool`
+  under their raw name, excluded from `by_server`, and increment
+  `warnings.malformed_mcp_names`. `normalize_mcp_tool_name` also returns `None`
+  for ordinary non-MCP tool names (`Read`, `Grep`, etc.); those must **not**
+  increment `warnings.malformed_mcp_names` — the counter is scoped to names
+  that look like MCP calls but fail to parse, not to every `None` return.
 - **F12** (D2 = c) A shared transcript walker in
   `src/claude_prospector/transcript_walker.py` (traversal only) owns the
   `subagents/` recursion,
