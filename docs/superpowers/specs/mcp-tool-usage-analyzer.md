@@ -23,13 +23,14 @@ skills_relevant:
 
 # MCP tool-usage analyzer — implementation spec (issue #195)
 
-**Status: READY FOR IMPLEMENTATION.** All eight decisions in §6 were resolved by
-the user on 2026-08-21 and are recorded there as **RESOLVED** with their
-rationale. §5 requirements, §7 schema, and §8 phasing reflect the resolved
-answers.
+**Status: IMPLEMENTED** (Phases 0–2; §8 Phase 3 remains open under #248). All
+eight decisions in §6 were resolved by the user on 2026-08-21 and are recorded
+there as **RESOLVED** with their rationale. §5 requirements, §7 schema, and §8
+phasing reflect the resolved answers. Issue #195 is closed.
 
-Implementation plan:
-`docs/superpowers/plans/2026-08-21-mcp-tool-usage-analyzer.md`.
+Implementation history: #249 (`mcp_names.py`), #250 (`transcript_walker.py`
+extraction), #251 (`tool_collection.py`), #252 (aggregator + CLI); tracked
+under issue #195.
 
 **`tests/test_parser.py` is deliberately absent from `touches:`.** The walker
 extraction must leave it byte-identical; that is the Phase 1a gate, not an
