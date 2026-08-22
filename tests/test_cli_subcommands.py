@@ -87,3 +87,66 @@ def test_dashboard_explicit_window_flag_still_works() -> None:
         f"Expected args.window == 168.0 when --window 7d is passed, "
         f"got {args.window!r}."
     )
+
+
+# ---------------------------------------------------------------------------
+# tool-usage subcommand smoke tests
+# ---------------------------------------------------------------------------
+
+
+class TestToolUsageSubcommand:
+    def test_help_exits_zero(self) -> None:
+        """'claude-prospector tool-usage --help' must exit 0 and self-identify."""
+        result = _run("tool-usage", "--help")
+        assert result.returncode == 0
+        assert "tool-usage" in result.stdout
+
+    def test_track_mcp_calls_flag_is_rejected(self) -> None:
+        """Spec D1(a): the flag belongs to dashboard/#248, not here."""
+        result = _run("tool-usage", "--track-mcp-calls")
+        assert result.returncode != 0
+        assert "unrecognized arguments" in result.stderr
+
+    def test_defaults(self) -> None:
+        from claude_prospector.cli import tool_usage
+
+        parser = argparse.ArgumentParser()
+        sub = parser.add_subparsers(dest="subcommand")
+        tool_usage.build_parser(sub)
+        args = parser.parse_args(["tool-usage"])
+
+        assert args.days == 7
+        assert args.compact is False
+        assert args.tool is None
+        assert args.server is None
+
+    def test_inverted_from_after_to_is_rejected_with_error(self, tmp_path) -> None:
+        """--from chronologically after --to must be rejected, not silent.
+
+        CodeRabbit review on PR #252, Behavior B: a resolved window where
+        from_date >= to_date must exit non-zero with a message naming the
+        problem -- never a silent empty JSON report on exit 0.
+        """
+        result = _run(
+            "tool-usage",
+            "--data-dir",
+            str(tmp_path),
+            "--from",
+            "2026-02-01",
+            "--to",
+            "2026-01-01",
+            "--format",
+            "json",
+        )
+
+        assert result.returncode != 0, (
+            "expected a non-zero exit for an inverted --from/--to window "
+            f"(--from after --to), got exit 0 with stdout={result.stdout!r}"
+        )
+        combined = (result.stdout + result.stderr).lower()
+        assert any(
+            keyword in combined for keyword in ("from", "to", "window", "date", "range")
+        ), (
+            "expected the error output to name the from/to window problem, "
+            f"got stdout={result.stdout!r} stderr={result.stderr!r}"
+        )
