@@ -605,8 +605,9 @@ python -m claude_prospector tool-usage --from 2026-07-01 --to 2026-07-15 --serve
 python -m claude_prospector tool-usage --from 2026-07-15 --to 2026-07-29 --server codegraph
 ```
 
-Rising `sessions_used_in` against a flat `sessions_seen_in` means adoption
-went up without the exposure changing.
+Compare normalized counts using `window.sessions` and check
+`availability_signal.sessions_with_signal` for both windows. These counts
+alone do not prove that adoption increased or exposure stayed constant.
 
 **`sessions_seen_in` can be `null` — never treat that as `0`.** Availability
 is derived from tool-inventory records in the transcript. `null` means "no
