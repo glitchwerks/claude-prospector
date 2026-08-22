@@ -204,6 +204,18 @@ class TestWarningsAndSignal:
         assert result["by_server"] == {}
         assert result["warnings"]["malformed_mcp_names"] == 1
 
+    def test_warnings_no_longer_flags_workflow_agents_as_unattributed(self) -> None:
+        """Regression guard for issue #253.
+
+        The transcript walker now traverses ``subagents/workflows/wf_*/``,
+        so workflow-dispatched agents are attributable like any other
+        subagent. The stale ``workflow_agents_unattributed`` flag must not
+        reappear in the ``warnings`` payload.
+        """
+        result = compute_tool_usage([("s1", [_use("Read")], [])])
+
+        assert "workflow_agents_unattributed" not in result["warnings"]
+
     def test_signal_coverage_is_reported(self) -> None:
         result = compute_tool_usage(
             [
