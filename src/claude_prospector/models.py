@@ -130,3 +130,55 @@ class SkillInvokedEvent:
     skill: str
     timestamp: datetime
     session_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class ToolUseRecord:
+    """A single tool invocation, attributed to the agent that made it.
+
+    Attributes:
+        tool_name: Raw tool name as it appears in the transcript, e.g.
+            ``"Read"`` or ``"mcp__azure__storage"``. Never normalised here —
+            normalisation is the aggregator's job.
+        tool_use_id: The ``toolu_...`` block id. Empty string when the
+            transcript omitted it.
+        agent_type: Sanitized leaf agent name that issued the call.
+        agent_path: Full root-to-leaf ancestry tuple for that agent.
+    """
+
+    tool_name: str
+    tool_use_id: str
+    agent_type: str
+    agent_path: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class AgentAvailability:
+    """Which MCP servers were available to one agent, and how we know.
+
+    Attributes:
+        agent_path: Full root-to-leaf ancestry tuple for the agent.
+        observed_sources: Attachment types that appeared in this agent's
+            transcript (``"deferred_tools_delta"`` and/or
+            ``"mcp_instructions_delta"``). Empty means the availability
+            signal was absent entirely. A delta naming only built-in tools
+            still lands here, which is why this is tracked separately from
+            ``server_sources``.
+        server_sources: Maps server name to the set of attachment types
+            that confirmed it. Empty with a non-empty ``observed_sources``
+            means "we could see the inventory and it named no MCP server".
+    """
+
+    agent_path: tuple[str, ...]
+    observed_sources: frozenset[str]
+    server_sources: dict[str, frozenset[str]]
+
+    @property
+    def signal_present(self) -> bool:
+        """True when this transcript carried any availability delta.
+
+        When False, ``server_sources`` is empty because the signal was
+        absent — NOT because no servers were available. Consumers must
+        render that case as ``null``, never ``0``.
+        """
+        return bool(self.observed_sources)
