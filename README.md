@@ -616,11 +616,6 @@ tell", which is deliberately distinct from `0` ("we could tell, and the
 server was available in no session"). Do not treat `null` as zero when
 deciding to prune a server.
 
-**Known gap.** Agents dispatched inside a workflow
-(`subagents/workflows/wf_*/`) are not yet traversed, so their calls are
-missing from all output. `warnings.workflow_agents_unattributed` flags this
-on every run, unconditionally.
-
 ---
 
 ### `audit` — agent/skill inventory and hygiene report

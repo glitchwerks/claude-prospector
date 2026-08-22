@@ -421,6 +421,5 @@ def compute_tool_usage(
         },
         "warnings": {
             "malformed_mcp_names": malformed,
-            "workflow_agents_unattributed": True,
         },
     }
