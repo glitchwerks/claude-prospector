@@ -4,18 +4,12 @@ from __future__ import annotations
 
 import json
 import re
-import warnings
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
-from claude_prospector.constants import (
-    AGENT_PATH_SEPARATOR as _PATH_SEPARATOR,
-    SANITIZED_SEPARATOR_REPLACEMENT as _SANITIZED_SEPARATOR_REPLACEMENT,
-)
 from claude_prospector.models import MessageRecord, SessionRecord
-
-_MAX_AGENT_PATH_LENGTH = 10
+from claude_prospector.transcript_walker import walk_session
 
 
 def decode_project_hash(hash_name: str) -> str:
@@ -379,173 +373,6 @@ def _parse_jsonl_messages(
     return messages
 
 
-def _sanitize_agent_name(name: str) -> str:
-    """Replace path-separator characters in an agent name with U+FE56.
-
-    The path separator ``→`` (U+2192) must not appear in any segment of an
-    ``agent_path`` tuple; collisions are sanitized to ``﹖`` (U+FE56 SMALL
-    QUESTION MARK) and a ``UserWarning`` is emitted so callers are alerted.
-
-    Args:
-        name: Raw agent name as read from ``*.meta.json``.
-
-    Returns:
-        Sanitized agent name with all ``→`` replaced by ``﹖``.
-    """
-    if _PATH_SEPARATOR in name:
-        sanitized = name.replace(_PATH_SEPARATOR, _SANITIZED_SEPARATOR_REPLACEMENT)
-        warnings.warn(
-            f"Agent name contains path separator; sanitized: {name!r} -> {sanitized!r}",
-            UserWarning,
-            stacklevel=2,
-        )
-        return sanitized
-    return name
-
-
-def _parse_subagents_recursive(
-    parent_session_dir: Path,
-    parent_path: tuple[str, ...],
-    subagent_types_accumulator: list[str],
-    visited: set[Path],
-    depth: int,
-    overflow_emitted: list[bool],
-    cycle_emitted: list[bool],
-    oserror_emitted: list[bool],
-) -> list[MessageRecord]:
-    """Walk <parent_session_dir>/subagents/ and recurse into each sub-agent.
-
-    Implements a depth-first walk of the subagent tree rooted at
-    ``parent_session_dir``. Each level reads ``*.meta.json`` files, parses
-    the matching JSONL, and recurses into the sub-agent's own session
-    directory.
-
-    Contract:
-        - ``len(parent_path) >= _MAX_AGENT_PATH_LENGTH``: return ``[]``.
-          Emit one ``UserWarning`` per session (de-duped via
-          ``overflow_emitted[0]``).
-        - ``parent_session_dir.resolve()`` already in ``visited``: emit a
-          cycle ``UserWarning`` (de-duped via ``cycle_emitted[0]``) and
-          return ``[]``.
-        - ``OSError`` from ``resolve()``: emit a warning (de-duped via
-          ``oserror_emitted[0]``) and return ``[]``.
-        - For each ``*.meta.json``: read ``agentType`` (empty string and
-          ``None`` both default to ``"unknown"``), sanitize it, append to
-          accumulator, build child path, parse matching JSONL, and recurse
-          into ``<parent_session_dir>/subagents/<agent_id>/``.
-        - Missing JSONL: silently skipped.
-        - Empty or non-existent ``subagents/``: returns ``[]``.
-
-    Args:
-        parent_session_dir: Directory for the parent agent session
-            (contains a ``subagents/`` subdirectory if any children exist).
-        parent_path: ``agent_path`` tuple of the *parent* agent — child
-            paths are derived by appending the child agent's sanitized name.
-        subagent_types_accumulator: Mutable list collecting all sanitized
-            agent type names encountered at any depth.
-        visited: Set of resolved ``Path`` objects already walked; prevents
-            infinite recursion through symlink or junction cycles.
-        depth: Current recursion depth (1 = first sub-agent level under
-            the root session).
-        overflow_emitted: Single-element list used as a mutable flag; set
-            to ``True`` once the path-length-cap warning has been emitted so
-            it fires at most once per ``_parse_session`` call.
-        cycle_emitted: Single-element list used as a mutable flag; set to
-            ``True`` once the cycle warning has been emitted so it fires at
-            most once per ``_parse_session`` call.
-        oserror_emitted: Single-element list used as a mutable flag; set to
-            ``True`` once the OSError warning has been emitted so it fires
-            at most once per ``_parse_session`` call.
-
-    Returns:
-        Flat list of ``MessageRecord`` objects produced at this level and
-        all reachable descendant levels.
-    """
-    if len(parent_path) >= _MAX_AGENT_PATH_LENGTH:
-        if not overflow_emitted[0]:
-            warnings.warn(
-                f"Subagent path length cap ({_MAX_AGENT_PATH_LENGTH})"
-                f" exceeded at {parent_session_dir}",
-                UserWarning,
-                stacklevel=2,
-            )
-            overflow_emitted[0] = True
-        return []
-
-    subagent_dir = parent_session_dir / "subagents"
-    if not subagent_dir.is_dir():
-        return []
-
-    # Cycle defense: resolve the subagents directory to its canonical real
-    # path.  On POSIX, symlinks are fully resolved; on Windows, junctions
-    # may not be normalized (fallback to depth cap).
-    # OSError can occur on broken symlinks, revoked permissions, or
-    # other filesystem faults — warn once and skip rather than crash.
-    try:
-        real_dir = subagent_dir.resolve()
-    except OSError as exc:
-        if not oserror_emitted[0]:
-            warnings.warn(
-                f"Skipping unreadable subagent directory {subagent_dir}: {exc}",
-                UserWarning,
-                stacklevel=2,
-            )
-            oserror_emitted[0] = True
-        return []
-    if real_dir in visited:
-        if not cycle_emitted[0]:
-            warnings.warn(
-                f"Subagent directory cycle detected: {real_dir}",
-                UserWarning,
-                stacklevel=2,
-            )
-            cycle_emitted[0] = True
-        return []
-    visited.add(real_dir)
-
-    messages: list[MessageRecord] = []
-    for meta_path in subagent_dir.glob("*.meta.json"):
-        try:
-            meta = json.loads(meta_path.read_text(encoding="utf-8"))
-            raw_agent_type = meta.get("agentType") or "unknown"
-        except (json.JSONDecodeError, OSError):
-            raw_agent_type = "unknown"
-
-        agent_type_sanitized = _sanitize_agent_name(raw_agent_type)
-        subagent_types_accumulator.append(agent_type_sanitized)
-
-        child_path = parent_path + (agent_type_sanitized,)
-
-        # Find matching JSONL in the parent's subagents/ directory
-        agent_id = meta_path.stem.replace(".meta", "")
-        sub_jsonl = subagent_dir / f"{agent_id}.jsonl"
-        if sub_jsonl.is_file():
-            messages.extend(
-                _parse_jsonl_messages(
-                    sub_jsonl,
-                    agent_type=agent_type_sanitized,
-                    agent_path=child_path,
-                )
-            )
-
-        # Recurse into this sub-agent's own session directory
-        child_session_dir = subagent_dir / agent_id
-        messages.extend(
-            _parse_subagents_recursive(
-                parent_session_dir=child_session_dir,
-                parent_path=child_path,
-                subagent_types_accumulator=subagent_types_accumulator,
-                visited=visited,
-                depth=depth + 1,
-                overflow_emitted=overflow_emitted,
-                cycle_emitted=cycle_emitted,
-                oserror_emitted=oserror_emitted,
-            )
-        )
-
-    return messages
-
-
 _AGENT_SETTING_SCAN_LINES = 10
 
 
@@ -609,34 +436,18 @@ def _parse_session(
     if root_agent == "unknown" and saw_any_line:
         root_agent = "main"
 
-    # Sanitize root agent name before building the root path tuple.
-    root_agent_sanitized = _sanitize_agent_name(root_agent)
+    # Locate every agent transcript in this session, then parse each one.
+    transcripts, subagent_types = walk_session(jsonl_path, root_agent)
 
-    # Parse parent session messages
-    messages = _parse_jsonl_messages(
-        jsonl_path,
-        agent_type=root_agent_sanitized,
-        agent_path=(root_agent_sanitized,),
-    )
-
-    # Parse subagent messages via the recursive helper.
-    subagent_types: list[str] = []
-    visited: set[Path] = set()
-    overflow_emitted: list[bool] = [False]
-    cycle_emitted: list[bool] = [False]
-    oserror_emitted: list[bool] = [False]
-    messages.extend(
-        _parse_subagents_recursive(
-            parent_session_dir=jsonl_path.parent / session_id,
-            parent_path=(root_agent_sanitized,),
-            subagent_types_accumulator=subagent_types,
-            visited=visited,
-            depth=1,
-            overflow_emitted=overflow_emitted,
-            cycle_emitted=cycle_emitted,
-            oserror_emitted=oserror_emitted,
+    messages: list[MessageRecord] = []
+    for unit in transcripts:
+        messages.extend(
+            _parse_jsonl_messages(
+                unit.jsonl_path,
+                agent_type=unit.agent_type,
+                agent_path=unit.agent_path,
+            )
         )
-    )
 
     if not messages:
         start_time = datetime.now(timezone.utc)
