@@ -11,13 +11,14 @@ touched, because it carries file paths and shell commands.
 
 from __future__ import annotations
 
+import fnmatch
 import json
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 from claude_prospector.mcp_names import normalize_mcp_tool_name
-from claude_prospector.models import AgentAvailability, ToolUseRecord
+from claude_prospector.models import AgentAvailability, SessionRecord, ToolUseRecord
 from claude_prospector.transcript_walker import AgentTranscript, walk_session
 
 _DEFERRED_TOOLS_DELTA = "deferred_tools_delta"
@@ -209,3 +210,117 @@ def collect_session(
         tool_uses.extend(collect_tool_uses(unit))
         availabilities.append(collect_availability(unit))
     return tool_uses, availabilities
+
+
+def _matches_server(tool_name: str, wanted: str) -> bool:
+    """Return True when *tool_name*'s normalized server equals *wanted*.
+
+    Unlike the raw ``--tool`` glob filter, ``--server`` must match the
+    server component of an MCP tool name exactly (after normalization),
+    not as an fnmatch substring/prefix. A naive
+    ``f"mcp__*{wanted}__*"`` pattern lets a leading ``*`` swallow a
+    prefix (e.g. ``--server azure`` would wrongly match
+    ``mcp__myazure__storage``).
+
+    Args:
+        tool_name: Raw tool name from the transcript.
+        wanted: The exact server name requested via ``--server``.
+
+    Returns:
+        True if *tool_name* is a well-formed MCP tool name whose server
+        component equals *wanted* exactly.
+    """
+    normalized = normalize_mcp_tool_name(tool_name)
+    if normalized is None:
+        return False
+    server, _, _method = normalized.partition(".")
+    return server == wanted
+
+
+def _matches_agent(agent_path: tuple[str, ...], wanted: str | None) -> bool:
+    """Return True when *agent_path* contains *wanted* (or no filter is set).
+
+    Args:
+        agent_path: Full root-to-leaf ancestry tuple for an agent.
+        wanted: Agent name to match against any segment of the path, or
+            None to disable the filter.
+
+    Returns:
+        True if the filter is disabled or *wanted* appears in *agent_path*.
+    """
+    return wanted is None or wanted in agent_path
+
+
+def collect_per_session(
+    sessions: list[SessionRecord],
+    data_dir: Path,
+    *,
+    agent: str | None = None,
+    tool: str | None = None,
+    server: str | None = None,
+) -> tuple[list[tuple[str, list[ToolUseRecord], list[AgentAvailability]]], int]:
+    """Collect tool-use and availability records for a list of sessions.
+
+    Callers own session selection: *sessions* must already be filtered to
+    exactly the sessions to collect (e.g. by ``--repo`` and a date
+    window). This function applies no time filtering and no ``--repo``
+    filtering of its own — only the record-level ``agent``/``tool``/
+    ``server`` filters below.
+
+    Args:
+        sessions: Already-selected sessions to collect. ``SessionRecord``
+            carries no JSONL path, so each session's transcript is
+            located by globbing ``{data_dir}/projects/*/{session_id}.jsonl``
+            (session ids are UUIDs, so at most one file matches).
+        data_dir: Claude data directory containing the ``projects/``
+            tree.
+        agent: When set, keep only records whose ``agent_path`` contains
+            this value (matched via :func:`_matches_agent`). Applies to
+            both ``tool_uses`` and ``availabilities``.
+        tool: When set, keep only tool_uses whose raw ``tool_name``
+            matches this glob pattern (via ``fnmatch``). Does not filter
+            ``availabilities``. Mutually exclusive with *server* by
+            caller-side contract: when both are set, *tool* silently
+            takes precedence (``elif``, not two independent filters) and
+            *server* is ignored — this is not validated here.
+        server: When set and *tool* is not, keep only tool_uses whose
+            normalized server equals this value (via
+            :func:`_matches_server`). Does not filter ``availabilities``.
+
+    Returns:
+        A 2-tuple ``(per_session, skipped)``. ``per_session`` is the
+        exact shape :func:`~claude_prospector.aggregator.compute_tool_usage`
+        consumes: one ``(session_id, tool_uses, availabilities)`` tuple
+        per session whose transcript was found and readable. ``skipped``
+        counts sessions whose transcript was missing or raised
+        ``OSError``.
+    """
+    per_session: list[tuple[str, list[ToolUseRecord], list[AgentAvailability]]] = []
+    skipped = 0
+
+    for session in sessions:
+        matches = list((data_dir / "projects").glob(f"*/{session.session_id}.jsonl"))
+        if not matches:
+            skipped += 1
+            continue
+        jsonl_path = matches[0]
+
+        try:
+            tool_uses, availabilities = collect_session(jsonl_path, session.root_agent)
+        except OSError:
+            skipped += 1
+            continue
+
+        if agent is not None:
+            tool_uses = [r for r in tool_uses if _matches_agent(r.agent_path, agent)]
+            availabilities = [
+                a for a in availabilities if _matches_agent(a.agent_path, agent)
+            ]
+        if tool is not None:
+            tool_uses = [r for r in tool_uses if fnmatch.fnmatch(r.tool_name, tool)]
+        elif server is not None:
+            tool_uses = [r for r in tool_uses if _matches_server(r.tool_name, server)]
+
+        per_session.append((session.session_id, tool_uses, availabilities))
+
+    return per_session, skipped
