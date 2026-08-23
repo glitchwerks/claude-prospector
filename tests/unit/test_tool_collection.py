@@ -15,9 +15,16 @@ Covers:
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
-from claude_prospector.tool_collection import collect_availability, collect_tool_uses
+from claude_prospector.models import SessionRecord
+from claude_prospector.tool_collection import (
+    collect_availability,
+    collect_per_session,
+    collect_tool_uses,
+    collect_unit,
+)
 from claude_prospector.transcript_walker import AgentTranscript
 
 # ---------------------------------------------------------------------------
@@ -138,6 +145,31 @@ def _unit(path: Path) -> AgentTranscript:
         jsonl_path=path,
         agent_type="general-purpose",
         agent_path=("general-purpose",),
+    )
+
+
+def _session_record(
+    session_id: str, root_agent: str = "general-purpose"
+) -> SessionRecord:
+    """Build a minimal ``SessionRecord`` for ``collect_per_session`` tests.
+
+    Args:
+        session_id: Session identifier, also used as the JSONL filename
+            stem the caller must place under ``<data_dir>/projects/*/``.
+        root_agent: Raw agent-setting value for the root thread.
+
+    Returns:
+        A ``SessionRecord`` with no messages (unused by
+        ``collect_per_session``, which only reads the transcript on disk).
+    """
+    return SessionRecord(
+        session_id=session_id,
+        project="demo",
+        project_path="/demo",
+        start_time=datetime(2026, 8, 1, tzinfo=timezone.utc),
+        root_agent=root_agent,
+        messages=[],
+        subagent_types=[],
     )
 
 
@@ -436,3 +468,217 @@ class TestCollectAvailability:
             "codegraph": frozenset({"mcp_instructions_delta"}),
             "microsoft-learn": frozenset({"mcp_instructions_delta"}),
         }
+
+
+class TestCollectUnit:
+    """collect_unit merges the assistant and attachment passes into one scan."""
+
+    def test_returns_availability_for_unit_with_no_attachment_entries(
+        self, tmp_path: Path
+    ) -> None:
+        """An AgentAvailability is returned even with zero attachment
+        entries in the file (signal_present stays False, the record is not
+        omitted). Pinned directly at collect_unit, not only through its
+        collect_tool_uses/collect_availability wrappers.
+        """
+        jsonl = tmp_path / "s.jsonl"
+        _write_jsonl(
+            jsonl,
+            [
+                _tool_use_line(
+                    "s",
+                    "msg_1",
+                    "toolu_a",
+                    "Read",
+                    "u1",
+                    "2026-08-01T00:00:00.000Z",
+                )
+            ],
+        )
+
+        tool_uses, availability = collect_unit(_unit(jsonl))
+
+        assert [r.tool_name for r in tool_uses] == ["Read"]
+        assert availability.signal_present is False
+        assert availability.server_sources == {}
+
+    def test_matches_the_separate_wrapper_outputs(self, tmp_path: Path) -> None:
+        """collect_unit's two outputs equal what the two former standalone
+        passes (now thin wrappers) return for the same file.
+        """
+        jsonl = tmp_path / "s.jsonl"
+        _write_jsonl(
+            jsonl,
+            [
+                _tool_use_line(
+                    "s",
+                    "msg_1",
+                    "toolu_a",
+                    "Read",
+                    "u1",
+                    "2026-08-01T00:00:00.000Z",
+                ),
+                _availability_line(
+                    "deferred_tools_delta",
+                    ["mcp__azure__storage"],
+                    [],
+                    "u2",
+                    "2026-08-01T00:00:01.000Z",
+                ),
+            ],
+        )
+        unit = _unit(jsonl)
+
+        tool_uses, availability = collect_unit(unit)
+
+        assert tool_uses == collect_tool_uses(unit)
+        assert availability == collect_availability(unit)
+
+
+class TestCollectUnitMalformedMessage:
+    """Regression: a parseable-but-malformed assistant entry must not crash
+    the merged single-scan collect_unit.
+    """
+
+    def test_null_message_on_assistant_entry_does_not_raise(
+        self, tmp_path: Path
+    ) -> None:
+        """An assistant entry with ``message: null`` is valid, parseable
+        JSONL (not a JSON decode error, just a null where a dict was
+        assumed). Phase 0 merged the two previously-separate visitor
+        passes into collect_unit's single loop; that loop must tolerate
+        this shape rather than raising when it calls
+        ``entry.get("message", {}).get("content", [])``.
+
+        The malformed entry sits between two valid tool_use entries so a
+        correct implementation must both survive it and keep collecting
+        the entries that follow it in file order, rather than aborting
+        the scan.
+        """
+        jsonl = tmp_path / "s.jsonl"
+        _write_jsonl(
+            jsonl,
+            [
+                _tool_use_line(
+                    "s",
+                    "msg_1",
+                    "toolu_a",
+                    "Read",
+                    "u1",
+                    "2026-08-01T00:00:00.000Z",
+                ),
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-08-01T00:00:01.000Z",
+                    "sessionId": "s",
+                    "uuid": "u2",
+                    "message": None,
+                },
+                _tool_use_line(
+                    "s",
+                    "msg_2",
+                    "toolu_b",
+                    "Grep",
+                    "u3",
+                    "2026-08-01T00:00:02.000Z",
+                ),
+            ],
+        )
+
+        tool_uses, availability = collect_unit(_unit(jsonl))
+
+        assert [r.tool_name for r in tool_uses] == ["Read", "Grep"]
+        assert availability.signal_present is False
+
+
+class TestCollectPerSession:
+    """collect_per_session: session-list collection plus record filters."""
+
+    def test_tool_and_server_both_set_tool_wins(self, tmp_path: Path) -> None:
+        """Reproduces cli/tool_usage.py's silent elif precedence: when both
+        --tool and --server are supplied, tool wins and server is ignored.
+        """
+        jsonl = tmp_path / "projects" / "demo-proj" / "s1.jsonl"
+        jsonl.parent.mkdir(parents=True)
+        _write_jsonl(
+            jsonl,
+            [
+                _tool_use_line(
+                    "s1",
+                    "msg_1",
+                    "toolu_a",
+                    "Read",
+                    "u1",
+                    "2026-08-01T00:00:00.000Z",
+                ),
+                _tool_use_line(
+                    "s1",
+                    "msg_2",
+                    "toolu_b",
+                    "mcp__azure__storage",
+                    "u2",
+                    "2026-08-01T00:00:01.000Z",
+                ),
+            ],
+        )
+        sessions = [_session_record("s1")]
+
+        per_session, skipped = collect_per_session(
+            sessions, tmp_path, tool="Read", server="azure"
+        )
+
+        assert skipped == 0
+        _, tool_uses, _ = per_session[0]
+        assert [r.tool_name for r in tool_uses] == ["Read"]
+
+    def test_agent_filter_applies_to_both_tool_uses_and_availabilities(
+        self, tmp_path: Path
+    ) -> None:
+        """--agent filters both tool_uses and availabilities, unlike
+        --tool/--server, which filter only tool_uses.
+        """
+        jsonl = tmp_path / "projects" / "demo-proj" / "s1.jsonl"
+        jsonl.parent.mkdir(parents=True)
+        _write_jsonl(
+            jsonl,
+            [
+                _tool_use_line(
+                    "s1",
+                    "msg_1",
+                    "toolu_a",
+                    "Read",
+                    "u1",
+                    "2026-08-01T00:00:00.000Z",
+                ),
+                _availability_line(
+                    "deferred_tools_delta",
+                    ["mcp__azure__storage"],
+                    [],
+                    "u2",
+                    "2026-08-01T00:00:01.000Z",
+                ),
+            ],
+        )
+        sessions = [_session_record("s1", root_agent="general-purpose")]
+
+        matched, _ = collect_per_session(sessions, tmp_path, agent="general-purpose")
+        unmatched, _ = collect_per_session(sessions, tmp_path, agent="no-such-agent")
+
+        _, matched_tool_uses, matched_availabilities = matched[0]
+        _, unmatched_tool_uses, unmatched_availabilities = unmatched[0]
+
+        assert len(matched_tool_uses) == 1
+        assert len(matched_availabilities) == 1
+        assert unmatched_tool_uses == []
+        assert unmatched_availabilities == []
+
+    def test_missing_transcript_is_skipped(self, tmp_path: Path) -> None:
+        """A session with no matching JSONL file increments skipped,
+        rather than raising.
+        """
+        sessions = [_session_record("missing-session")]
+
+        per_session, skipped = collect_per_session(sessions, tmp_path)
+
+        assert per_session == []
+        assert skipped == 1
