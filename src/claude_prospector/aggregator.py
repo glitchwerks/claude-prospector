@@ -58,6 +58,7 @@ class AggregateResult:
     by_day: dict[str, dict] = field(default_factory=dict)
     sessions: list[dict] = field(default_factory=list)
     by_skill_adoption: dict[str, dict] = field(default_factory=dict)
+    by_mcp_usage: dict[str, dict] = field(default_factory=dict)
 
 
 def _add_tokens(bucket: dict, msg: MessageRecord) -> None:

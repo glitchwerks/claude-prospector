@@ -7,7 +7,7 @@ import json
 import os
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from claude_prospector.aggregator import aggregate
@@ -136,6 +136,16 @@ def build_parser(parent: argparse._SubParsersAction) -> argparse.ArgumentParser:
             "'json' writes structured data to stdout."
         ),
     )
+    p.add_argument(
+        "--track-mcp-calls",
+        action="store_true",
+        default=False,
+        help=(
+            "Collect MCP tool-call usage data (by_mcp_usage). Reads every "
+            "in-window session's transcript a second time, so this adds "
+            "extra IO cost on top of the default aggregation."
+        ),
+    )
     return p
 
 
@@ -155,11 +165,22 @@ def run(args: argparse.Namespace) -> int:
     sessions = parse_sessions(args.data_dir)
     print(f"Found {len(sessions)} sessions.", file=status_file)
 
+    # Resolve --window/--from/--to once, up front, so aggregate() and the
+    # by_mcp_usage.window block below are guaranteed to agree on the same
+    # bounds (D-C finding-2: resolving --window inside aggregate() only,
+    # and separately passing raw args.from_date elsewhere, is how that bug
+    # class happens).
+    resolved_from = args.from_date
+    resolved_to = args.to_date
+    if args.window is not None:
+        resolved_from = datetime.now(timezone.utc) - timedelta(hours=args.window)
+        resolved_to = None
+
     result = aggregate(
         sessions,
-        from_date=args.from_date,
-        to_date=args.to_date,
-        window_hours=args.window,
+        from_date=resolved_from,
+        to_date=resolved_to,
+        window_hours=None,
     )
     print(
         f"Aggregated: {result.total_tokens:,} tokens across {result.total_sessions} sessions.",
@@ -177,6 +198,26 @@ def run(args: argparse.Namespace) -> int:
             from_date=args.from_date,
             to_date=args.to_date,
         )
+
+    if args.track_mcp_calls:
+        from claude_prospector.aggregator import compute_tool_usage
+        from claude_prospector.tool_collection import collect_per_session
+
+        in_window = {s["session_id"] for s in result.sessions}  # D-B(a)
+        selected = [s for s in sessions if s.session_id in in_window]
+        # data_dir is required -- the helper owns the projects/*.jsonl glob.
+        # No agent/tool/server filters from the dashboard.
+        per_session, skipped = collect_per_session(selected, args.data_dir)
+        usage = compute_tool_usage(per_session)  # compact=False
+        usage.pop("by_agent", None)  # D-F(a) RESOLVED -- absent, not {}
+        usage["warnings"]["unreadable_transcripts"] = skipped
+        usage["window"] = {  # D-K / plan §4.3
+            "start": resolved_from.date().isoformat() if resolved_from else None,
+            "end": resolved_to.date().isoformat() if resolved_to else None,
+            "sessions": len(per_session),
+            "sessions_skipped": skipped,
+        }
+        result.by_mcp_usage = usage
 
     limits = None
     if any([args.limit_5h, args.limit_7d, args.limit_sonnet_7d]):
@@ -211,6 +252,8 @@ def run(args: argparse.Namespace) -> int:
             "sessions": result.sessions,
             "limits": limits,
         }
+        if args.track_mcp_calls:
+            payload["by_mcp_usage"] = result.by_mcp_usage
         print(json.dumps(payload, indent=2))
         return 0
 

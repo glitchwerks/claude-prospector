@@ -95,6 +95,7 @@ def render(
         "by_project": result.by_project,
         "by_day": result.by_day,
         "sessions": result.sessions,
+        "by_mcp_usage": result.by_mcp_usage,
     }
 
     html = template.render(
