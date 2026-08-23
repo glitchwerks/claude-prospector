@@ -535,6 +535,62 @@ class TestCollectUnit:
         assert availability == collect_availability(unit)
 
 
+class TestCollectUnitMalformedMessage:
+    """Regression: a parseable-but-malformed assistant entry must not crash
+    the merged single-scan collect_unit.
+    """
+
+    def test_null_message_on_assistant_entry_does_not_raise(
+        self, tmp_path: Path
+    ) -> None:
+        """An assistant entry with ``message: null`` is valid, parseable
+        JSONL (not a JSON decode error, just a null where a dict was
+        assumed). Phase 0 merged the two previously-separate visitor
+        passes into collect_unit's single loop; that loop must tolerate
+        this shape rather than raising when it calls
+        ``entry.get("message", {}).get("content", [])``.
+
+        The malformed entry sits between two valid tool_use entries so a
+        correct implementation must both survive it and keep collecting
+        the entries that follow it in file order, rather than aborting
+        the scan.
+        """
+        jsonl = tmp_path / "s.jsonl"
+        _write_jsonl(
+            jsonl,
+            [
+                _tool_use_line(
+                    "s",
+                    "msg_1",
+                    "toolu_a",
+                    "Read",
+                    "u1",
+                    "2026-08-01T00:00:00.000Z",
+                ),
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-08-01T00:00:01.000Z",
+                    "sessionId": "s",
+                    "uuid": "u2",
+                    "message": None,
+                },
+                _tool_use_line(
+                    "s",
+                    "msg_2",
+                    "toolu_b",
+                    "Grep",
+                    "u3",
+                    "2026-08-01T00:00:02.000Z",
+                ),
+            ],
+        )
+
+        tool_uses, availability = collect_unit(_unit(jsonl))
+
+        assert [r.tool_name for r in tool_uses] == ["Read", "Grep"]
+        assert availability.signal_present is False
+
+
 class TestCollectPerSession:
     """collect_per_session: session-list collection plus record filters."""
 

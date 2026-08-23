@@ -122,7 +122,10 @@ def collect_unit(
     for entry in _iter_entries(unit.jsonl_path):
         entry_type = entry.get("type")
         if entry_type == "assistant":
-            content = entry.get("message", {}).get("content", [])
+            message = entry.get("message")
+            if not isinstance(message, dict):
+                continue
+            content = message.get("content", [])
             if not isinstance(content, list):
                 continue
             for block in content:
