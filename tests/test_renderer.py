@@ -305,6 +305,75 @@ def test_real_data_depth3_renders_correct_by_agent_values(
     )
 
 
+def test_data_json_escapes_script_breakout_from_mcp_usage_keys(
+    tmp_path: Path,
+) -> None:
+    """A malicious by_mcp_usage key cannot terminate the embedded <script>.
+
+    ``by_mcp_usage`` keys are derived from transcript content (MCP tool /
+    server names parsed out of ``mcp__<server>__<method>`` tool-call
+    names) and are not otherwise sanitized before being JSON-serialised
+    into ``window.DATA = {{ data_json | safe }}``. A crafted name
+    containing the literal substring ``</script>`` could terminate the
+    script block early, letting the remaining payload be parsed as HTML
+    (CodeRabbit finding on PR #260, Major/security).
+
+    Regression gate: ``render()`` must escape ``<``, ``>``, and ``&`` in
+    ``data_json`` so the literal ``</script>`` sequence never appears in
+    the rendered output, while the JSON payload still round-trips to the
+    original malicious string.
+    """
+    payload = "</script><img src=x onerror=alert(1)>"
+    result = AggregateResult()
+    result.by_mcp_usage[payload] = {"tool_calls": 1}
+
+    output = tmp_path / "dashboard-xss.html"
+    render(result, output_path=output, open_browser=False)
+    html = output.read_text(encoding="utf-8")
+
+    # --- Assertion 1: the raw script-breakout sequence must never appear ---
+    assert "</script><img src=x onerror=alert(1)>" not in html, (
+        "Rendered HTML must not contain the literal script-breakout "
+        "payload; data_json must escape '<' before embedding."
+    )
+
+    # --- Assertion 2: the escaped form is present in the DATA block ---
+    for _marker in ("window.DATA = ", "const DATA = "):
+        if _marker in html:
+            data_line_marker = _marker
+            break
+    else:
+        raise AssertionError(
+            "Neither 'window.DATA = ' nor 'const DATA = ' found in "
+            "rendered HTML; the data embedding contract has changed."
+        )
+    data_start = html.index(data_line_marker) + len(data_line_marker)
+
+    # The DATA block source itself must contain the escaped \u003c form,
+    # not a raw '<', proving the escape ran before embedding.
+    data_end_marker = "</script>"
+    script_end = html.index(data_end_marker, data_start)
+    data_block_source = html[data_start:script_end]
+    assert "\\u003c/script\\u003e" in data_block_source, (
+        "Embedded DATA block must contain the HTML-script-context-safe "
+        "escape '\\u003c/script\\u003e' in place of the raw '</script>'."
+    )
+    assert "<" not in data_block_source, (
+        "Embedded DATA block must not contain any raw '<' character; "
+        "all '<' must be escaped to '\\u003c'."
+    )
+
+    # --- Assertion 3: the payload still round-trips to the original string ---
+    decoder = json.JSONDecoder()
+    data_obj, _ = decoder.raw_decode(html, data_start)
+    assert payload in data_obj["by_mcp_usage"], (
+        f"Parsed DATA.by_mcp_usage must still contain the original "
+        f"(unescaped) payload {payload!r} after JSON decoding. "
+        f"Keys present: {list(data_obj['by_mcp_usage'].keys())}"
+    )
+    assert data_obj["by_mcp_usage"][payload]["tool_calls"] == 1
+
+
 class TestRenderMkdirParent:
     """render() must create the output path's parent directory automatically.
 

@@ -95,10 +95,25 @@ def render(
         "by_project": result.by_project,
         "by_day": result.by_day,
         "sessions": result.sessions,
+        "by_mcp_usage": result.by_mcp_usage,
     }
 
+    data_json = json.dumps(data, indent=2, default=str)
+    # Escape characters that could break out of the <script> block when
+    # this JSON is embedded via `{{ data_json | safe }}`. `data` contains
+    # transcript-derived strings (e.g. MCP tool/server names in
+    # by_mcp_usage) that are not otherwise sanitized, so a crafted name
+    # containing a literal "</script>" could terminate the script block
+    # early and inject markup. This mirrors Django's `json_script` /
+    # Jinja's `tojson` HTML-script-context-safe encoding.
+    data_json = (
+        data_json.replace("&", "\\u0026")
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+    )
+
     html = template.render(
-        data_json=json.dumps(data, indent=2, default=str),
+        data_json=data_json,
         generated_at=datetime.now(timezone.utc).isoformat(),
         limits_json=json.dumps(limits) if limits else "null",
         chart_js=_read_static("vendor/chart.umd.min.js"),
