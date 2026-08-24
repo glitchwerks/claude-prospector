@@ -246,7 +246,19 @@ python -m claude_prospector dashboard --limit-5h 600000 --limit-7d 4000000 --lim
 
 # Emit JSON for scripting or CI
 python -m claude_prospector dashboard --format json
+
+# Include MCP tool-usage breakdown (extra transcript-read cost; see below)
+python -m claude_prospector dashboard --track-mcp-calls
 ```
+
+`--track-mcp-calls` adds a per-session MCP tool-call collection pass, which
+costs additional full transcript reads: measured on the maintainer's real
+corpus (~1,800 transcript files, 796 MB), `dashboard --format json` took 4.62s
+with the flag off versus 9.61s with it on — about 2.08x, and still well under
+a minute in absolute terms. The automatic session-end (Stop hook) dashboard
+regeneration does **not** pass this flag — the "MCP Usage" panel is CLI-opt-in
+only in v1; hook-generated dashboards show an empty-state message explaining
+how to enable it via the CLI.
 
 ### `session-summary` — deterministic session recap
 

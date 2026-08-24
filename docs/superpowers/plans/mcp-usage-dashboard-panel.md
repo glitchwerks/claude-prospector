@@ -145,6 +145,17 @@ skills_relevant:
 > corrected in place at F7, §2.3 and the Phase 3 closeout gate item 3; no
 > decision row is affected — no `by_mcp_usage` schema field or requirement
 > depended on the stale blind-spot framing beyond the copy itself.
+>
+> **Rev 6 (2026-08-24)** — Phase 3 documentation work (README, spec
+> reconciliation) completed. **D-I confirmed = (a)**: no hook code change —
+> `hooks/dashboard-regen.py` continues to pass no `--track-mcp-calls`, and
+> hook-generated dashboards show the D-E empty state. N6's G1/G2 placeholder
+> thresholds (§4.2) are now replaced with real figures, measured on the
+> maintainer's local corpus (1,798 transcript files, 796 MB):
+> `dashboard --format json` took 4.62s with `--track-mcp-calls` off and 9.61s
+> with it on (~2.08x). **G1 (≤45s) and G2 (≤3x) both pass.** Filing the
+> follow-up issues and posting the resolved §3 decisions to #248 (Phase 3
+> steps 3-4) are handled separately, not part of this revision.
 
 ---
 

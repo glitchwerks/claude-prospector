@@ -23,10 +23,11 @@ skills_relevant:
 
 # MCP tool-usage analyzer — implementation spec (issue #195)
 
-**Status: IMPLEMENTED** (Phases 0–2; §8 Phase 3 remains open under #248). All
-eight decisions in §6 were resolved by the user on 2026-08-21 and are recorded
-there as **RESOLVED** with their rationale. §5 requirements, §7 schema, and §8
-phasing reflect the resolved answers. Issue #195 is closed.
+**Status: IMPLEMENTED** (Phases 0–2; §8 Phase 3 shipped under #248 via
+PRs #259–#261). All eight decisions in §6 were resolved by the user on
+2026-08-21 and are recorded there as **RESOLVED** with their rationale. §5
+requirements, §7 schema, and §8 phasing reflect the resolved answers. Issue
+#195 is closed.
 
 Implementation history: #249 (`mcp_names.py`), #250 (`transcript_walker.py`
 extraction), #251 (`tool_collection.py`), #252 (aggregator + CLI); tracked
@@ -84,7 +85,7 @@ CLI + (deferred) dashboard surfacing.**
 | Issue | Scope | This spec |
 | --- | --- | --- |
 | #195 | Data layer + `tool-usage` CLI + JSON contract | **In scope** |
-| #248 | Dashboard panel (`renderer.py`, `templates/dashboard.html`, `static/views/`) | **Deferred** — §8 Phase 3, tracked under #248 |
+| #248 | Dashboard panel (`renderer.py`, `templates/dashboard.html`, `static/views/`) | **Shipped** — §8 Phase 3, PRs #259–#261 |
 | #241 | Runtime MCP call tracking | Closed as not planned; only its `--track-mcp-calls` requirement survives, and its meaning is disputed — see D1 |
 
 ---
@@ -690,16 +691,28 @@ gate is not optional.
 block at line 221 with one `###` per subcommand — add `### tool-usage` there,
 plus the config-validation example the AC requires).
 
-**Phase 3 — dashboard panel. Tracked under #248, not #195.** New
+**Phase 3 — dashboard panel. Shipped under #248, not #195 (PRs #259–#261).** New
 `by_mcp_usage` field on `AggregateResult`, conditional attach in
-`dashboard.py` mirroring `:170-179`, new `data` key in `renderer.py:87-98`, new
-`static/views/mcp-usage.js` read via `_read_static()`, new `.view-toggle` tab in
-`templates/dashboard.html:42-83`.
+`dashboard.py`, new `data` key in `renderer.py`, new `static/views/mcp-usage.js`
+read via `_read_static()`, new `.view-toggle` tab in `templates/dashboard.html`.
 
-**Scope boundary note:** if `AggregateResult` gains `by_mcp_usage` in Phase 3,
-`dashboard --format json` output changes even before any HTML lands. Per D1 that
-field is gated behind `dashboard --track-mcp-calls` (default off), so existing
-JSON consumers are unaffected until they opt in.
+**Shipped shape, reconciled with this sketch:** the tab landed as a new
+top-level view (`data-view="mcp"`, "MCP Usage") beside Overview/Breakdown/
+Advanced, not a sub-panel inside the Breakdown view — the sketch above is
+directionally correct on that point. `by_mcp_usage` carries `by_tool`,
+`by_server`, `availability_signal`, `warnings`, and `window`; `by_agent` and
+`compact` are deliberately **omitted** (absent, not `{}`) — the dashboard
+payload is written to disk on every run, and none of this spec's own §5
+requirements needed a per-agent MCP breakdown on the dashboard surface, so the
+extra bytes were not carried through. The exact field-by-field shape and the
+rationale for the omission are recorded in PR #261; this spec does not
+restate them.
+
+**Scope boundary note:** `AggregateResult` gaining `by_mcp_usage` in Phase 3
+changed `dashboard --format json` output only for opted-in consumers. Per D1
+that field is gated behind `dashboard --track-mcp-calls` (default off), so
+existing JSON consumers were unaffected — the key is omitted entirely, not
+emitted as `{}`, when the flag is off.
 
 ---
 
