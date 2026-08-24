@@ -16,6 +16,36 @@ New (issue #99) contracts:
 - Migration notice: one-time log entry when legacy config.json is present.
 - Sentinel file prevents duplicate migration notices.
 
+New (issue #257) contracts:
+- --track-mcp true/1/yes (case-insensitive) causes the hook to append
+  "--track-mcp-calls" to the argv of the inner `claude_prospector
+  dashboard` subprocess call it runs during regen.
+- --track-mcp false/0/''/absent omits "--track-mcp-calls" from that argv.
+- --track-mcp is parsed independently of --autoregen's value: the two
+  flags don't interact, as long as --autoregen is truthy enough for the
+  hook to reach the regen step in the first place.
+
+Required test seam (issue #257) — NOT YET IMPLEMENTED, must be added by
+the implementer alongside the --track-mcp CLI argument itself:
+
+    CLAUDE_PROSPECTOR_RECORD_REGEN_ARGV=<path>
+
+When this env var is set, hooks/dashboard-regen.py must, immediately
+before calling ``subprocess.run(...)`` for the inner `claude_prospector
+dashboard` regen command, JSON-encode the exact argv list it is about to
+pass and write it (UTF-8) to the file at ``<path>``. This must happen
+before the real subprocess call executes; the real subprocess call still
+runs normally afterward — this is additive test instrumentation only, not
+a substitute code path, and real users/installs never set this env var.
+It mirrors the existing ``CLAUDE_PROSPECTOR_FAIL_REGEN=1`` test seam
+already used by ``TestRegenFailure`` below.
+
+This seam exists because --track-mcp-calls produces no visible dashboard
+HTML difference against the empty fixture data used by these subprocess
+tests (the #248 implementation makes `by_mcp_usage` appear unconditionally
+in `window.DATA` either way), so the argv itself must be observed
+directly rather than inferred from dashboard content.
+
 Hook input:
     The Stop hook payload is read from stdin. The hook ignores the payload
     content — only autoregen config and the python subprocess matter. We
@@ -35,6 +65,8 @@ import subprocess
 import sys
 import textwrap
 from pathlib import Path
+
+import pytest
 
 _WORKTREE = Path(__file__).parent.parent
 _HOOK_PATH = _WORKTREE / "hooks" / "dashboard-regen.py"
@@ -127,6 +159,7 @@ def _run_hook(
     env: dict[str, str],
     stdin_payload: dict | None = None,
     autoregen_arg: str | None = None,
+    track_mcp_arg: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Invoke dashboard-regen.py as a subprocess.
 
@@ -135,6 +168,8 @@ def _run_hook(
         stdin_payload: JSON payload to write to stdin. Defaults to ``{}``.
         autoregen_arg: If given, passes ``--autoregen <value>`` to the hook.
             When None, the hook is invoked without the flag (legacy path).
+        track_mcp_arg: If given, passes ``--track-mcp <value>`` to the
+            hook. When None, the hook is invoked without the flag.
 
     Returns:
         CompletedProcess with stdout, stderr, returncode.
@@ -143,6 +178,8 @@ def _run_hook(
     cmd = [sys.executable, str(_HOOK_PATH)]
     if autoregen_arg is not None:
         cmd += ["--autoregen", autoregen_arg]
+    if track_mcp_arg is not None:
+        cmd += ["--track-mcp", track_mcp_arg]
     return subprocess.run(
         cmd,
         input=payload,
@@ -151,6 +188,35 @@ def _run_hook(
         env=env,
         cwd=str(_WORKTREE),
     )
+
+
+def _record_argv_path(tmp_path: Path) -> Path:
+    """Return the path used with the CLAUDE_PROSPECTOR_RECORD_REGEN_ARGV
+    test seam (see module docstring) for a given test's tmp_path.
+    """
+    return tmp_path / "recorded-regen-argv.json"
+
+
+def _read_recorded_argv(tmp_path: Path) -> list[str]:
+    """Read back the argv list recorded by the RECORD_REGEN_ARGV seam.
+
+    Args:
+        tmp_path: The same tmp_path used to build the recording path via
+            ``_record_argv_path``.
+
+    Returns:
+        The JSON-decoded argv list the hook was about to pass to
+        ``subprocess.run`` for the inner `claude_prospector dashboard`
+        regen call.
+    """
+    path = _record_argv_path(tmp_path)
+    assert path.exists(), (
+        f"Expected the hook to write recorded argv to {path} because "
+        "CLAUDE_PROSPECTOR_RECORD_REGEN_ARGV was set in its env. The hook "
+        "must honor this test seam — see module docstring for the exact "
+        "contract (issue #257)."
+    )
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _make_env_no_config(
@@ -576,3 +642,86 @@ class TestMigrationNotice:
         assert cfg_path.exists(), "Precondition: config.json must exist"
         _run_hook(env, autoregen_arg="true")
         assert cfg_path.exists(), "config.json must not be deleted during migration"
+
+
+# ---------------------------------------------------------------------------
+# --track-mcp CLI argument -> inner dashboard subprocess argv (issue #257)
+# ---------------------------------------------------------------------------
+#
+# All tests below pass --autoregen true so the hook proceeds past the
+# autoregen gate and reaches the regen step where the inner
+# `claude_prospector dashboard` subprocess argv is built. They rely on the
+# CLAUDE_PROSPECTOR_RECORD_REGEN_ARGV test seam described in the module
+# docstring to observe that argv directly, since --track-mcp-calls produces
+# no visible dashboard.html difference against the empty fixture data used
+# here.
+
+
+class TestTrackMcpArgv:
+    """--track-mcp gates whether --track-mcp-calls is appended to the inner
+    `claude_prospector dashboard` subprocess argv.
+    """
+
+    def test_absent_arg_omits_flag(
+        self, tmp_path: Path, valid_setup_state: Path
+    ) -> None:
+        """No --track-mcp arg at all -> recorded argv lacks --track-mcp-calls."""
+        env = _make_env_no_config(tmp_path)
+        env["CLAUDE_PROSPECTOR_RECORD_REGEN_ARGV"] = str(_record_argv_path(tmp_path))
+        result = _run_hook(env, autoregen_arg="true")
+        assert result.returncode == 0, result.stderr
+        argv = _read_recorded_argv(tmp_path)
+        assert "--track-mcp-calls" not in argv, (
+            f"Expected no --track-mcp-calls in argv when --track-mcp was "
+            f"never passed. Got argv: {argv!r}."
+        )
+
+    @pytest.mark.parametrize("value", ["true", "1", "yes", "TRUE"])
+    def test_truthy_variants_add_flag(
+        self, tmp_path: Path, valid_setup_state: Path, value: str
+    ) -> None:
+        """--track-mcp true/1/yes/TRUE all add --track-mcp-calls to argv."""
+        env = _make_env_no_config(tmp_path)
+        env["CLAUDE_PROSPECTOR_RECORD_REGEN_ARGV"] = str(_record_argv_path(tmp_path))
+        result = _run_hook(env, autoregen_arg="true", track_mcp_arg=value)
+        assert result.returncode == 0, result.stderr
+        argv = _read_recorded_argv(tmp_path)
+        assert "--track-mcp-calls" in argv, (
+            f"Expected --track-mcp-calls in argv for --track-mcp {value!r}. "
+            f"Got argv: {argv!r}."
+        )
+
+    @pytest.mark.parametrize("value", ["false", "0", ""])
+    def test_falsy_variants_omit_flag(
+        self, tmp_path: Path, valid_setup_state: Path, value: str
+    ) -> None:
+        """--track-mcp false/0/'' all omit --track-mcp-calls from argv."""
+        env = _make_env_no_config(tmp_path)
+        env["CLAUDE_PROSPECTOR_RECORD_REGEN_ARGV"] = str(_record_argv_path(tmp_path))
+        result = _run_hook(env, autoregen_arg="true", track_mcp_arg=value)
+        assert result.returncode == 0, result.stderr
+        argv = _read_recorded_argv(tmp_path)
+        assert "--track-mcp-calls" not in argv, (
+            f"Expected no --track-mcp-calls in argv for --track-mcp "
+            f"{value!r}. Got argv: {argv!r}."
+        )
+
+    def test_independent_of_autoregen_value(
+        self, tmp_path: Path, valid_setup_state: Path
+    ) -> None:
+        """--track-mcp is parsed independently of --autoregen's own value.
+
+        Uses a different truthy spelling for --autoregen ("1") than
+        --track-mcp ("yes") to demonstrate the two flags don't share
+        parsing state or gate each other beyond --autoregen needing to be
+        truthy enough for the hook to reach the regen step at all.
+        """
+        env = _make_env_no_config(tmp_path)
+        env["CLAUDE_PROSPECTOR_RECORD_REGEN_ARGV"] = str(_record_argv_path(tmp_path))
+        result = _run_hook(env, autoregen_arg="1", track_mcp_arg="yes")
+        assert result.returncode == 0, result.stderr
+        argv = _read_recorded_argv(tmp_path)
+        assert "--track-mcp-calls" in argv, (
+            f"Expected --track-mcp-calls in argv independent of "
+            f"--autoregen's own truthy spelling. Got argv: {argv!r}."
+        )

@@ -46,6 +46,12 @@ Test seam:
     is skipped and a synthetic failure is simulated so the failure-page
     code path can be tested without a real crash.
 
+    When ``CLAUDE_PROSPECTOR_RECORD_REGEN_ARGV=<path>`` is set, the exact
+    argv about to be passed to the inner ``claude_prospector dashboard``
+    subprocess call is JSON-encoded and written to ``<path>`` immediately
+    before that subprocess call executes. Additive instrumentation only —
+    the real subprocess call still runs normally afterward.
+
 Exit codes:
     Always 0. Hook failures must never propagate to the Claude Code
     session runner — that would disrupt the user's workflow.
@@ -464,6 +470,17 @@ def _parse_args() -> argparse.Namespace:
             "Omit to fall back to legacy config.json."
         ),
     )
+    parser.add_argument(
+        "--track-mcp",
+        default=None,
+        metavar="VALUE",
+        help=(
+            "MCP tool call tracking toggle from userConfig substitution. "
+            "Truthy: 'true', '1', 'yes' (case-insensitive). When truthy, "
+            "'--track-mcp-calls' is appended to the inner dashboard regen "
+            "subprocess call. Parsed with the same rules as --autoregen."
+        ),
+    )
     # Use parse_known_args so unexpected harness-injected flags don't crash.
     ns, _ = parser.parse_known_args()
     return ns
@@ -578,16 +595,33 @@ def main() -> int:
         # Note: no --window flag — the dashboard subcommand aggregates the
         # full session history by default (issue #188).  Users who want a
         # scoped dashboard can pass --window explicitly via the CLI.
+        regen_argv = [
+            _venv_python,
+            "-m",
+            "claude_prospector",
+            "dashboard",
+            "--output",
+            str(dashboard),
+            "--no-open",
+        ]
+        if ns.track_mcp is not None and _parse_autoregen_arg(ns.track_mcp):
+            regen_argv.append("--track-mcp-calls")
+
+        # Test seam: CLAUDE_PROSPECTOR_RECORD_REGEN_ARGV=<path> records the
+        # exact argv about to be passed to subprocess.run below, as JSON.
+        # Additive instrumentation only — the real subprocess call below
+        # still runs normally. Real users/installs never set this env var.
+        _record_argv_path = os.environ.get("CLAUDE_PROSPECTOR_RECORD_REGEN_ARGV")
+        if _record_argv_path:
+            try:
+                Path(_record_argv_path).write_text(
+                    json.dumps(regen_argv), encoding="utf-8"
+                )
+            except Exception:
+                pass
+
         regen_result = subprocess.run(
-            [
-                _venv_python,
-                "-m",
-                "claude_prospector",
-                "dashboard",
-                "--output",
-                str(dashboard),
-                "--no-open",
-            ],
+            regen_argv,
             capture_output=True,
             text=True,
             timeout=120,

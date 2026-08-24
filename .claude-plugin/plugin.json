@@ -16,6 +16,12 @@
       "default": false,
       "title": "Auto-regenerate dashboard on session end",
       "description": "When enabled, automatically regenerates the HTML usage dashboard at the end of every Claude Code session. Toggle via the plugin manager (/plugin reconfigure claude-prospector) or at install time."
+    },
+    "track_mcp_calls": {
+      "type": "boolean",
+      "default": false,
+      "title": "Track MCP tool call usage",
+      "description": "When enabled, the auto-regenerated dashboard collects and displays MCP tool call usage. Toggle via the plugin manager (/plugin reconfigure claude-prospector) or at install time."
     }
   }
 }

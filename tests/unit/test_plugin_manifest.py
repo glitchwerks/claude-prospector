@@ -68,6 +68,35 @@ def test_autoregen_default_is_false() -> None:
     )
 
 
+def test_track_mcp_calls_default_is_false() -> None:
+    """userConfig.track_mcp_calls must carry an explicit ``default: false``.
+
+    Regression guard for issue #257, modeled directly on
+    ``test_autoregen_default_is_false`` above. The `track_mcp_calls` toggle
+    mirrors `autoregen`'s shape exactly, so the plugin manager has a
+    schema-declared default rather than treating a missing value as true or
+    prompting on every install. The default must be the boolean ``False``,
+    not the integer ``0`` or the string ``"false"`` — hence ``is False``
+    rather than ``== False`` to catch type drift.
+    """
+    data = _load_plugin_json()
+    assert "track_mcp_calls" in data["userConfig"], (
+        "userConfig.track_mcp_calls is missing from plugin.json. "
+        "Add it as a sibling of userConfig.autoregen (issue #257)."
+    )
+    track_mcp_calls = data["userConfig"]["track_mcp_calls"]
+    assert "default" in track_mcp_calls, (
+        "userConfig.track_mcp_calls is missing a 'default' key in "
+        'plugin.json. Add `"default": false` to fix issue #257.'
+    )
+    assert track_mcp_calls["default"] is False, (
+        f"userConfig.track_mcp_calls.default must be the boolean False, "
+        f"got {track_mcp_calls['default']!r} "
+        f"(type {type(track_mcp_calls['default']).__name__}). "
+        "Ensure the value is JSON `false`, not 0 or \"false\"."
+    )
+
+
 def test_stop_hook_dashboard_regen_uses_exec_form() -> None:
     """The Stop hook's dashboard-regen entry must use exec form, not
     shell form, when referencing ``${user_config.*}``.
@@ -130,11 +159,14 @@ def test_stop_hook_dashboard_regen_uses_exec_form() -> None:
         "${CLAUDE_PLUGIN_ROOT}/hooks/dashboard-regen.py",
         "--autoregen",
         "${user_config.autoregen}",
+        "--track-mcp",
+        "${user_config.track_mcp_calls}",
     ]
     assert args == expected_args, (
         "Stop hook's 'args' must be exactly "
-        f"{expected_args!r} (script path, then '--autoregen', then its "
-        f"value, in that order — unquoted, since exec-form args are "
-        f"passed literally with no shell quoting needed). Got args: "
-        f"{args!r}."
+        f"{expected_args!r} (script path, then '--autoregen' and its "
+        f"value, then '--track-mcp' and its value, in that order — "
+        f"unquoted, since exec-form args are passed literally with no "
+        f"shell quoting needed; issue #257 adds the trailing pair). Got "
+        f"args: {args!r}."
     )
