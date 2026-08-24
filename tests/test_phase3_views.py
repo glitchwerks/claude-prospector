@@ -69,6 +69,11 @@ class TestViewFilesOnDisk:
         p = _STATIC_VIEWS / "economics.js"
         assert p.is_file(), f"Missing: {p}"
 
+    def test_mcp_usage_exists(self) -> None:
+        """mcp-usage.js must exist under static/views/ (issue #248 Phase 2)."""
+        p = _STATIC_VIEWS / "mcp-usage.js"
+        assert p.is_file(), f"Missing: {p}"
+
     def test_economics_basic_non_empty(self) -> None:
         """economics-basic.js must be non-trivially large (>5 KB)."""
         p = _STATIC_VIEWS / "economics-basic.js"
@@ -89,6 +94,17 @@ class TestViewFilesOnDisk:
         assert (
             p.stat().st_size >= 15_000
         ), f"economics.js is suspiciously small: {p.stat().st_size} bytes"
+
+    def test_mcp_usage_non_empty(self) -> None:
+        """mcp-usage.js must be non-trivially large (>=1 KB).
+
+        Smaller minimum than the other views: this is a single-panel,
+        no-period-selector view (D-H=(b)), not a full multi-chart tab.
+        """
+        p = _STATIC_VIEWS / "mcp-usage.js"
+        assert (
+            p.stat().st_size >= 1_000
+        ), f"mcp-usage.js is suspiciously small: {p.stat().st_size} bytes"
 
 
 # ---------------------------------------------------------------------------
@@ -130,6 +146,19 @@ class TestViewFilesImportlibResources:
             "importlib.resources — check pyproject.toml package-data."
         )
 
+    def test_mcp_usage_accessible(self) -> None:
+        """importlib.resources can locate static/views/mcp-usage.js.
+
+        Proves the new Phase 2 view ships in the wheel, not just the
+        editable source tree (T11).
+        """
+        pkg = importlib.resources.files("claude_prospector")
+        asset = pkg / "static" / "views" / "mcp-usage.js"
+        assert asset.is_file(), (
+            "static/views/mcp-usage.js is not accessible via "
+            "importlib.resources — check pyproject.toml package-data."
+        )
+
     def test_economics_basic_content_non_empty(self) -> None:
         """economics-basic.js content must be non-empty via importlib."""
         pkg = importlib.resources.files("claude_prospector")
@@ -150,6 +179,13 @@ class TestViewFilesImportlibResources:
         asset = pkg / "static" / "views" / "economics.js"
         content = asset.read_text(encoding="utf-8")
         assert content.strip(), "economics.js has no content."
+
+    def test_mcp_usage_content_non_empty(self) -> None:
+        """mcp-usage.js content must be non-empty via importlib."""
+        pkg = importlib.resources.files("claude_prospector")
+        asset = pkg / "static" / "views" / "mcp-usage.js"
+        content = asset.read_text(encoding="utf-8")
+        assert content.strip(), "mcp-usage.js has no content."
 
 
 # ---------------------------------------------------------------------------
@@ -182,6 +218,18 @@ class TestRenderedHtmlFunctionNames:
         assert "renderEconomics" in html, (
             "Rendered HTML does not contain 'renderEconomics'. "
             "economics.js is not wired in."
+        )
+
+    def test_render_mcp_usage_present(self, tmp_path: Path) -> None:
+        """Rendered HTML must contain 'renderMcpUsage' (issue #248 Phase 2).
+
+        Confirms the shell inlines mcp-usage.js via a `<script>` tag,
+        mirroring the existing views' `_read_static(...)` wiring.
+        """
+        html = _render_html(tmp_path)
+        assert "renderMcpUsage" in html, (
+            "Rendered HTML does not contain 'renderMcpUsage'. "
+            "mcp-usage.js is not wired in."
         )
 
 

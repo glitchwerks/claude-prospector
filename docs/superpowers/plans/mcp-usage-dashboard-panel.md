@@ -125,6 +125,26 @@ skills_relevant:
 >
 > All eleven rows in §3 are now marked RESOLVED/CONFIRMED. §5's phases require
 > no rework — they were already drafted against these recommendations.
+>
+> **Rev 5 (2026-08-24)** — caught during Phase 2 implementation, not a new
+> development: the "`workflows/wf_*/` blind spot" premise carried by F7, §2.3
+> and the Phase 3 closeout gate (item 3) was **already stale at Rev 4
+> confirmation**. Commit `83010fe` ("fix: traverse subagents/workflows/wf_*/ in
+> transcript walker (#255)", **Fixes #253**) merged 2026-08-22 19:10 — the same
+> day as, and before, Rev 4's confirmation — and closed the gap: it extended
+> `_walk_subagents` in `transcript_walker.py` to traverse
+> `subagents/workflows/wf_*/` with the same agent_path construction, depth cap,
+> cycle defense and warning machinery as ordinary `subagents/<agent_id>/`
+> entries, fixing visibility for "all prospector output (token attribution,
+> tool-usage, everything)" per its own commit message — not a
+> tool-usage-specific fix. It also removed the stale
+> `warnings.workflow_agents_unattributed` flag from `compute_tool_usage()`'s
+> output and the corresponding README "Known gap" note. This was a gap in the
+> planning process (Rev 4's confirmation pass did not re-verify §2.3 against
+> the same-day merge), not a new development since Rev 4. Changes below are
+> corrected in place at F7, §2.3 and the Phase 3 closeout gate item 3; no
+> decision row is affected — no `by_mcp_usage` schema field or requirement
+> depended on the stale blind-spot framing beyond the copy itself.
 
 ---
 
@@ -206,11 +226,23 @@ Spec §7's sample envelope shows `"workflow_agents_unattributed": true`
 actively asserts `"workflow_agents_unattributed" not in result["warnings"]`.
 The spec sample is stale on this point.
 
-**Consequence for the view:** the `subagents/workflows/wf_*/` blind spot
-(spec §4.3, `:305-327`) must be **static copy in the view JS**, not bound to a
-data key that never arrives. One line in the panel footer, e.g. "Agents
-dispatched inside workflows are not yet traversed by the parser and are absent
-from these counts."
+**Consequence for the view — corrected in Rev 5.** The finding above (this key
+was never in the shipped `compute_tool_usage()` output) still stands, but the
+gap it would have reported does not: PR #255 / issue #253 (`83010fe`, merged
+2026-08-22, same day as and before Rev 4's confirmation) extended
+`_walk_subagents` in `transcript_walker.py` to traverse
+`subagents/workflows/wf_*/` with the same agent_path construction, depth cap,
+cycle defense and warning machinery as ordinary `subagents/<agent_id>/`
+entries — fixing visibility for "all prospector output (token attribution,
+tool-usage, everything)" per its own commit message, not just this feature.
+That same PR removed `warnings.workflow_agents_unattributed` from
+`compute_tool_usage()`'s output, so the missing key this section documents is
+now explained by two independent facts: it was never in the spec-implied
+shape, **and** the underlying gap it would have reported is closed. **F7
+(corrected)** governs what the panel's copy must say instead — a bounded scope
+statement, not a completeness claim, since `_walk_subagents`'s own contract
+still skips transcripts past its path-depth cap, missing JSONL, cycles, or
+`OSError`.
 
 ### 2.4 `--compact` is a payload-size question, not a parity question
 
@@ -465,8 +497,14 @@ in this pass; record as a follow-up issue if still wanted after the panel ships.
 - **F6** `sessions_seen_in: null` must render as "unknown / not observable",
   **never as `0`**. The distinction is load-bearing and documented at
   `aggregator.py:311-319`.
-- **F7** The panel carries static copy noting the `workflows/wf_*/` blind spot
-  (§2.3) and, under D-B=(a), the "whole-session counts" scoping label.
+- **F7** **Corrected in Rev 5 — see §2.3.** The panel carries static copy
+  stating the *scope* of what its counts include — not a "blind spot" caveat,
+  since PR #255 / issue #253 (`83010fe`) closed that gap before this view was
+  written. Phrase it as a bounded scope statement, not a completeness claim:
+  `_walk_subagents`'s own contract still skips transcripts past its path-depth
+  cap, missing JSONL, cycles, or `OSError`, so "included" is not "every
+  possible transcript, no exceptions." The panel also carries, under D-B=(a),
+  the "whole-session counts" scoping label.
 - **F10** The panel states its **time basis** from data, not from hardcoded
   copy: read `by_mcp_usage.window.start` / `.end` (§4.3) and render "all time"
   when both are `null` — which is the **default** `dashboard` invocation, since
@@ -1063,9 +1101,17 @@ in the PR body):**
    1. The `--agent` leaf-vs-any-segment semantics divergence
       (`cli/tool_usage.py:147-158` vs spec F3 `:371-382`).
    2. D7 — token cost per MCP call, deferred by the repo owner on 2026-08-22.
-   3. The `subagents/workflows/wf_*/` parser gap — **first check whether spec
-      §10 (`:739-742`)'s sibling issue was actually filed**; file it only if it
-      was not, and record the existing number if it was.
+   3. **Corrected in Rev 5.** The `subagents/workflows/wf_*/` parser gap is
+      almost certainly already resolved: issue **#253**, closed by PR **#255**
+      (`83010fe`, merged 2026-08-22), matches this item's scope and description
+      exactly. Phase 3 must **confirm #253 is the sibling issue referenced by
+      spec §10** (`gh issue view 253` or reading the issue is enough) and, if
+      confirmed, **this closeout item is already satisfied — no new issue
+      needs filing.** Record #253 (not a new issue number) in the closing
+      comment on #248. If #253 turns out **not** to match spec §10's sibling
+      issue, the original instruction still applies as a fallback: check
+      whether spec §10 (`:739-742`)'s sibling issue was filed under a
+      different number, and file it only if it was not.
    4. **(Rev 3, under D-C=(b) — the recommendation)** `by_skill_adoption` is
       absent from `dashboard --format json`'s `payload`
       (`cli/dashboard.py:201-213`) while present in the HTML `data`
@@ -1143,7 +1189,10 @@ cost off the flag-off path (D-G, N5).
 > § Document Files (Lifecycle) this file is deleted when #248 closes, so these
 > evaporate unless issues exist: (1) the `--agent` leaf-vs-any-segment
 > divergence, (2) D7 token cost per MCP call, (3) confirmation that the
-> `workflows/wf_*/` sibling issue from spec §10 was actually filed,
+> `workflows/wf_*/` sibling issue from spec §10 was actually filed —
+> **corrected in Rev 5**: this is issue **#253**, closed by PR **#255**
+> (`83010fe`, merged 2026-08-22), so almost certainly already satisfied; see
+> Phase 3 step 4 for the confirmation step,
 > (4) **Rev 3** — the `by_skill_adoption` payload omission **and** its
 > wrong-date-bounds bug (under D-C=(b)), (5) **Rev 3** — the
 > `track_mcp_calls` userConfig/Stop-hook toggle (under D-I=(a)).
@@ -1155,9 +1204,11 @@ cost off the flag-off path (D-G, N5).
   2026-08-22 comment on #248 and by spec D7
   (`docs/superpowers/specs/mcp-tool-usage-analyzer.md:508`). File a follow-up if
   still wanted after the panel ships.
-- **Fixing the `subagents/workflows/wf_*/` parser gap.** Pre-existing, affects
-  token attribution too, and has its own sibling issue per spec §10
-  (`:739-742`). The panel documents the omission (F7); it does not fix it.
+- **Fixing the `subagents/workflows/wf_*/` parser gap.** **Corrected in
+  Rev 5** — not outstanding out-of-scope work: PR #255 / issue #253
+  (`83010fe`, merged 2026-08-22) closed this gap before this plan's Phase 2
+  work began. Retained here for the historical record only; see the Rev 5
+  note above and §2.3 for the full correction.
 - **Adding `timestamp` to `ToolUseRecord`.** Only in play if D-B=(b) is chosen
   over the recommendation.
 - **A skill front-end for MCP usage.** Spec §10 (`:753-761`) deferred this

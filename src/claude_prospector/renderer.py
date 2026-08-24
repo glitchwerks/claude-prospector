@@ -122,6 +122,7 @@ def render(
         economics_basic_js=_read_static("views/economics-basic.js"),
         layout_b_diag_js=_read_static("views/layout-b-diag.js"),
         economics_js=_read_static("views/economics.js"),
+        mcp_usage_js=_read_static("views/mcp-usage.js"),
     )
 
     if output_path is None:
