@@ -294,6 +294,7 @@
 <script>{{ economics_basic_js | safe }}</script>
 <script>{{ layout_b_diag_js | safe }}</script>
 <script>{{ economics_js | safe }}</script>
+<script>{{ mcp_usage_js | safe }}</script>
 
 <div class="stage">
   <div class="shell-head">
@@ -313,6 +314,9 @@
       <button data-view="advanced" class="advanced" role="tab"
         aria-selected="false">
         Advanced <span class="badge">Power user</span>
+      </button>
+      <button data-view="mcp" role="tab" aria-selected="false">
+        MCP Usage
       </button>
     </div>
   </div>
@@ -335,6 +339,9 @@
     advanced:
       "Per-turn cost lever metrics with workflow vs. cost decomposition. " +
       "<b>For users comfortable with token/cache economics.</b>",
+    mcp:
+      "Whole-corpus MCP server/tool call volume — not filtered by the " +
+      "period selector above.",
   };
 
   function _renderView(view) {
@@ -350,6 +357,8 @@
       renderEconomicsBasic(_container);
     } else if (view === 'detail') {
       renderLayoutBDiag(_container);
+    } else if (view === 'mcp') {
+      renderMcpUsage(_container);
     } else {
       renderEconomics(_container);
     }
