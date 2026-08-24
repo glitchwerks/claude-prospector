@@ -1,8 +1,7 @@
 """Tests for Phase 2 of the MCP tool-usage dashboard panel (issue #248).
 
-Pins the Phase 2 (view-layer) contract from
-``docs/superpowers/plans/mcp-usage-dashboard-panel.md`` §5 Phase 2 / §6
-before any of it is implemented:
+Pins the Phase 2 (view-layer) contract for issue #248 (implemented in
+PR #261) before any of it is implemented:
 
 - ``static/views/mcp-usage.js`` exists and exposes ``renderMcpUsage`` in the
   established view-file convention (``economics.js`` etc).

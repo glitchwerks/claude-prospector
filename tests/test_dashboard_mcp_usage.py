@@ -1,8 +1,7 @@
 """Tests for Phase 1 of the MCP tool-usage dashboard panel (issue #248).
 
-Pins the Phase 1 contract from
-``docs/superpowers/plans/mcp-usage-dashboard-panel.md`` §4/§6 before any of
-it is implemented:
+Pins the Phase 1 contract for issue #248 (implemented in PR #260) before
+any of it is implemented:
 
 - ``AggregateResult.by_mcp_usage`` field (``aggregator.py``).
 - ``dashboard --track-mcp-calls`` flag (``cli/dashboard.py build_parser``),
