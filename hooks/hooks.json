@@ -30,7 +30,9 @@
             "args": [
               "${CLAUDE_PLUGIN_ROOT}/hooks/dashboard-regen.py",
               "--autoregen",
-              "${user_config.autoregen}"
+              "${user_config.autoregen}",
+              "--track-mcp",
+              "${user_config.track_mcp_calls}"
             ]
           }
         ]
