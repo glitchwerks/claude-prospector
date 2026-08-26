@@ -195,8 +195,8 @@ def run(args: argparse.Namespace) -> int:
         result.by_skill_adoption = compute_skill_adoption(
             passed_events,
             invoked_events,
-            from_date=args.from_date,
-            to_date=args.to_date,
+            from_date=resolved_from,
+            to_date=resolved_to,
         )
 
     if args.track_mcp_calls:
@@ -251,6 +251,7 @@ def run(args: argparse.Namespace) -> int:
             "by_day": result.by_day,
             "sessions": result.sessions,
             "limits": limits,
+            "by_skill_adoption": result.by_skill_adoption,
         }
         if args.track_mcp_calls:
             payload["by_mcp_usage"] = result.by_mcp_usage

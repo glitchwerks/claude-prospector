@@ -28,6 +28,7 @@ EXPECTED_TOP_LEVEL_KEYS = {
     "by_model",
     "by_agent",
     "by_skill",
+    "by_skill_adoption",
     "by_project",
     "by_day",
     "sessions",

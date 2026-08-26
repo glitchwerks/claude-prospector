@@ -377,7 +377,10 @@ class TestJsonPayloadUnchanged:
     def test_json_output_has_expected_top_level_keys(self) -> None:
         """dashboard --format json must have the same top-level keys as before.
 
-        Phase 2 is template-only — no Python-side data contract changes.
+        Phase 2 itself was template-only — no Python-side data contract
+        changes. This test still pins the pre-#256 key set, but now includes
+        "by_skill_adoption", added by #256; the rest of the key set remains
+        unchanged from Phase 2.
         """
         import json
         import subprocess
@@ -424,6 +427,7 @@ class TestJsonPayloadUnchanged:
             "by_model",
             "by_agent",
             "by_skill",
+            "by_skill_adoption",
             "by_project",
             "by_day",
             "sessions",
