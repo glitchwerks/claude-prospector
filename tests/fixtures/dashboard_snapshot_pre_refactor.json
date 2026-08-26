@@ -72,5 +72,6 @@
       "message_count": 1
     }
   ],
-  "limits": null
+  "limits": null,
+  "by_skill_adoption": {}
 }
