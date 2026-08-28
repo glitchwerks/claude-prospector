@@ -26,6 +26,13 @@ Covers:
   proves it actually reaches ``collect_unit`` rather than being accepted
   and silently dropped -- exercised via an image-block result (True vs.
   False must differ), not only a plain string result.
+- _matches_agent (issue #258): the ``--agent`` filter's any-segment
+  matching semantics -- matches on the leaf segment, matches on a
+  non-leaf ancestor segment (the case that distinguishes any-segment
+  matching from leaf-only matching and is the one most likely to
+  silently regress), no match when the name is absent from every
+  segment, ``wanted=None`` disables the filter, and an empty
+  ``agent_path`` never matches a real name.
 """
 
 from __future__ import annotations
@@ -36,6 +43,7 @@ from pathlib import Path
 
 from claude_prospector.models import SessionRecord
 from claude_prospector.tool_collection import (
+    _matches_agent,
     collect_availability,
     collect_per_session,
     collect_session,
@@ -1165,6 +1173,48 @@ class TestCollectUnitMalformedMessage:
 
         assert [r.tool_name for r in tool_uses] == ["Read", "Grep"]
         assert availability.signal_present is False
+
+
+class TestMatchesAgent:
+    """_matches_agent: any-segment matching semantics for --agent (#258).
+
+    Tested directly rather than only through collect_per_session because
+    the load-bearing case -- a match on a non-leaf ancestor segment --
+    needs a multi-segment agent_path, which is cheap to construct here
+    but is exactly the distinction between "any-segment" (shipped,
+    correct per the maintainer decision on #258) and "leaf-only" (what
+    the spec used to say before it was corrected). If a future change
+    narrows _matches_agent to leaf-only matching, this class is what
+    catches it.
+    """
+
+    def test_matches_leaf_segment(self) -> None:
+        """wanted equal to the last (leaf) segment matches."""
+        assert _matches_agent(("general-purpose", "code-writer"), "code-writer")
+
+    def test_matches_non_leaf_ancestor_segment(self) -> None:
+        """wanted equal to a non-leaf ancestor segment still matches --
+        this is the case that distinguishes any-segment matching from
+        leaf-only matching.
+        """
+        assert _matches_agent(("general-purpose", "code-writer"), "general-purpose")
+
+    def test_no_match_when_name_absent_from_every_segment(self) -> None:
+        """wanted not present in any segment of agent_path does not
+        match.
+        """
+        assert not _matches_agent(("general-purpose", "code-writer"), "debugger")
+
+    def test_none_wanted_disables_filter(self) -> None:
+        """wanted=None disables the filter and matches any agent_path,
+        including an empty one.
+        """
+        assert _matches_agent(("general-purpose", "code-writer"), None)
+        assert _matches_agent((), None)
+
+    def test_empty_agent_path_never_matches_a_real_name(self) -> None:
+        """An empty agent_path never matches a non-None wanted value."""
+        assert not _matches_agent((), "general-purpose")
 
 
 class TestCollectPerSession:
