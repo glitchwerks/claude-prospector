@@ -186,7 +186,8 @@
       </div>
       <div class="empty">
         No MCP call data collected yet. Re-run the dashboard with
-        <code>--track-mcp-calls</code> to enable collection.
+        <code>--track-mcp-calls</code> or <code>--track-mcp-call-sizes</code>
+        to enable collection.
       </div>`;
   }
 
