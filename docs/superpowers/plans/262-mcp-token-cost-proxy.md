@@ -19,9 +19,12 @@ skills_relevant:
 
 # Token cost proxy per MCP tool call — issue #262
 
-**Status: NOT READY TO IMPLEMENT.** Four decisions (§7) are open and one of them
-(D-1, the choice of metric) is load-bearing for everything downstream. §8 Phase 0
-is a measurement gate that must run before D-1 can be answered honestly.
+**Status: Decisions resolved — ready for Phase 1.** §8 Phase 0's measurement
+gate has run; its findings were posted as a GitHub comment on issue #262
+(throwaway script, not committed, per §8's own instructions). Both blocking
+decisions in §7 are resolved: **D-1 → M4** (result-payload-size metric) and
+**D-4 → yes-isolated-with-secondary-flag** (a documented new variant, not one
+of the three options originally listed). D-2 and D-3 are now moot — see §7.
 
 Issue #262 asks for a token-cost proxy per MCP tool call, deferred here from
 #248 as decision D7 of the MCP tool-usage spec
@@ -301,14 +304,71 @@ null-vs-zero distinction is already load-bearing in this view (F6).
 
 ---
 
-## 7. Open decisions — ALL UNRESOLVED, blocking implementation
+## 7. Decisions — resolved 2026-08-27
+
+Both blocking decisions have been made by the repo owner in conversation,
+following Phase 0's measurement findings (posted as a GitHub comment on issue
+#262). D-2 and D-3 were scoped as conditional on D-1 and are now moot.
 
 | # | Question | Options | Notes |
 | --- | --- | --- | --- |
-| **D-1** | Which metric? | **M1** issuing-request cost · **M2** context-growth delta · **M3** drop · **M4** result-payload size | Planner recommends **M4**, conditional on Phase 0. M3 is pre-authorised by F13 and stays live. Everything below is contingent on this. |
-| **D-2** | Even-split or replicate across parallel calls in one message? | even-split · replicate-full · exclude multi-call messages | **Only applies if D-1 = M1 or M2.** M4 makes this moot. Replicate-full inflates sums by the parallel-batch factor; even-split has no ground truth but at least conserves the message total. |
-| **D-3** | Which token fields constitute "cost"? | `output` only · `input+output` · all four | **Only applies if D-1 = M1 or M2.** `MessageRecord.total_tokens` sums all four (`models.py:41-47`) — precedent to follow or deliberately break. Including `cache_read` makes the numbers enormous and prompt-size-driven. |
-| **D-4** | Is reading `tool_result` payload **length** (never content) an acceptable extension of the privacy posture in `tool_collection.py:8-9` / spec N6? | yes · yes-with-a-cap · no | **Only applies if D-1 = M4.** A "no" here kills M4 and forces M1 or M3. |
+| **D-1** | Which metric? | **M1** issuing-request cost · **M2** context-growth delta · **M3** drop · **M4** result-payload size (adopted) | **RESOLVED → M4.** See "D-1 resolution" below. |
+| **D-2** | Even-split or replicate across parallel calls in one message? | even-split · replicate-full · exclude multi-call messages | **N/A — moot.** Only applied if D-1 = M1 or M2; D-1 resolved to M4, which needs no split (§3 M4 point 1). |
+| **D-3** | Which token fields constitute "cost"? | `output` only · `input+output` · all four | **N/A — moot.** Only applied if D-1 = M1 or M2; same reason as D-2. |
+| **D-4** | Is reading `tool_result` payload **length** (never content) an acceptable extension of the privacy posture in `tool_collection.py:8-9` / spec N6? | yes · yes-with-a-cap · no · **yes-isolated-with-secondary-flag (adopted)** | **RESOLVED → yes-isolated-with-secondary-flag.** A new, documented amendment to this options list — not simply "yes". See "D-4 resolution" below. |
+
+### D-1 resolution — M4
+
+M4 was strong on both viability and fidelity in the Phase 0 measurement (issue
+#262, Phase 0 findings comment): 0 of 2,882 MCP `tool_use` ids were missing a
+matching `tool_result`; the result-size distribution differentiated
+meaningfully by server and method; 0 image blocks appeared in the sample; the
+truncation rate was ~0.85%. Fidelity checked out too — across n=330 pairs, the
+median absolute difference between `tool_result` and `toolUseResult` sidecar
+sizes was 0 chars.
+
+By contrast, Phase 0 item 5 measured Pearson r=0.37 between calling-message
+context total and turn index within the session — a real positional
+component, reported per item 5's "report it either way so D-1 is decided on
+numbers" instruction. That is well below item 5's own "near 1" bar for a
+clean confound, but the repo owner read it, together with M4's clean win on
+viability and fidelity, as sufficient corroboration of §2's structural
+argument to not pursue M1 further. M2 turned out to be practically
+uncalibratable: Phase 0 item 3 found
+zero transitions across ~58k assistant turns that met the plan's "clean
+transition" bar, because Claude Code's system-reminder injection makes an
+isolated tool-call transition effectively nonexistent in this transcript
+format — which also makes Phase 0 item 4's kill-or-cure control comparison
+moot, since there was no clean-transition signal to compare against a
+control. M3 (drop) remains pre-authorised by F13 but is no longer needed,
+since M4 is viable.
+
+### D-4 resolution — yes-isolated-with-secondary-flag
+
+Reading `tool_result` payload **length** (a number; never the content itself)
+is an acceptable extension of the privacy posture in `tool_collection.py:8-9`
+/ spec N6 — but only under two conditions the repo owner set:
+
+1. **Code isolation.** The length-reading logic must live in its own
+   separate function/module, not folded into `collect_unit`'s existing scan —
+   so `tool_collection.py`'s existing privacy claim ("only tool names and ids
+   are read; `tool_use.input` is never touched") stays literally true for the
+   base scan path, and the new read is a small, separately auditable unit.
+2. **Separate opt-in flag.** The read must be gated behind a **new**
+   secondary CLI flag on `dashboard`, distinct from the existing
+   `--track-mcp-calls` flag (which stays call-counts-only — no result-length
+   reads, no change to its existing behavior or help text). Users can run the
+   base call-count-only version, or opt further into the new flag knowing it
+   will temporarily read privacy-sensitive `tool_result` payload data (length
+   only, computed and discarded — never persisted or logged as content) to
+   compute the cost-proxy metric. The new flag's help text, and any README
+   documentation added later, must state this in plain language — it is a
+   privacy-posture change, not just a performance one, and needs its own
+   clear disclosure separate from the existing flag's IO-cost framing.
+
+The new flag's exact name is **TBD** — Phase 1 must name it.
+`--track-mcp-call-sizes` is a reasonable illustrative suggestion, not a
+decision.
 
 Two things the planner does **not** need answered: whether `ToolUseRecord` needs
 a `message_id` (§4 — no join needed) and how the denominator should be computed
@@ -358,17 +418,46 @@ reports:
 results. **Then re-open D-1 with the repo owner.** Do not proceed to Phase 1
 until D-1 and D-4 are answered.
 
+**Status: complete.** Findings posted as a GitHub comment on issue #262; D-1
+and D-4 are resolved in §7.
+
 ### Phase 1 — Collection (TDD)
 
-Scope depends on D-1.
+Scope is now fixed by D-1 = M4 (§7). The M1/M2 branch below is retained as
+decision history, per this plan's citation/decision-log conventions, rather
+than deleted — it explains why §5's `message_id`/`share_denominator` scheme is
+not being built.
 
-- **If M4:** extend `collect_unit`'s scan with a `user` branch that records
-  `{tool_use_id: result_size}` for `tool_result` blocks, and stamp each
-  `ToolUseRecord` with `result_chars: int | None` (`None` = no result found,
-  distinct from `0`). No new file reads; the `user` entries are already parsed
-  and discarded (`tool_collection.py:31-56`).
-- **If M1/M2:** implement §5 — `message_id`, `share_denominator`, and the usage
-  fields on `ToolUseRecord`, stamped in a post-scan grouping pass.
+- **M4 (live — the only branch that ships):** extend `collect_unit`'s scan
+  with a `user` branch that records `{tool_use_id: result_size}` for
+  `tool_result` blocks, and stamp each `ToolUseRecord` with
+  `result_chars: int | None` (`None` = no result found, distinct from `0`).
+  No new file reads; the `user` entries are already parsed and discarded
+  (`tool_collection.py:31-56`).
+
+  **D-4's two conditions (§7) apply to this branch:**
+  - **Code isolation.** The length-reading logic must live in its own
+    separate function/module, called from — not folded into — `collect_unit`'s
+    existing scan, so `tool_collection.py`'s existing privacy claim ("only
+    tool names and ids are read; `tool_use.input` is never touched",
+    `tool_collection.py:8-9`) stays literally true for the base scan path,
+    and the new read is a small, separately auditable unit.
+  - **Secondary flag gating.** This branch must be gated behind a **new**
+    CLI flag on `dashboard`, distinct from the existing `--track-mcp-calls`
+    flag (which stays call-counts-only — no result-length reads, no change to
+    its existing behavior or help text). The new flag's exact name is
+    **TBD** (Phase 1 must name it; `--track-mcp-call-sizes` is an
+    illustrative suggestion only, not a decision). Its help text — and any
+    README documentation added in Phase 4 — must plainly disclose that
+    enabling it reads `tool_result` payload length (never content, never
+    persisted or logged) to compute the cost-proxy metric. This is a
+    privacy-posture disclosure, distinct from `--track-mcp-calls`'s existing
+    IO-cost framing.
+
+- **M1/M2 (moot — kept as decision history, not implemented):** would have
+  implemented §5 — `message_id`, `share_denominator`, and the usage fields on
+  `ToolUseRecord`, stamped in a post-scan grouping pass. Phase 0 ruled out
+  both metrics (§7 D-1 resolution); this branch does not ship.
 
 Either way: **`ToolUseRecord` is a frozen slotted dataclass**
 (`models.py:135`). New fields must be defaulted so existing construction sites
@@ -406,9 +495,13 @@ the cross-comparison failure described in M1's cons.
 
 ### Phase 3 — Dashboard JSON + view
 
-Wire through `cli/dashboard.py:202-220` (nothing new to gate — the existing
-`--track-mcp-calls` flag already covers it; do **not** add a second flag), then
-the server-card stat and method note in `static/views/mcp-usage.js` per §6c.
+Wire through `cli/dashboard.py:202-220`. **Amended by the D-4 resolution
+(§7):** this phase's text originally read "do not add a second flag" — that no
+longer holds. `result_chars` collection (Phase 1) is gated behind the new
+secondary flag named there (TBD, illustratively `--track-mcp-call-sizes`);
+this phase's `cost_attribution`/`estimated_result_tokens` output must be
+conditioned on *that* flag, not on `--track-mcp-calls` alone. Then wire the
+server-card stat and method note in `static/views/mcp-usage.js` per §6c.
 Keep the empty-state path working: `by_mcp_usage` is `{}` when the flag is off
 (`mcp-usage.js:302-307`).
 
@@ -445,7 +538,7 @@ has an answer).
 | Risk | Mitigation |
 | --- | --- |
 | A proxy number is read as measured cost and drives a wrong config decision. | §6 — key naming, machine-readable `cost_attribution`, "Est." in the UI label. This is F13's actual requirement, not decoration. |
-| M4 under-reports because transcripts store truncated results. | Phase 0 item 2 is a hard gate; if fidelity fails, fall back to M3. |
+| M4 under-reports because transcripts store truncated results. | Phase 0 item 2 is a hard gate; if fidelity fails, fall back to M3. **Cleared by Phase 0** — n=330 pairs, median absolute diff 0 chars; see §7 D-1 resolution. |
 | `by_method` shape change breaks the shipped view. | Phase 2 — prefer the additive parallel map; both `tests/test_mcp_usage_view.py` and `tests/test_dashboard_mcp_usage.py` must be updated in the same PR. |
 | New `ToolUseRecord` fields break existing fixtures. | Phase 1 — defaulted fields only; full suite green before new tests are added. |
-| Implementation starts before D-1 is answered and builds the wrong metric. | This document's status line, and Phase 0's explicit exit criterion. |
+| Implementation starts before D-1 is answered and builds the wrong metric. | **Discharged** — D-1 and D-4 are resolved (§7); this document's status line no longer reads "NOT READY TO IMPLEMENT". |
