@@ -249,6 +249,9 @@ python -m claude_prospector dashboard --format json
 
 # Include MCP tool-usage breakdown (extra transcript-read cost; see below)
 python -m claude_prospector dashboard --track-mcp-calls
+
+# Also estimate a per-call token-cost proxy (privacy-posture opt-in; see below)
+python -m claude_prospector dashboard --track-mcp-call-sizes
 ```
 
 `--track-mcp-calls` adds a per-session MCP tool-call collection pass, which
@@ -259,6 +262,26 @@ a minute in absolute terms. The automatic session-end (Stop hook) dashboard
 regeneration does **not** pass this flag — the "MCP Usage" panel is CLI-opt-in
 only in v1; hook-generated dashboards show an empty-state message explaining
 how to enable it via the CLI.
+
+`--track-mcp-call-sizes` additionally estimates a per-call token-cost proxy,
+derived from the character length of each MCP call's result (divided by an
+assumed ~4 characters per token). This is an **estimate, not a measured
+token count** — claude-prospector deliberately ships no tokenizer, so the
+number is explicitly labelled as a proxy everywhere it surfaces: the
+`estimated_result_tokens` field name, the JSON output's `cost_attribution`
+block (which records the method and per-call counters), and the "Est."
+prefix on the dashboard's per-server stat. The flag is also a
+**privacy-posture opt-in separate from** `--track-mcp-calls`: it temporarily
+reads each MCP call's `tool_result` payload **length** (never its content)
+to compute the estimate, and that length is used only to derive the number
+and then discarded — never persisted or logged as content. It works
+**standalone** — you don't need `--track-mcp-calls` set as well; either flag
+alone triggers the same collection pass (and its transcript-read cost, per
+the timing above), and enabling only `--track-mcp-call-sizes` also produces
+the base call-count data as a byproduct. Computing the size estimate on top
+of that pass adds no further file reads or JSON parsing, since the
+`tool_result` blocks it reads are already inside the `user` transcript
+entries that pass parses and discards.
 
 ### `session-summary` — deterministic session recap
 

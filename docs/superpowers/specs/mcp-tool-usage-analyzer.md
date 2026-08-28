@@ -463,6 +463,11 @@ in dashboard output. Issue #195's AC bullet "Collection gated behind opt-in flag
   pass unchanged (§8 Phase 1a).
 - **F13** (D7) No token-cost-per-tool-call metric in `tool-usage` output. Deferred
   to #248, where it must ship as an explicitly-labelled proxy or be dropped.
+  **Resolved under issue #262**, not #248: shipped as the explicitly-labelled
+  proxy option (M4 — a `tool_result` payload-size estimate,
+  `estimated_result_tokens`/`cost_attribution`), gated behind the `dashboard`
+  `--track-mcp-call-sizes` flag
+  (`docs/superpowers/plans/262-mcp-token-cost-proxy.md` §6, §7 D-1 resolution).
 
 ### 5.2 Non-functional
 
@@ -506,7 +511,7 @@ provenance; the full option analysis is in this file's git history.
 | D4 | Human-readable output? | **JSON-only for v1.** No `--format table` | F2 |
 | D5 | Where does the resolver live? | **(b)** Public `normalize_mcp_tool_name` in `mcp_names.py`, re-exported | §3, F5, §8 Phase 0 |
 | D6 | Availability source precedence | **Union** — either source suffices; record confirming source(s) | F7, §7 |
-| D7 | Token cost per MCP call | **Omit from #195 entirely**; revisit on #248 | F13, §10 |
+| D7 | Token cost per MCP call | **Omit from #195 entirely**; revisit on #248 → **Resolved under #262** (not #248): shipped as an explicitly-labelled proxy (M4, `--track-mcp-call-sizes`), not dropped; see `docs/superpowers/plans/262-mcp-token-cost-proxy.md` §7 | F13, §10 |
 | D8 | Session availability rollup across agents | **(a)** Union across agents in the session | F7, §7 |
 
 ### Notes carried forward from the resolutions
@@ -755,8 +760,9 @@ in `tests/conftest.py`.
   output". Reference this spec §4.3 for the evidence.
 - **Dashboard panel** — #248, Phase 3.
 - **Runtime instrumentation / hooks** — #241, closed as not planned.
-- **Token cost per tool call** — D7 = omit; revisit on #248 with an explicitly
-  labelled proxy or drop the requirement then.
+- **Token cost per tool call** — D7 = omit from #195; **resolved under #262**
+  (not #248) as an explicitly-labelled proxy (M4, `--track-mcp-call-sizes`;
+  PRs #270, #271, #272), not dropped.
 - **Fixing the `workflows/` gap while extracting the walker** — N7. The walker
   extraction preserves today's behaviour, including this omission. The fix is the
   sibling issue's job.
