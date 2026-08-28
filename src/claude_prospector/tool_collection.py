@@ -5,8 +5,17 @@ This is the second visitor over :mod:`claude_prospector.transcript_walker`
 records). It reads raw counts only — no filtering, no normalisation, no
 aggregation. Those belong to a downstream aggregator.
 
-Privacy: only tool *names* and *ids* are read. ``tool_use.input`` is never
-touched, because it carries file paths and shell commands.
+Privacy: only tool *names* and *ids* are read on the base scan path.
+``tool_use.input`` is never touched, because it carries file paths and
+shell commands. An opt-in ``track_mcp_call_sizes`` parameter on
+:func:`collect_unit` / :func:`collect_tool_uses` (issue #262, D-1=M4,
+D-4=yes-isolated-with-secondary-flag) additionally reads the *length*
+(never the content) of each call's ``tool_result`` payload, to estimate a
+per-call token-cost proxy. That read is isolated in
+:func:`_tool_result_content_length` / :func:`_iter_tool_result_sizes` below
+and only executes when a caller explicitly opts in — with the flag left at
+its default (``False``), the base scan path performs zero reads of
+``tool_result`` payload data.
 """
 
 from __future__ import annotations
@@ -14,6 +23,7 @@ from __future__ import annotations
 import fnmatch
 import json
 from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -74,8 +84,80 @@ def _instruction_server_name(raw: str) -> str:
     return raw
 
 
+# ---------------------------------------------------------------------------
+# Result-size tracking (issue #262, D-1=M4). Isolated from the rest of this
+# module per D-4's "yes-isolated-with-secondary-flag" resolution: this is the
+# only code in this file that reads ``tool_result`` payload data, and it is
+# only ever invoked when a caller opts in via ``track_mcp_call_sizes=True``.
+# It reads payload *length* only, never the content itself, and the computed
+# length is never persisted or logged as content.
+# ---------------------------------------------------------------------------
+
+
+def _tool_result_content_length(content: Any) -> int | None:
+    """Measure the character length of one ``tool_result`` block's content.
+
+    Args:
+        content: The ``tool_result`` block's ``content`` value — either a
+            plain string or a list of content blocks (both shapes occur in
+            real transcripts, per the plan's §1 structural probe).
+
+    Returns:
+        The total character count of the text content, or ``None`` when
+        any part of it is unmeasurable — a non-dict block, an image
+        block, a block of any other unrecognised type, or a ``text``
+        block whose ``text`` field isn't a string. Any single
+        unsupported block makes the *whole* result unknown rather than a
+        partial sum over the blocks that were measurable, so a mixed
+        result (e.g. one text block plus one image block) never renders
+        as misleadingly cheap.
+    """
+    if isinstance(content, str):
+        return len(content)
+    if isinstance(content, list):
+        total = 0
+        for block in content:
+            if not isinstance(block, dict):
+                return None
+            block_type = block.get("type")
+            if block_type != "text":
+                return None
+            text = block.get("text", "")
+            if not isinstance(text, str):
+                return None
+            total += len(text)
+        return total
+    return None
+
+
+def _iter_tool_result_sizes(
+    message: dict[str, Any],
+) -> Iterator[tuple[str, int | None]]:
+    """Yield ``(tool_use_id, result_chars)`` for a user message's tool_results.
+
+    Args:
+        message: The ``message`` dict of a ``user``-type transcript entry.
+
+    Yields:
+        One pair per well-formed ``tool_result`` block in the message's
+        content list (blocks missing a ``tool_use_id`` are skipped).
+    """
+    content = message.get("content", [])
+    if not isinstance(content, list):
+        return
+    for block in content:
+        if not isinstance(block, dict) or block.get("type") != "tool_result":
+            continue
+        tool_use_id = block.get("tool_use_id")
+        if not tool_use_id:
+            continue
+        yield tool_use_id, _tool_result_content_length(block.get("content"))
+
+
 def collect_unit(
     unit: AgentTranscript,
+    *,
+    track_mcp_call_sizes: bool = False,
 ) -> tuple[list[ToolUseRecord], AgentAvailability]:
     """Collect tool calls and MCP availability from one agent transcript.
 
@@ -103,8 +185,22 @@ def collect_unit(
     misses eagerly-loaded tools), so a server named by only one is expected,
     not contradictory.
 
+    ``user`` branch — opt-in only (issue #262, D-1=M4). When
+    *track_mcp_call_sizes* is True, reads each ``tool_result`` block's
+    payload length and stamps the matching ``ToolUseRecord`` (joined by
+    ``tool_use_id``) with it after the scan completes; a ``tool_result``
+    never creates a new record, and an id with no matching ``tool_use``
+    anywhere in the file is silently dropped. When *track_mcp_call_sizes*
+    is False (the default), this branch is never entered and no
+    ``tool_result`` payload data is read at all — see the module docstring.
+
     Args:
         unit: One agent transcript from the walker.
+        track_mcp_call_sizes: When True, additionally compute
+            ``result_chars`` for each record from its matching
+            ``tool_result`` payload length. Defaults to False, which
+            leaves every record's ``result_chars`` at ``None`` and reads
+            no ``tool_result`` payload data.
 
     Returns:
         A 2-tuple ``(tool_uses, availability)``. ``tool_uses`` is empty
@@ -118,6 +214,7 @@ def collect_unit(
     observed_sources: set[str] = set()
     deferred_tools: set[str] = set()
     instruction_servers: set[str] = set()
+    result_sizes: dict[str, int | None] = {}
 
     for entry in _iter_entries(unit.jsonl_path):
         entry_type = entry.get("type")
@@ -164,6 +261,20 @@ def collect_unit(
             for name in attachment.get("removedNames") or []:
                 if isinstance(name, str):
                     target.discard(name)
+        elif track_mcp_call_sizes and entry_type == "user":
+            message = entry.get("message")
+            if not isinstance(message, dict):
+                continue
+            for tool_use_id, size in _iter_tool_result_sizes(message):
+                result_sizes[tool_use_id] = size
+
+    if track_mcp_call_sizes:
+        records = [
+            replace(record, result_chars=result_sizes[record.tool_use_id])
+            if record.tool_use_id in result_sizes
+            else record
+            for record in records
+        ]
 
     sources: dict[str, set[str]] = {}
     for raw_tool in deferred_tools:
@@ -185,19 +296,25 @@ def collect_unit(
     return records, availability
 
 
-def collect_tool_uses(unit: AgentTranscript) -> list[ToolUseRecord]:
+def collect_tool_uses(
+    unit: AgentTranscript,
+    *,
+    track_mcp_call_sizes: bool = False,
+) -> list[ToolUseRecord]:
     """Collect every tool invocation in one agent's transcript.
 
     Thin wrapper over :func:`collect_unit`, kept for existing callers.
 
     Args:
         unit: One agent transcript from the walker.
+        track_mcp_call_sizes: Forwarded to :func:`collect_unit`; see its
+            docstring. Defaults to False.
 
     Returns:
         Records in file order. Empty when the file is missing or
         unreadable.
     """
-    tool_uses, _ = collect_unit(unit)
+    tool_uses, _ = collect_unit(unit, track_mcp_call_sizes=track_mcp_call_sizes)
     return tool_uses
 
 

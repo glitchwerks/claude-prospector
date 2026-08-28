@@ -144,12 +144,21 @@ class ToolUseRecord:
             transcript omitted it.
         agent_type: Sanitized leaf agent name that issued the call.
         agent_path: Full root-to-leaf ancestry tuple for that agent.
+        result_chars: Character length of this call's ``tool_result``
+            payload (issue #262, D-1=M4), or ``None`` when unknown --
+            either because size tracking was not opted into (the
+            default), no matching result was found in the transcript, or
+            the result contained an unmeasurable block (e.g. an image).
+            Distinct from ``0``, which means a result was found and it
+            was empty. See :mod:`claude_prospector.tool_collection` for
+            how this is computed and gated.
     """
 
     tool_name: str
     tool_use_id: str
     agent_type: str
     agent_path: tuple[str, ...]
+    result_chars: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

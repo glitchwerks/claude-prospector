@@ -10,6 +10,16 @@ Covers:
   count as a signal without producing server_sources, MCP-shaped names
   resolve to server names, removed names net out in file order, and
   deferred_tools_delta / mcp_instructions_delta union together.
+- collect_tool_uses / collect_unit result-size tracking (issue #262, D-1=M4,
+  D-4=yes-isolated-with-secondary-flag): opt-in via the new
+  ``track_mcp_call_sizes`` keyword. Covers missing-result -> None (not 0),
+  string vs. list ``tool_result.content`` shapes, image blocks excluded
+  (rendered ``None``/unknown, never a small non-zero number), duplicate
+  ``tool_use_id`` not double-counted, a ``tool_result`` never creating a
+  new ``ToolUseRecord``, an orphan ``tool_result`` (no matching tool_use)
+  creating no record, and the privacy-gating default: omitting the flag
+  leaves every record's ``result_chars`` at ``None`` even when a real,
+  sizeable ``tool_result`` is present in the file.
 """
 
 from __future__ import annotations
@@ -127,6 +137,43 @@ def _availability_line(
             "type": attachment_type,
             "addedNames": added,
             "removedNames": removed,
+        },
+    }
+
+
+def _user_result_line(
+    tool_use_id: str,
+    content: str | list[dict],
+    uuid: str,
+    timestamp: str,
+) -> dict:
+    """Build a user JSONL entry carrying a single tool_result block.
+
+    Args:
+        tool_use_id: The id of the tool_use this result answers.
+        content: Either a plain string or a list of content blocks (the
+            two shapes observed in real transcripts, per the plan's §1
+            structural probe).
+        uuid: Entry UUID.
+        timestamp: ISO 8601 timestamp string.
+
+    Returns:
+        A dict shaped like a real Claude Code JSONL user entry carrying a
+        tool_result block.
+    """
+    return {
+        "type": "user",
+        "timestamp": timestamp,
+        "uuid": uuid,
+        "message": {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": tool_use_id,
+                    "content": content,
+                }
+            ],
         },
     }
 
@@ -328,6 +375,528 @@ class TestCollectToolUses:
 
         assert record.agent_path == ("general-purpose", "code-writer")
         assert record.agent_type == "code-writer"
+
+
+class TestCollectToolUsesResultSizes:
+    """result_chars tracking (issue #262, D-1=M4, D-4=isolated+secondary-flag).
+
+    All behavior here is opt-in via ``track_mcp_call_sizes=True`` on
+    ``collect_tool_uses`` / ``collect_unit``. This mirrors the CLI's new
+    ``dashboard --track-mcp-call-sizes`` flag (dest ``track_mcp_call_sizes``,
+    default False), which stays entirely separate from the existing
+    ``--track-mcp-calls`` flag.
+    """
+
+    def test_missing_result_yields_none_not_zero(self, tmp_path: Path) -> None:
+        """A tool_use with no matching tool_result gets result_chars=None,
+        not 0 -- distinguishable from a present-but-empty result.
+
+        A second tool_use *with* a matching result sits alongside it so
+        that ``None`` reads as "not found", not "tracking never wired up".
+        """
+        jsonl = tmp_path / "s.jsonl"
+        _write_jsonl(
+            jsonl,
+            [
+                _tool_use_line(
+                    "s",
+                    "msg_1",
+                    "toolu_missing",
+                    "mcp__codegraph__codegraph_explore",
+                    "u1",
+                    "2026-08-01T00:00:00.000Z",
+                ),
+                _tool_use_line(
+                    "s",
+                    "msg_2",
+                    "toolu_found",
+                    "mcp__azure__storage",
+                    "u2",
+                    "2026-08-01T00:00:01.000Z",
+                ),
+                _user_result_line(
+                    "toolu_found",
+                    "seventeen chars!!",
+                    "u3",
+                    "2026-08-01T00:00:02.000Z",
+                ),
+            ],
+        )
+
+        records = collect_tool_uses(_unit(jsonl), track_mcp_call_sizes=True)
+
+        by_id = {r.tool_use_id: r.result_chars for r in records}
+        assert by_id == {"toolu_missing": None, "toolu_found": 17}
+
+    def test_string_content_shape_computes_size(self, tmp_path: Path) -> None:
+        """A plain-string tool_result.content is measured by character
+        count.
+        """
+        text = "a fairly distinctive result payload"
+        jsonl = tmp_path / "s.jsonl"
+        _write_jsonl(
+            jsonl,
+            [
+                _tool_use_line(
+                    "s",
+                    "msg_1",
+                    "toolu_a",
+                    "mcp__azure__storage",
+                    "u1",
+                    "2026-08-01T00:00:00.000Z",
+                ),
+                _user_result_line("toolu_a", text, "u2", "2026-08-01T00:00:01.000Z"),
+            ],
+        )
+
+        records = collect_tool_uses(_unit(jsonl), track_mcp_call_sizes=True)
+
+        assert records[0].result_chars == len(text)
+
+    def test_empty_string_result_yields_zero_not_none(self, tmp_path: Path) -> None:
+        """An empty-but-present string result is 0, not None -- the
+        null-vs-zero distinction result_chars exists to carry: None means
+        "no tool_result found", 0 means "found, and it was empty".
+        """
+        jsonl = tmp_path / "s.jsonl"
+        _write_jsonl(
+            jsonl,
+            [
+                _tool_use_line(
+                    "s",
+                    "msg_1",
+                    "toolu_a",
+                    "mcp__azure__storage",
+                    "u1",
+                    "2026-08-01T00:00:00.000Z",
+                ),
+                _user_result_line("toolu_a", "", "u2", "2026-08-01T00:00:01.000Z"),
+            ],
+        )
+
+        records = collect_tool_uses(_unit(jsonl), track_mcp_call_sizes=True)
+
+        assert records[0].result_chars == 0
+
+    def test_empty_list_content_yields_zero_not_none(self, tmp_path: Path) -> None:
+        """An empty-but-present list result -- either zero blocks, or a
+        single text block with empty text -- is 0, not None. Checked
+        separately from the string-content case since the two shapes go
+        through different parsing paths.
+        """
+        jsonl = tmp_path / "s.jsonl"
+        _write_jsonl(
+            jsonl,
+            [
+                _tool_use_line(
+                    "s",
+                    "msg_1",
+                    "toolu_a",
+                    "mcp__codegraph__codegraph_explore",
+                    "u1",
+                    "2026-08-01T00:00:00.000Z",
+                ),
+                _user_result_line(
+                    "toolu_a",
+                    [{"type": "text", "text": ""}],
+                    "u2",
+                    "2026-08-01T00:00:01.000Z",
+                ),
+            ],
+        )
+
+        records = collect_tool_uses(_unit(jsonl), track_mcp_call_sizes=True)
+
+        assert records[0].result_chars == 0
+
+    def test_list_content_shape_sums_text_blocks(self, tmp_path: Path) -> None:
+        """A list-of-blocks tool_result.content sums every text block's
+        length, not just the first one.
+        """
+        first = "block one has some text"
+        second = "block two is shorter"
+        jsonl = tmp_path / "s.jsonl"
+        _write_jsonl(
+            jsonl,
+            [
+                _tool_use_line(
+                    "s",
+                    "msg_1",
+                    "toolu_a",
+                    "mcp__codegraph__codegraph_explore",
+                    "u1",
+                    "2026-08-01T00:00:00.000Z",
+                ),
+                _user_result_line(
+                    "toolu_a",
+                    [
+                        {"type": "text", "text": first},
+                        {"type": "text", "text": second},
+                    ],
+                    "u2",
+                    "2026-08-01T00:00:01.000Z",
+                ),
+            ],
+        )
+
+        records = collect_tool_uses(_unit(jsonl), track_mcp_call_sizes=True)
+
+        assert records[0].result_chars == len(first) + len(second)
+
+    def test_image_block_makes_result_size_unknown(self, tmp_path: Path) -> None:
+        """A tool_result content list containing an image block must not
+        report a small number -- the whole call renders as unknown
+        (None), matching the plan's null-vs-zero discipline (§3, §6b):
+        excluding image bytes must not make an expensive call look cheap.
+        """
+        jsonl = tmp_path / "s.jsonl"
+        _write_jsonl(
+            jsonl,
+            [
+                _tool_use_line(
+                    "s",
+                    "msg_1",
+                    "toolu_a",
+                    "mcp__codegraph__codegraph_explore",
+                    "u1",
+                    "2026-08-01T00:00:00.000Z",
+                ),
+                _user_result_line(
+                    "toolu_a",
+                    [
+                        {"type": "text", "text": "small caption"},
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/png",
+                                "data": "A" * 10_000,
+                            },
+                        },
+                    ],
+                    "u2",
+                    "2026-08-01T00:00:01.000Z",
+                ),
+            ],
+        )
+
+        records = collect_tool_uses(_unit(jsonl), track_mcp_call_sizes=True)
+
+        assert records[0].result_chars is None, (
+            "an image-bearing result must render as unknown (None), not "
+            f"a small text-only count -- got {records[0].result_chars!r}"
+        )
+
+    def test_unrecognized_block_type_makes_result_size_unknown(
+        self, tmp_path: Path
+    ) -> None:
+        """A tool_result content list containing a block whose type is
+        neither ``text`` nor ``image`` must render as unknown (None), not
+        as a silently-skipped block that leaves the rest of the sum
+        intact. Regression test for PR #270 CodeRabbit review feedback:
+        only ``image`` blocks previously forced the unknown path, so any
+        other unrecognised block type was skipped rather than
+        invalidating the whole result.
+        """
+        jsonl = tmp_path / "s.jsonl"
+        _write_jsonl(
+            jsonl,
+            [
+                _tool_use_line(
+                    "s",
+                    "msg_1",
+                    "toolu_a",
+                    "mcp__codegraph__codegraph_explore",
+                    "u1",
+                    "2026-08-01T00:00:00.000Z",
+                ),
+                _user_result_line(
+                    "toolu_a",
+                    [{"type": "some_future_block_type", "data": "x" * 10}],
+                    "u2",
+                    "2026-08-01T00:00:01.000Z",
+                ),
+            ],
+        )
+
+        records = collect_tool_uses(_unit(jsonl), track_mcp_call_sizes=True)
+
+        assert records[0].result_chars is None, (
+            "an unrecognised block type must render as unknown (None), "
+            f"got {records[0].result_chars!r}"
+        )
+
+    def test_mixed_text_and_unrecognized_block_makes_result_size_unknown(
+        self, tmp_path: Path
+    ) -> None:
+        """A tool_result content list mixing a measurable text block with
+        an unrecognised block must render as unknown (None) overall, not
+        as a partial count of just the text block. This is the specific
+        undercounting bug flagged in PR #270 review: a mixed result was
+        previously returning the text-only partial sum instead of None.
+        """
+        jsonl = tmp_path / "s.jsonl"
+        _write_jsonl(
+            jsonl,
+            [
+                _tool_use_line(
+                    "s",
+                    "msg_1",
+                    "toolu_a",
+                    "mcp__codegraph__codegraph_explore",
+                    "u1",
+                    "2026-08-01T00:00:00.000Z",
+                ),
+                _user_result_line(
+                    "toolu_a",
+                    [
+                        {"type": "text", "text": "this text is measurable"},
+                        {"type": "some_future_block_type", "data": "x" * 10},
+                    ],
+                    "u2",
+                    "2026-08-01T00:00:01.000Z",
+                ),
+            ],
+        )
+
+        records = collect_tool_uses(_unit(jsonl), track_mcp_call_sizes=True)
+
+        assert records[0].result_chars is None, (
+            "a mixed measurable/unsupported result must render as "
+            f"unknown (None), not a partial count -- got "
+            f"{records[0].result_chars!r}"
+        )
+
+    def test_non_dict_block_makes_result_size_unknown(self, tmp_path: Path) -> None:
+        """A malformed content list entry that isn't even a dict must
+        render as unknown (None), not be silently skipped.
+        """
+        jsonl = tmp_path / "s.jsonl"
+        _write_jsonl(
+            jsonl,
+            [
+                _tool_use_line(
+                    "s",
+                    "msg_1",
+                    "toolu_a",
+                    "mcp__codegraph__codegraph_explore",
+                    "u1",
+                    "2026-08-01T00:00:00.000Z",
+                ),
+                _user_result_line(
+                    "toolu_a",
+                    ["not a dict block"],
+                    "u2",
+                    "2026-08-01T00:00:01.000Z",
+                ),
+            ],
+        )
+
+        records = collect_tool_uses(_unit(jsonl), track_mcp_call_sizes=True)
+
+        assert records[0].result_chars is None
+
+    def test_text_block_with_non_string_text_makes_result_size_unknown(
+        self, tmp_path: Path
+    ) -> None:
+        """A ``text`` block whose ``text`` field isn't a string must
+        render as unknown (None), not silently contribute 0.
+        """
+        jsonl = tmp_path / "s.jsonl"
+        _write_jsonl(
+            jsonl,
+            [
+                _tool_use_line(
+                    "s",
+                    "msg_1",
+                    "toolu_a",
+                    "mcp__codegraph__codegraph_explore",
+                    "u1",
+                    "2026-08-01T00:00:00.000Z",
+                ),
+                _user_result_line(
+                    "toolu_a",
+                    [{"type": "text", "text": 12345}],
+                    "u2",
+                    "2026-08-01T00:00:01.000Z",
+                ),
+            ],
+        )
+
+        records = collect_tool_uses(_unit(jsonl), track_mcp_call_sizes=True)
+
+        assert records[0].result_chars is None
+
+    def test_duplicate_tool_use_id_result_size_not_double_counted(
+        self, tmp_path: Path
+    ) -> None:
+        """The existing tool_use_id dedup (:134-138) must not cause the
+        matching tool_result's size to be counted more than once.
+        """
+        text = "unique payload text here"
+        jsonl = tmp_path / "s.jsonl"
+        _write_jsonl(
+            jsonl,
+            [
+                _tool_use_line(
+                    "s",
+                    "msg_1",
+                    "toolu_a",
+                    "Read",
+                    "u1",
+                    "2026-08-01T00:00:00.000Z",
+                ),
+                _tool_use_line(
+                    "s",
+                    "msg_1",
+                    "toolu_a",
+                    "Read",
+                    "u2",
+                    "2026-08-01T00:00:01.000Z",
+                ),
+                _user_result_line("toolu_a", text, "u3", "2026-08-01T00:00:02.000Z"),
+            ],
+        )
+
+        records = collect_tool_uses(_unit(jsonl), track_mcp_call_sizes=True)
+
+        assert len(records) == 1
+        assert records[0].result_chars == len(text)
+
+    def test_tool_result_does_not_create_a_new_record(self, tmp_path: Path) -> None:
+        """A tool_result on a user entry only annotates an existing
+        ToolUseRecord by tool_use_id -- it must never create a new one.
+        Guards spec T4 under size-tracking specifically, since a naive
+        implementation of the new user-branch could emit a record for
+        every tool_result block it visits.
+        """
+        jsonl = tmp_path / "s.jsonl"
+        _write_jsonl(
+            jsonl,
+            [
+                _tool_use_line(
+                    "s",
+                    "msg_1",
+                    "toolu_a",
+                    "Read",
+                    "u1",
+                    "2026-08-01T00:00:00.000Z",
+                ),
+                _user_result_line("toolu_a", "ok", "u2", "2026-08-01T00:00:01.000Z"),
+            ],
+        )
+
+        records = collect_tool_uses(_unit(jsonl), track_mcp_call_sizes=True)
+
+        assert len(records) == 1
+        assert records[0].tool_name == "Read"
+
+    def test_orphan_tool_result_creates_no_record(self, tmp_path: Path) -> None:
+        """A tool_result whose tool_use_id matches no tool_use anywhere in
+        the file must not create a phantom ToolUseRecord.
+        """
+        jsonl = tmp_path / "s.jsonl"
+        _write_jsonl(
+            jsonl,
+            [
+                _user_result_line(
+                    "toolu_never_called",
+                    "orphaned result",
+                    "u1",
+                    "2026-08-01T00:00:00.000Z",
+                ),
+            ],
+        )
+
+        records = collect_tool_uses(_unit(jsonl), track_mcp_call_sizes=True)
+
+        assert records == []
+
+    def test_flag_off_by_default_leaves_result_chars_none(self, tmp_path: Path) -> None:
+        """Privacy-gating regression guard (D-4): the caller must opt in.
+        Calling collect_tool_uses the same way every existing call site in
+        this codebase does today (no track_mcp_call_sizes argument at all)
+        must leave every record's result_chars at None -- even though a
+        real, sizeable tool_result is present in the file. A present result
+        that never surfaces is the only externally observable proof that
+        the payload was not read when the caller did not ask for it.
+        """
+        jsonl = tmp_path / "s.jsonl"
+        _write_jsonl(
+            jsonl,
+            [
+                _tool_use_line(
+                    "s",
+                    "msg_1",
+                    "toolu_a",
+                    "mcp__codegraph__codegraph_explore",
+                    "u1",
+                    "2026-08-01T00:00:00.000Z",
+                ),
+                _user_result_line(
+                    "toolu_a", "x" * 5000, "u2", "2026-08-01T00:00:01.000Z"
+                ),
+            ],
+        )
+
+        records = collect_tool_uses(_unit(jsonl))
+
+        assert records[0].result_chars is None
+
+    def test_collect_unit_also_defaults_result_chars_to_none(
+        self, tmp_path: Path
+    ) -> None:
+        """collect_unit (the merged single-scan entry point) carries the
+        same default-off gating as collect_tool_uses.
+        """
+        jsonl = tmp_path / "s.jsonl"
+        _write_jsonl(
+            jsonl,
+            [
+                _tool_use_line(
+                    "s",
+                    "msg_1",
+                    "toolu_a",
+                    "mcp__azure__storage",
+                    "u1",
+                    "2026-08-01T00:00:00.000Z",
+                ),
+                _user_result_line(
+                    "toolu_a", "x" * 5000, "u2", "2026-08-01T00:00:01.000Z"
+                ),
+            ],
+        )
+
+        tool_uses, _availability = collect_unit(_unit(jsonl))
+
+        assert tool_uses[0].result_chars is None
+
+    def test_collect_unit_computes_result_chars_when_opted_in(
+        self, tmp_path: Path
+    ) -> None:
+        """collect_unit computes result_chars when track_mcp_call_sizes is
+        explicitly True, matching collect_tool_uses's behavior.
+        """
+        text = "collect_unit result payload"
+        jsonl = tmp_path / "s.jsonl"
+        _write_jsonl(
+            jsonl,
+            [
+                _tool_use_line(
+                    "s",
+                    "msg_1",
+                    "toolu_a",
+                    "mcp__azure__storage",
+                    "u1",
+                    "2026-08-01T00:00:00.000Z",
+                ),
+                _user_result_line("toolu_a", text, "u2", "2026-08-01T00:00:01.000Z"),
+            ],
+        )
+
+        tool_uses, _availability = collect_unit(_unit(jsonl), track_mcp_call_sizes=True)
+
+        assert tool_uses[0].result_chars == len(text)
 
 
 class TestCollectAvailability:
