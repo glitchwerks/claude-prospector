@@ -101,16 +101,27 @@ def _dashboard_args(
     data_dir: Path,
     *,
     track_mcp_calls: bool,
+    track_mcp_call_sizes: bool = False,
 ) -> argparse.Namespace:
     """Build a minimal Namespace for the dashboard ``run()`` handler.
 
     Mirrors ``tests/test_cli_dashboard_default.py``'s ``_make_args`` helper,
-    plus the new ``track_mcp_calls`` field Phase 1 adds.
+    plus the ``track_mcp_calls`` field Phase 1 adds and the
+    ``track_mcp_call_sizes`` field Phase 3 wires up (issue #262). The new
+    field defaults to False so every pre-existing call site in this file
+    keeps constructing a valid Namespace without modification -- Phase 3's
+    ``run()`` reads ``args.track_mcp_call_sizes`` unconditionally (it must
+    also gate collection when ``--track-mcp-calls`` is absent, per the D-4
+    "independent secondary flag" resolution), so a Namespace missing the
+    attribute would now raise AttributeError instead of the pre-Phase-3
+    behavior.
 
     Args:
         output: Value for ``args.output`` -- the HTML file to write.
         data_dir: Value for ``args.data_dir``.
-        track_mcp_calls: Value for the new ``--track-mcp-calls`` flag.
+        track_mcp_calls: Value for the ``--track-mcp-calls`` flag.
+        track_mcp_call_sizes: Value for the ``--track-mcp-call-sizes``
+            flag. Defaults to False.
 
     Returns:
         An ``argparse.Namespace`` suitable for passing to ``run()``.
@@ -127,6 +138,7 @@ def _dashboard_args(
         limit_sonnet_7d=None,
         output_format="html",
         track_mcp_calls=track_mcp_calls,
+        track_mcp_call_sizes=track_mcp_call_sizes,
     )
 
 

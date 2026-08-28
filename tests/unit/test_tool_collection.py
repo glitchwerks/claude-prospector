@@ -20,6 +20,12 @@ Covers:
   creating no record, and the privacy-gating default: omitting the flag
   leaves every record's ``result_chars`` at ``None`` even when a real,
   sizeable ``tool_result`` is present in the file.
+- collect_session / collect_per_session result-size threading (issue #262
+  Phase 3 wiring): pins the new keyword-only ``track_mcp_call_sizes``
+  parameter on both functions (neither has one before this phase), and
+  proves it actually reaches ``collect_unit`` rather than being accepted
+  and silently dropped -- exercised via an image-block result (True vs.
+  False must differ), not only a plain string result.
 """
 
 from __future__ import annotations
@@ -32,6 +38,7 @@ from claude_prospector.models import SessionRecord
 from claude_prospector.tool_collection import (
     collect_availability,
     collect_per_session,
+    collect_session,
     collect_tool_uses,
     collect_unit,
 )
@@ -1251,3 +1258,191 @@ class TestCollectPerSession:
 
         assert per_session == []
         assert skipped == 1
+
+
+class TestCollectSessionResultSizes:
+    """collect_session threading of track_mcp_call_sizes (issue #262 Phase
+    3 wiring). Neither this parameter nor any equivalent gating exists on
+    collect_session before this phase -- it forwards to collect_unit
+    unconditionally today, so every test below is a red until the keyword
+    is added and threaded through.
+    """
+
+    def test_true_computes_result_chars_through_to_collect_unit(
+        self, tmp_path: Path
+    ) -> None:
+        """track_mcp_call_sizes=True on collect_session must reach
+        collect_unit and produce a measured result_chars, proving the
+        keyword is not merely accepted-and-ignored.
+        """
+        text = "collect_session result payload"
+        jsonl = tmp_path / "s1.jsonl"
+        _write_jsonl(
+            jsonl,
+            [
+                _tool_use_line(
+                    "s1",
+                    "msg_1",
+                    "toolu_a",
+                    "mcp__azure__storage",
+                    "u1",
+                    "2026-08-01T00:00:00.000Z",
+                ),
+                _user_result_line("toolu_a", text, "u2", "2026-08-01T00:00:01.000Z"),
+            ],
+        )
+
+        tool_uses, _availabilities = collect_session(
+            jsonl, "general-purpose", track_mcp_call_sizes=True
+        )
+
+        assert tool_uses[0].result_chars == len(text)
+
+    def test_default_leaves_result_chars_none(self, tmp_path: Path) -> None:
+        """Calling collect_session exactly as every pre-Phase-3 call site
+        does (no track_mcp_call_sizes argument) must leave result_chars at
+        None, matching collect_unit's own default-off gating -- even
+        though a real, sizeable tool_result is present in the file.
+        """
+        jsonl = tmp_path / "s1.jsonl"
+        _write_jsonl(
+            jsonl,
+            [
+                _tool_use_line(
+                    "s1",
+                    "msg_1",
+                    "toolu_a",
+                    "mcp__azure__storage",
+                    "u1",
+                    "2026-08-01T00:00:00.000Z",
+                ),
+                _user_result_line(
+                    "toolu_a", "x" * 5000, "u2", "2026-08-01T00:00:01.000Z"
+                ),
+            ],
+        )
+
+        tool_uses, _availabilities = collect_session(jsonl, "general-purpose")
+
+        assert tool_uses[0].result_chars is None
+
+    def test_image_block_result_differs_true_vs_false(self, tmp_path: Path) -> None:
+        """A transcript with an image-bearing tool_result must behave
+        differently under the two kwarg values when reached through
+        collect_session, not only through collect_unit directly: off
+        leaves result_chars/result_excluded at their record defaults
+        (never inspected), on renders result_chars=None with
+        result_excluded=True (unmeasurable content, not "not found").
+        """
+        jsonl = tmp_path / "s1.jsonl"
+        _write_jsonl(
+            jsonl,
+            [
+                _tool_use_line(
+                    "s1",
+                    "msg_1",
+                    "toolu_a",
+                    "mcp__codegraph__codegraph_explore",
+                    "u1",
+                    "2026-08-01T00:00:00.000Z",
+                ),
+                _user_result_line(
+                    "toolu_a",
+                    [
+                        {"type": "text", "text": "small caption"},
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/png",
+                                "data": "A" * 10_000,
+                            },
+                        },
+                    ],
+                    "u2",
+                    "2026-08-01T00:00:01.000Z",
+                ),
+            ],
+        )
+
+        off_tool_uses, _ = collect_session(jsonl, "general-purpose")
+        on_tool_uses, _ = collect_session(
+            jsonl, "general-purpose", track_mcp_call_sizes=True
+        )
+
+        assert off_tool_uses[0].result_chars is None
+        assert off_tool_uses[0].result_excluded is False
+        assert on_tool_uses[0].result_chars is None
+        assert on_tool_uses[0].result_excluded is True
+
+
+class TestCollectPerSessionResultSizes:
+    """collect_per_session threading of track_mcp_call_sizes (issue #262
+    Phase 3 wiring). Neither this parameter nor any equivalent gating
+    exists on collect_per_session before this phase.
+    """
+
+    def test_true_computes_result_chars_through_to_collect_session(
+        self, tmp_path: Path
+    ) -> None:
+        """track_mcp_call_sizes=True on collect_per_session must reach
+        collect_session (and, through it, collect_unit) and produce a
+        measured result_chars on the returned records.
+        """
+        text = "collect_per_session result payload"
+        jsonl = tmp_path / "projects" / "demo-proj" / "s1.jsonl"
+        jsonl.parent.mkdir(parents=True)
+        _write_jsonl(
+            jsonl,
+            [
+                _tool_use_line(
+                    "s1",
+                    "msg_1",
+                    "toolu_a",
+                    "mcp__azure__storage",
+                    "u1",
+                    "2026-08-01T00:00:00.000Z",
+                ),
+                _user_result_line("toolu_a", text, "u2", "2026-08-01T00:00:01.000Z"),
+            ],
+        )
+        sessions = [_session_record("s1")]
+
+        per_session, _skipped = collect_per_session(
+            sessions, tmp_path, track_mcp_call_sizes=True
+        )
+
+        _, tool_uses, _availabilities = per_session[0]
+        assert tool_uses[0].result_chars == len(text)
+
+    def test_default_leaves_result_chars_none(self, tmp_path: Path) -> None:
+        """Calling collect_per_session exactly as every pre-Phase-3 call
+        site does (no track_mcp_call_sizes argument) must leave
+        result_chars at None, even though a real, sizeable tool_result is
+        present in the file -- proving the default stays privacy-off all
+        the way through this call chain, not just at collect_unit.
+        """
+        jsonl = tmp_path / "projects" / "demo-proj" / "s1.jsonl"
+        jsonl.parent.mkdir(parents=True)
+        _write_jsonl(
+            jsonl,
+            [
+                _tool_use_line(
+                    "s1",
+                    "msg_1",
+                    "toolu_a",
+                    "mcp__azure__storage",
+                    "u1",
+                    "2026-08-01T00:00:00.000Z",
+                ),
+                _user_result_line(
+                    "toolu_a", "x" * 5000, "u2", "2026-08-01T00:00:01.000Z"
+                ),
+            ],
+        )
+        sessions = [_session_record("s1")]
+
+        per_session, _skipped = collect_per_session(sessions, tmp_path)
+
+        _, tool_uses, _availabilities = per_session[0]
+        assert tool_uses[0].result_chars is None

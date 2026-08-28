@@ -342,12 +342,17 @@ def collect_availability(unit: AgentTranscript) -> AgentAvailability:
 def collect_session(
     session_jsonl: Path,
     root_agent: str,
+    *,
+    track_mcp_call_sizes: bool = False,
 ) -> tuple[list[ToolUseRecord], list[AgentAvailability]]:
     """Collect tool calls and availability for a whole session tree.
 
     Args:
         session_jsonl: Path to the root session JSONL file.
         root_agent: Raw agent-setting value for the root thread.
+        track_mcp_call_sizes: Forwarded to :func:`collect_unit` for every
+            transcript in the session tree; see its docstring. Defaults to
+            False.
 
     Returns:
         A 2-tuple of ``(tool_uses, availabilities)``. ``availabilities``
@@ -358,7 +363,9 @@ def collect_session(
     tool_uses: list[ToolUseRecord] = []
     availabilities: list[AgentAvailability] = []
     for unit in transcripts:
-        unit_tool_uses, unit_availability = collect_unit(unit)
+        unit_tool_uses, unit_availability = collect_unit(
+            unit, track_mcp_call_sizes=track_mcp_call_sizes
+        )
         tool_uses.extend(unit_tool_uses)
         availabilities.append(unit_availability)
     return tool_uses, availabilities
@@ -410,6 +417,7 @@ def collect_per_session(
     agent: str | None = None,
     tool: str | None = None,
     server: str | None = None,
+    track_mcp_call_sizes: bool = False,
 ) -> tuple[list[tuple[str, list[ToolUseRecord], list[AgentAvailability]]], int]:
     """Collect tool-use and availability records for a list of sessions.
 
@@ -438,6 +446,8 @@ def collect_per_session(
         server: When set and *tool* is not, keep only tool_uses whose
             normalized server equals this value (via
             :func:`_matches_server`). Does not filter ``availabilities``.
+        track_mcp_call_sizes: Forwarded to :func:`collect_session` for
+            every session; see its docstring. Defaults to False.
 
     Returns:
         A 2-tuple ``(per_session, skipped)``. ``per_session`` is the
@@ -458,7 +468,11 @@ def collect_per_session(
         jsonl_path = matches[0]
 
         try:
-            tool_uses, availabilities = collect_session(jsonl_path, session.root_agent)
+            tool_uses, availabilities = collect_session(
+                jsonl_path,
+                session.root_agent,
+                track_mcp_call_sizes=track_mcp_call_sizes,
+            )
         except OSError:
             skipped += 1
             continue
