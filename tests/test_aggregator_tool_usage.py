@@ -18,8 +18,12 @@ Covers:
 
 from __future__ import annotations
 
+from itertools import count
+
 from claude_prospector.aggregator import compute_tool_usage
 from claude_prospector.models import AgentAvailability, ToolUseRecord
+
+_tool_use_id_counter = count(1)
 
 
 def _use(tool: str, path: tuple[str, ...] = ("general-purpose",)) -> ToolUseRecord:
@@ -30,11 +34,17 @@ def _use(tool: str, path: tuple[str, ...] = ("general-purpose",)) -> ToolUseReco
         path: Full agent-path ancestry tuple that issued the call.
 
     Returns:
-        A ToolUseRecord with an empty tool_use_id (irrelevant to
-        aggregation) and agent_type derived from the leaf of *path*.
+        A ToolUseRecord with a real, distinct auto-generated tool_use_id.
+        compute_tool_usage does not read tool_use_id today, but issue
+        #262 (D-1=M4) makes it a join key for result-size annotation in
+        tool_collection.collect_unit, so fixtures here use real ids
+        rather than a shared empty string.
     """
     return ToolUseRecord(
-        tool_name=tool, tool_use_id="", agent_type=path[-1], agent_path=path
+        tool_name=tool,
+        tool_use_id=f"toolu_test_{next(_tool_use_id_counter)}",
+        agent_type=path[-1],
+        agent_path=path,
     )
 
 
@@ -100,7 +110,7 @@ class TestByServer:
             [
                 (
                     "s1",
-                    [_use("mcp__azure__storage")] * 3,
+                    [_use("mcp__azure__storage") for _ in range(3)],
                     [_avail({"azure": frozenset({"deferred_tools_delta"})})],
                 ),
                 (

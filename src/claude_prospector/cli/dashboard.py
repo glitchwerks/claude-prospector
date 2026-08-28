@@ -146,6 +146,20 @@ def build_parser(parent: argparse._SubParsersAction) -> argparse.ArgumentParser:
             "extra IO cost on top of the default aggregation."
         ),
     )
+    p.add_argument(
+        "--track-mcp-call-sizes",
+        action="store_true",
+        default=False,
+        help=(
+            "Additionally estimate a per-call token-cost proxy for MCP "
+            "tool calls, from the character length of each call's result. "
+            "This temporarily reads tool_result payload data that is "
+            "otherwise never touched -- length only, computed and "
+            "discarded, never persisted or logged as content. A privacy-"
+            "posture opt-in, independent of --track-mcp-calls (which "
+            "stays call-counts-only)."
+        ),
+    )
     return p
 
 
