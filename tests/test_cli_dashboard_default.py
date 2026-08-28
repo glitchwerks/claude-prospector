@@ -50,6 +50,7 @@ class TestDefaultOutputPathResolution:
             limit_sonnet_7d=None,
             output_format="html",
             track_mcp_calls=False,
+            track_mcp_call_sizes=False,
         )
 
     def test_plugin_data_set_resolves_to_plugin_data_dashboard(

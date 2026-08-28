@@ -151,15 +151,15 @@ def build_parser(parent: argparse._SubParsersAction) -> argparse.ArgumentParser:
         action="store_true",
         default=False,
         help=(
-            "Reserved for an upcoming per-call token-cost proxy for MCP "
-            "tool calls, estimated from the character length of each "
-            "call's result. Parsed now but not yet wired up -- has no "
-            "effect on collection or reporting until a later release "
-            "ships it. Once active, it will temporarily read tool_result "
-            "payload data that is otherwise never touched -- length "
-            "only, computed and discarded, never persisted or logged as "
-            "content. A privacy-posture opt-in, independent of "
-            "--track-mcp-calls (which stays call-counts-only)."
+            "Compute an estimated per-call token-cost proxy for MCP tool "
+            "calls, derived from the character length of each call's "
+            "result (an estimate, not a measured token count). Runs "
+            "collection even if --track-mcp-calls is not also passed. "
+            "Reads tool_result payload data that is otherwise never "
+            "touched -- length only, computed and discarded, never "
+            "persisted or logged as content. A privacy-posture opt-in, "
+            "independent of --track-mcp-calls (which stays "
+            "call-counts-only)."
         ),
     )
     return p
@@ -215,7 +215,7 @@ def run(args: argparse.Namespace) -> int:
             to_date=resolved_to,
         )
 
-    if args.track_mcp_calls:
+    if args.track_mcp_calls or args.track_mcp_call_sizes:
         from claude_prospector.aggregator import compute_tool_usage
         from claude_prospector.tool_collection import collect_per_session
 
@@ -223,8 +223,15 @@ def run(args: argparse.Namespace) -> int:
         selected = [s for s in sessions if s.session_id in in_window]
         # data_dir is required -- the helper owns the projects/*.jsonl glob.
         # No agent/tool/server filters from the dashboard.
-        per_session, skipped = collect_per_session(selected, args.data_dir)
-        usage = compute_tool_usage(per_session)  # compact=False
+        # --track-mcp-call-sizes works standalone (issue #262 §8 Phase 3):
+        # either flag triggers collection, so the sizes flag never requires
+        # --track-mcp-calls to also be passed.
+        per_session, skipped = collect_per_session(
+            selected, args.data_dir, track_mcp_call_sizes=args.track_mcp_call_sizes
+        )
+        usage = compute_tool_usage(
+            per_session, track_mcp_call_sizes=args.track_mcp_call_sizes
+        )  # compact=False
         usage.pop("by_agent", None)  # D-F(a) RESOLVED -- absent, not {}
         usage["warnings"]["unreadable_transcripts"] = skipped
         usage["window"] = {  # D-K / plan §4.3
@@ -269,7 +276,7 @@ def run(args: argparse.Namespace) -> int:
             "limits": limits,
             "by_skill_adoption": result.by_skill_adoption,
         }
-        if args.track_mcp_calls:
+        if args.track_mcp_calls or args.track_mcp_call_sizes:
             payload["by_mcp_usage"] = result.by_mcp_usage
         print(json.dumps(payload, indent=2))
         return 0

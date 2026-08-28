@@ -186,7 +186,8 @@
       </div>
       <div class="empty">
         No MCP call data collected yet. Re-run the dashboard with
-        <code>--track-mcp-calls</code> to enable collection.
+        <code>--track-mcp-calls</code> or <code>--track-mcp-call-sizes</code>
+        to enable collection.
       </div>`;
   }
 
@@ -222,7 +223,17 @@
       </div>`;
   }
 
-  function renderMethodRows(byMethod) {
+  // Cost-proxy per-method note (issue #262, plan §6c). byMethodTokens is
+  // the additive `by_method_tokens` sibling map Phase 2 emits alongside
+  // `by_method` -- absent entirely whenever --track-mcp-call-sizes was
+  // off, so every access below is guarded rather than assumed present.
+  function renderMethodTokensNote(method, byMethodTokens) {
+    const stats = byMethodTokens && byMethodTokens[method];
+    if (!stats) return '';
+    return `<div class="n">(est. ${formatCountOrUnknown(stats.total)} tok)</div>`;
+  }
+
+  function renderMethodRows(byMethod, byMethodTokens) {
     const entries = Object.entries(byMethod || {});
     if (entries.length === 0) {
       return '<div class="none">No per-method breakdown recorded.</div>';
@@ -233,8 +244,33 @@
         <div class="row">
           <div>${esc(method)}</div>
           <div class="n">${CP.fmtTokens(count)}</div>
+          ${renderMethodTokensNote(method, byMethodTokens)}
         </div>`)
       .join('');
+  }
+
+  // Cost-proxy stat + caveat (issue #262, plan §6c). `estimated_result_tokens`
+  // is entirely absent from `info` unless --track-mcp-call-sizes was
+  // passed (Phase 2, aggregator.py) -- every access below is guarded via
+  // optional chaining, so the existing three-stat rendering keeps working
+  // unchanged when the field is missing.
+  function renderEstimatedTokensStat(info) {
+    const total = info.estimated_result_tokens?.total;
+    return `
+      <div class="stat">
+        <div class="label" title="Estimated from tool_result payload size -- a proxy, not a measured token count.">Est. result tokens</div>
+        <div class="v ${total === null || total === undefined ? 'unknown' : ''}">${formatCountOrUnknown(total)}</div>
+      </div>`;
+  }
+
+  function renderCostProxyNote(info) {
+    if (!info.estimated_result_tokens) return '';
+    return `
+      <div class="blind-spot">
+        "Est. result tokens" is a proxy, not a measured token count —
+        it's each call's <code>tool_result</code> character length divided
+        by an estimated chars-per-token ratio.
+      </div>`;
   }
 
   function renderServerCard(name, info) {
@@ -267,10 +303,12 @@
             <div class="label">Avg calls / active session</div>
             <div class="v ${info.avg_calls_per_active_session === null ? 'unknown' : ''}">${formatAvgOrUnknown(info.avg_calls_per_active_session)}</div>
           </div>
+          ${renderEstimatedTokensStat(info)}
         </div>
         <div class="methods">
-          ${renderMethodRows(info.by_method)}
+          ${renderMethodRows(info.by_method, info.by_method_tokens)}
         </div>
+        ${renderCostProxyNote(info)}
       </div>`;
   }
 
