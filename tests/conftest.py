@@ -377,9 +377,9 @@ def nested_session_dir(tmp_path: Path) -> Path:
     - Depth 3 (Explore):         400 input tokens
 
     The PascalCase ``Explore`` name is intentional — it doubles as the
-    round-trip fixture for the Agent-Name Invariants section (§ Agent-Name
-    Invariants in the plan), proving that non-ASCII-kebab agent names survive
-    the path tuple without mutation.
+    round-trip fixture for the agent-name invariants established for issue
+    #41 (nested agent attribution), proving that non-ASCII-kebab agent
+    names survive the path tuple without mutation.
     """
     session_id = "sess-nested"
     project_dir = tmp_path / "projects" / "C--Users-chris--myproject"

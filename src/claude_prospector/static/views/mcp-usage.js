@@ -208,12 +208,13 @@
   // collect_session -> transcript_walker.walk_session -> _walk_subagents,
   // issue #253 / PR #255 83010fe): subagent and workflow
   // (subagents/workflows/wf_*/) transcripts are walked and their MCP
-  // calls are included below — this is *not* the "blind spot" the plan
-  // text originally described, since that gap was closed by PR #255
-  // before this view was written. Phrased as a bounded scope statement,
-  // not a completeness claim: _walk_subagents' own contract still skips
-  // transcripts past the path-depth cap, missing JSONL, cycles, or
-  // OSError, so "included" does not mean "every possible transcript".
+  // calls are included below — this is *not* the "blind spot" issue
+  // #248's implementation plan originally described, since that gap was
+  // closed by PR #255 before this view was written. Phrased as a bounded
+  // scope statement, not a completeness claim: _walk_subagents' own
+  // contract still skips transcripts past the path-depth cap, missing
+  // JSONL, cycles, or OSError, so "included" does not mean "every
+  // possible transcript".
   function renderBlindSpotNote() {
     return `
       <div class="blind-spot">
