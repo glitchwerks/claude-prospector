@@ -803,6 +803,43 @@ GitHub Actions runs on every PR and push to `main`:
 
 Both jobs must be green before a PR can merge.
 
+### Testing the plugin itself via `--plugin-dir`
+
+The steps above install `claude-prospector` as a Python package for development. To verify the **plugin** loads correctly through Claude Code's own plugin loader — the same mechanism a real install goes through — without publishing to the marketplace first, use Anthropic's documented local-dev flag (see [Test your plugins locally](https://code.claude.com/docs/en/plugins#test-your-plugins-locally)):
+
+```bash
+claude --plugin-dir /path/to/claude-prospector
+```
+
+Point `--plugin-dir` at the repository root (the directory containing `.claude-plugin/plugin.json`), not a subdirectory. If `claude-prospector` is already installed from the marketplace, `--plugin-dir` overrides it for that session only — Claude Code logs `Plugin "claude-prospector" from --plugin-dir overrides installed version` and loads your checkout's hooks and skills instead; no uninstall needed.
+
+**Static validation** (checks the manifest and skill/agent/command frontmatter without starting a session):
+
+```bash
+claude plugin validate /path/to/claude-prospector
+```
+
+This currently passes with one non-blocking warning — `CLAUDE.md at the plugin root is not loaded as project context` — which is expected: this repo's root `CLAUDE.md` is dev instructions for agents working in the checkout, not plugin-shipped context, so no action is needed.
+
+**What to expect at session start**, confirmed via `claude --plugin-dir <path> -p "..." --debug hooks --debug-file <log>` (issue #102):
+
+- The `check-prospector-setup.py` `SessionStart` hook fires and, unless `/setup-prospector` has already been run against *this checkout's* plugin-data directory, shows the "requires setup" banner — expected, not an error.
+- All five skills (`usage-analysis`, `usage-dashboard`, `claude-audit`, `session-analysis`, `setup-prospector`) load — the debug log reports `Loaded 5 skills from plugin claude-prospector default directory`. Driving `usage-dashboard` end-to-end (prompting Claude to invoke the `Skill` tool with `claude-prospector:usage-dashboard`) produced a real dashboard file, confirming the skill is reachable and functional, not just present.
+
+**Known gotcha — the `dashboard-regen` Stop hook errors under `--plugin-dir`, even when `autoregen` is already configured for a marketplace install.** `hooks/hooks.json` substitutes `${user_config.autoregen}` and `${user_config.track_mcp_calls}` into the Stop hook's argv. Under `--plugin-dir`, Claude Code loads the plugin under the bare name `claude-prospector` (no marketplace suffix); a marketplace install's stored config, by contrast, lives under the key `claude-prospector@glitchwerks` in `~/.claude/settings.json`'s `pluginConfigs` block. The lookup misses even when `autoregen` has already been toggled through `/plugin reconfigure claude-prospector` for the installed copy — the hook fails at the harness level (the Python script never runs) with:
+
+```
+Hook failed to run (Stop): Plugin option "autoregen" isn't set. Open /plugin manage to configure it, or check that the plugin's userConfig schema declares "autoregen".
+```
+
+This looks like a `--plugin-dir` plugin-identity/config-lookup gap in Claude Code itself (observed on `claude` 2.1.251, Windows), not a defect in `hooks/hooks.json` or `plugin.json` — the manifest's `userConfig` schema is well-formed (`type`, `title`, `description`, and `default` are all present for both keys). No CLI flag exists to seed `userConfig` for a `--plugin-dir` session, so treat `dashboard-regen` as unverified via this flow until a human confirms one of the interactive workarounds below.
+
+**Requires manual, interactive verification** — not reachable from a non-interactive `-p` session:
+
+- Whether `/plugin manage` or `/plugin reconfigure claude-prospector`, run *inside* a `--plugin-dir` session, can seed a bare-name (`claude-prospector`, no `@marketplace` suffix) `pluginConfigs` entry that the Stop hook's `${user_config.*}` substitution would then resolve — the harness's own error text ("Open /plugin manage to configure it") suggests this path might work, but it requires an interactive session to test.
+- That the `userConfig.autoregen` / `userConfig.track_mcp_calls` prompts actually appear at plugin enable time and via `/plugin reconfigure claude-prospector` for a normal marketplace install. The schema is statically well-formed (confirmed by `claude plugin validate`), but the prompt UX itself needs a human to observe interactively.
+- The `skill-tracker` `PreToolUse` hook's write behavior once `/setup-prospector` has completed for a `--plugin-dir` checkout. The debug log shows a hook invocation timed immediately after the `Skill` tool dispatch, but CLI-level debug output doesn't identify which of the several plugins with registered `PreToolUse` hooks it belongs to. The more conclusive check — a new line appearing in `skill-tracking/<date>.jsonl` — was not observed for this test; that's consistent with the checkout's setup-state being MISSING (no `/setup-prospector` had ever been run for it) and the hook's own documented "only write when setup is VALID" gate suppressing the write (see the "Disabling" paragraph under [State storage and local data](#state-storage-and-local-data) above), but confirming the write path positively requires completing `/setup-prospector` first and re-testing.
+
 ### Future enhancements
 
 Issue #67 tracks making `claude plugin update` handle the Python venv refresh automatically, so that `/setup-prospector` would not need to be run manually after updates. Until that lands, re-run `/setup-prospector` after each plugin update when prompted by the SessionStart banner.
