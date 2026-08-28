@@ -300,10 +300,40 @@ def compute_skill_adoption(
 #: Bucket key for all non-MCP tool calls under ``--compact``.
 BUILTIN_BUCKET = "_builtin"
 
+#: Characters-per-token divisor used to convert measured ``tool_result``
+#: payload length into an estimated token count (issue #262, D-1=M4).
+#: A rough-and-ready English/JSON estimate, not a real tokenizer -- see the
+#: ``cost_attribution`` block this feeds, which labels the number a proxy.
+_CHARS_PER_TOKEN = 4.0
+
+
+def _token_stats(total_chars: int, measured_calls: int) -> dict[str, float | None]:
+    """Convert a summed char count into a total/mean estimated-token stat.
+
+    Args:
+        total_chars: Sum of ``result_chars`` across all measured calls in
+            the bucket (server or server+method).
+        measured_calls: Count of calls that contributed to *total_chars*
+            (i.e. had ``result_chars is not None``). Excluded and
+            missing-result calls are not counted here.
+
+    Returns:
+        ``{"total": <float>, "mean_result_tokens_per_call": <float | None>}``.
+        ``total`` is ``0.0`` (never an error) when there are no measured
+        calls; ``mean_result_tokens_per_call`` is ``None`` in that case,
+        mirroring the existing ``avg_calls_per_active_session`` null
+        convention rather than raising or reporting a misleading ``0.0``.
+    """
+    total_tokens = total_chars / _CHARS_PER_TOKEN
+    mean = total_tokens / measured_calls if measured_calls else None
+    return {"total": total_tokens, "mean_result_tokens_per_call": mean}
+
 
 def compute_tool_usage(
     per_session: list[tuple[str, list[ToolUseRecord], list[AgentAvailability]]],
     compact: bool = False,
+    *,
+    track_mcp_call_sizes: bool = False,
 ) -> dict[str, dict]:
     """Aggregate collected tool calls into the ``tool-usage`` report body.
 
@@ -327,10 +357,26 @@ def compute_tool_usage(
             and collapses every non-MCP call into a single
             :data:`BUILTIN_BUCKET` count. Only ``by_agent`` is affected —
             ``by_tool`` and ``by_server`` are identical either way.
+        track_mcp_call_sizes: When True (issue #262, D-1=M4), additionally
+            computes the MCP-only cost-proxy rollup: each ``by_server``
+            entry gains ``estimated_result_tokens`` (a ``total``/
+            ``mean_result_tokens_per_call`` pair) and an additive
+            ``by_method_tokens`` map (mirroring ``by_method`` without
+            changing its ``dict[str, int]`` shape), and the return dict
+            gains a top-level ``cost_attribution`` block (plan §6b).
+            Defaults to False, in which case none of those keys are
+            added at all — the pre-Phase-2 output shape is preserved
+            exactly. Mirrors :func:`tool_collection.collect_unit`'s
+            parameter of the same name; this is deliberately an explicit
+            flag rather than inferred from record data, so a caller that
+            opted in but whose calls all lack a matching result is not
+            indistinguishable from one that never opted in.
 
     Returns:
-        A dict with exactly the keys ``by_tool``, ``by_server``,
-        ``by_agent``, ``availability_signal``, and ``warnings``.
+        A dict with the keys ``by_tool``, ``by_server``, ``by_agent``,
+        ``availability_signal``, and ``warnings`` -- plus, only when
+        *track_mcp_call_sizes* is True, a top-level ``cost_attribution``
+        key.
     """
     by_tool: Counter[str] = Counter()
     server_calls: Counter[str] = Counter()
@@ -342,6 +388,17 @@ def compute_tool_usage(
     malformed = 0
     sessions_with_signal = 0
     sessions_without_signal = 0
+    # Cost rollup (issue #262, D-1=M4). MCP-only, mirroring
+    # server_calls/server_methods' scope. Only accumulated when
+    # track_mcp_call_sizes is True, but the counters are cheap to keep
+    # around unconditionally -- the gate lives at output-construction time.
+    server_chars: Counter[str] = Counter()
+    server_measured_calls: Counter[str] = Counter()
+    server_method_chars: dict[str, Counter] = defaultdict(Counter)
+    server_method_measured_calls: dict[str, Counter] = defaultdict(Counter)
+    calls_with_result = 0
+    calls_without_result = 0
+    calls_with_excluded_content = 0
     # Attachment types actually observed. Tracked separately from
     # server_sources: a delta that named only built-in tools proves the
     # signal was present even though it contributed no MCP server, and the
@@ -384,6 +441,19 @@ def compute_tool_usage(
             server_calls[server] += 1
             server_methods[server][method] += 1
             server_used_sessions[server].add(session_id)
+
+            if track_mcp_call_sizes:
+                if record.result_chars is not None:
+                    calls_with_result += 1
+                    server_chars[server] += record.result_chars
+                    server_measured_calls[server] += 1
+                    server_method_chars[server][method] += record.result_chars
+                    server_method_measured_calls[server][method] += 1
+                elif record.result_excluded:
+                    calls_with_excluded_content += 1
+                else:
+                    calls_without_result += 1
+
             if compact:
                 by_agent[agent_key][server] += 1
             else:
@@ -407,8 +477,19 @@ def compute_tool_usage(
             ),
             "by_method": dict(server_methods.get(server, Counter())),
         }
+        if track_mcp_call_sizes:
+            by_server[server]["estimated_result_tokens"] = _token_stats(
+                server_chars.get(server, 0), server_measured_calls.get(server, 0)
+            )
+            by_server[server]["by_method_tokens"] = {
+                method: _token_stats(
+                    server_method_chars[server][method],
+                    server_method_measured_calls[server][method],
+                )
+                for method in server_methods.get(server, Counter())
+            }
 
-    return {
+    result: dict[str, dict] = {
         "by_tool": dict(by_tool),
         "by_server": by_server,
         "by_agent": {k: dict(v) for k, v in by_agent.items()},
@@ -424,3 +505,16 @@ def compute_tool_usage(
             "malformed_mcp_names": malformed,
         },
     }
+    if track_mcp_call_sizes:
+        result["cost_attribution"] = {
+            "method": "tool_result_payload_size",
+            "is_proxy": True,
+            "unit": "estimated_tokens",
+            "basis": "len(tool_result content) / chars_per_token",
+            "chars_per_token": _CHARS_PER_TOKEN,
+            "excludes": ["tool_use.input arguments", "image content blocks"],
+            "calls_with_result": calls_with_result,
+            "calls_without_result": calls_without_result,
+            "calls_with_excluded_content": calls_with_excluded_content,
+        }
+    return result

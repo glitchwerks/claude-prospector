@@ -270,7 +270,11 @@ def collect_unit(
 
     if track_mcp_call_sizes:
         records = [
-            replace(record, result_chars=result_sizes[record.tool_use_id])
+            replace(
+                record,
+                result_chars=result_sizes[record.tool_use_id],
+                result_excluded=result_sizes[record.tool_use_id] is None,
+            )
             if record.tool_use_id in result_sizes
             else record
             for record in records

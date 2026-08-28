@@ -152,6 +152,12 @@ class ToolUseRecord:
             Distinct from ``0``, which means a result was found and it
             was empty. See :mod:`claude_prospector.tool_collection` for
             how this is computed and gated.
+        result_excluded: True when a ``tool_result`` was located for this
+            call but its content was excluded as unmeasurable (e.g. an
+            image block), as opposed to no ``tool_result`` ever being
+            found. Distinguishes the two ``result_chars is None`` cases
+            that would otherwise be conflated. Always False when
+            ``result_chars`` holds a measured value.
     """
 
     tool_name: str
@@ -159,6 +165,7 @@ class ToolUseRecord:
     agent_type: str
     agent_path: tuple[str, ...]
     result_chars: int | None = None
+    result_excluded: bool = False
 
 
 @dataclass(frozen=True, slots=True)
