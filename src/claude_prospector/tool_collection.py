@@ -104,10 +104,13 @@ def _tool_result_content_length(content: Any) -> int | None:
 
     Returns:
         The total character count of the text content, or ``None`` when
-        the size is unmeasurable — an unrecognised content type, or a
-        content list containing an image block. An image block makes the
-        *whole* result unknown rather than a text-only partial sum, so an
-        image-returning call never renders as misleadingly cheap.
+        any part of it is unmeasurable — a non-dict block, an image
+        block, a block of any other unrecognised type, or a ``text``
+        block whose ``text`` field isn't a string. Any single
+        unsupported block makes the *whole* result unknown rather than a
+        partial sum over the blocks that were measurable, so a mixed
+        result (e.g. one text block plus one image block) never renders
+        as misleadingly cheap.
     """
     if isinstance(content, str):
         return len(content)
@@ -115,14 +118,14 @@ def _tool_result_content_length(content: Any) -> int | None:
         total = 0
         for block in content:
             if not isinstance(block, dict):
-                continue
-            block_type = block.get("type")
-            if block_type == "image":
                 return None
-            if block_type == "text":
-                text = block.get("text", "")
-                if isinstance(text, str):
-                    total += len(text)
+            block_type = block.get("type")
+            if block_type != "text":
+                return None
+            text = block.get("text", "")
+            if not isinstance(text, str):
+                return None
+            total += len(text)
         return total
     return None
 

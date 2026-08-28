@@ -587,6 +587,146 @@ class TestCollectToolUsesResultSizes:
             f"a small text-only count -- got {records[0].result_chars!r}"
         )
 
+    def test_unrecognized_block_type_makes_result_size_unknown(
+        self, tmp_path: Path
+    ) -> None:
+        """A tool_result content list containing a block whose type is
+        neither ``text`` nor ``image`` must render as unknown (None), not
+        as a silently-skipped block that leaves the rest of the sum
+        intact. Regression test for PR #270 CodeRabbit review feedback:
+        only ``image`` blocks previously forced the unknown path, so any
+        other unrecognised block type was skipped rather than
+        invalidating the whole result.
+        """
+        jsonl = tmp_path / "s.jsonl"
+        _write_jsonl(
+            jsonl,
+            [
+                _tool_use_line(
+                    "s",
+                    "msg_1",
+                    "toolu_a",
+                    "mcp__codegraph__codegraph_explore",
+                    "u1",
+                    "2026-08-01T00:00:00.000Z",
+                ),
+                _user_result_line(
+                    "toolu_a",
+                    [{"type": "some_future_block_type", "data": "x" * 10}],
+                    "u2",
+                    "2026-08-01T00:00:01.000Z",
+                ),
+            ],
+        )
+
+        records = collect_tool_uses(_unit(jsonl), track_mcp_call_sizes=True)
+
+        assert records[0].result_chars is None, (
+            "an unrecognised block type must render as unknown (None), "
+            f"got {records[0].result_chars!r}"
+        )
+
+    def test_mixed_text_and_unrecognized_block_makes_result_size_unknown(
+        self, tmp_path: Path
+    ) -> None:
+        """A tool_result content list mixing a measurable text block with
+        an unrecognised block must render as unknown (None) overall, not
+        as a partial count of just the text block. This is the specific
+        undercounting bug flagged in PR #270 review: a mixed result was
+        previously returning the text-only partial sum instead of None.
+        """
+        jsonl = tmp_path / "s.jsonl"
+        _write_jsonl(
+            jsonl,
+            [
+                _tool_use_line(
+                    "s",
+                    "msg_1",
+                    "toolu_a",
+                    "mcp__codegraph__codegraph_explore",
+                    "u1",
+                    "2026-08-01T00:00:00.000Z",
+                ),
+                _user_result_line(
+                    "toolu_a",
+                    [
+                        {"type": "text", "text": "this text is measurable"},
+                        {"type": "some_future_block_type", "data": "x" * 10},
+                    ],
+                    "u2",
+                    "2026-08-01T00:00:01.000Z",
+                ),
+            ],
+        )
+
+        records = collect_tool_uses(_unit(jsonl), track_mcp_call_sizes=True)
+
+        assert records[0].result_chars is None, (
+            "a mixed measurable/unsupported result must render as "
+            f"unknown (None), not a partial count -- got "
+            f"{records[0].result_chars!r}"
+        )
+
+    def test_non_dict_block_makes_result_size_unknown(self, tmp_path: Path) -> None:
+        """A malformed content list entry that isn't even a dict must
+        render as unknown (None), not be silently skipped.
+        """
+        jsonl = tmp_path / "s.jsonl"
+        _write_jsonl(
+            jsonl,
+            [
+                _tool_use_line(
+                    "s",
+                    "msg_1",
+                    "toolu_a",
+                    "mcp__codegraph__codegraph_explore",
+                    "u1",
+                    "2026-08-01T00:00:00.000Z",
+                ),
+                _user_result_line(
+                    "toolu_a",
+                    ["not a dict block"],
+                    "u2",
+                    "2026-08-01T00:00:01.000Z",
+                ),
+            ],
+        )
+
+        records = collect_tool_uses(_unit(jsonl), track_mcp_call_sizes=True)
+
+        assert records[0].result_chars is None
+
+    def test_text_block_with_non_string_text_makes_result_size_unknown(
+        self, tmp_path: Path
+    ) -> None:
+        """A ``text`` block whose ``text`` field isn't a string must
+        render as unknown (None), not silently contribute 0.
+        """
+        jsonl = tmp_path / "s.jsonl"
+        _write_jsonl(
+            jsonl,
+            [
+                _tool_use_line(
+                    "s",
+                    "msg_1",
+                    "toolu_a",
+                    "mcp__codegraph__codegraph_explore",
+                    "u1",
+                    "2026-08-01T00:00:00.000Z",
+                ),
+                _user_result_line(
+                    "toolu_a",
+                    [{"type": "text", "text": 12345}],
+                    "u2",
+                    "2026-08-01T00:00:01.000Z",
+                ),
+            ],
+        )
+
+        records = collect_tool_uses(_unit(jsonl), track_mcp_call_sizes=True)
+
+        assert records[0].result_chars is None
+
     def test_duplicate_tool_use_id_result_size_not_double_counted(
         self, tmp_path: Path
     ) -> None:
