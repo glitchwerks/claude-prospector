@@ -37,6 +37,18 @@
     return n.toFixed(1);
   }
 
+  // Issue #279: --track-mcp-call-sizes sometimes surfaces MCP server
+  // entries keyed by a raw GUID (e.g. an ephemeral/dynamic connection
+  // whose real name wasn't captured) instead of a readable server name.
+  // These add noise without conveying anything actionable, so
+  // renderServers() below filters them out by default. Extracted as its
+  // own helper (rather than inlined at the call site) because the
+  // regression test asserts on it directly.
+  const GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  function isGuidLike(name) {
+    return GUID_RE.test(name);
+  }
+
   function fmtWindowBound(iso) {
     if (!iso) return null;
     // window.start/end (cli/dashboard.py) are date-only 'YYYY-MM-DD'
@@ -342,12 +354,32 @@
       </div>`;
   }
 
+  // Issue #279: hidden-count note uses the same `.blind-spot` treatment
+  // as renderBlindSpotNote() above -- small, low-emphasis text, not a
+  // dismissable banner (no interaction affordance exists in this file's
+  // style vocabulary, so "dismissible-in-spirit" means "easy to skim
+  // past", matching the existing note style).
+  function renderGuidHiddenNote(hiddenCount) {
+    if (hiddenCount === 0) return '';
+    const plural = hiddenCount === 1 ? '' : 's';
+    return `
+      <div class="blind-spot">
+        <b>${hiddenCount}</b> MCP server${plural} with GUID-styled names
+        hidden — likely ephemeral/dynamic connections.
+      </div>`;
+  }
+
   function renderServers(byServer) {
-    const names = Object.keys(byServer).sort();
+    const allNames = Object.keys(byServer).sort();
+    const names = allNames.filter(name => !isGuidLike(name));
+    const hiddenCount = allNames.length - names.length;
+    const hiddenNote = renderGuidHiddenNote(hiddenCount);
+
     if (names.length === 0) {
-      return '<div class="empty">No MCP servers recorded.</div>';
+      return `${hiddenNote}<div class="empty">No MCP servers recorded.</div>`;
     }
     return `
+      ${hiddenNote}
       <div class="servers">
         ${names.map(name => renderServerCard(name, byServer[name])).join('')}
       </div>`;
