@@ -5,6 +5,80 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-08-29
+
+### Added
+
+- **MCP usage dashboard panel** (issue #248). New "MCP Usage" tab in the
+  HTML dashboard, gated behind `dashboard --track-mcp-calls`, showing
+  per-server call volume and a per-method drill-down for the current
+  window, plus dormant-server, unreadable-transcript, and empty-state
+  handling. Opt-in only — no MCP call metadata is read unless the flag
+  is passed; the automatic Stop-hook dashboard regeneration does not
+  pass it by default (#248, #259, #260, #261, #263).
+- **`track_mcp_calls` userConfig toggle for the Stop hook** (#257).
+  Mirrors the existing `autoregen` toggle: setting `track_mcp_calls` via
+  `/plugin reconfigure claude-prospector` makes the auto-regenerated
+  dashboard pass `--track-mcp-calls` on session end, without needing to
+  run `dashboard --track-mcp-calls` manually. Does not affect
+  `--track-mcp-call-sizes`, which has no corresponding toggle.
+- **Token-cost proxy for MCP calls**, `--track-mcp-call-sizes` (issue
+  #262). Estimates per-server/per-method token cost from MCP tool-result
+  payload character length (chars/4.0), surfaced as "Est. result tokens"
+  in the MCP Usage panel and a `cost_attribution` block in JSON output.
+  Explicitly labelled an estimate, not a measured token count. Works
+  standalone — either `--track-mcp-calls` or `--track-mcp-call-sizes`
+  alone triggers the same underlying transcript-scan pass; only result
+  *length* is read, never persisted or logged as content (#270, #271,
+  #272, #273).
+- **`tool-usage` CLI subcommand** (`python -m claude_prospector
+  tool-usage`) — reports MCP/tool invocation counts with per-server and
+  per-method breakdowns from transcripts, filterable by `--agent`,
+  `--server`, and a date window (`--days`/`--from`/`--to`). Backed by new
+  shared transcript-collection helpers for tool invocations and MCP
+  availability signals (#195, #249, #251, #252).
+- **`--redact-prompts` flag for `variance-save`** — opt-out flag that
+  suppresses persisting verbatim `original_ask`/`prior_asks` text,
+  writing `null`/`[]` instead and marking the record with
+  `prompts_redacted: true` (#246, #247).
+
+### Changed
+
+- README "State storage" section expanded into "State storage and local
+  data": a table of every file claude-prospector writes locally, whether
+  it contains prompt text, and how to clear or disable it. Documents
+  that `variance/<session-id>.json` (written by the opt-in
+  `variance-save` / `/session-analysis` flow) stores full verbatim
+  prompt text, not an excerpt — the finding that motivated the
+  `--redact-prompts` flag above (#223, #245).
+- Documented the local-dev `claude --plugin-dir` workflow in README,
+  including a known gap where the `dashboard-regen` Stop hook fails
+  under `--plugin-dir` because `userConfig` lookups are keyed by
+  `<name>@<marketplace>`, which a `--plugin-dir`-loaded plugin has no
+  suffix for (issue #102, #276). Housekeeping: stale plan-reference
+  cleanup (#265, #274) and spec reconciliation for issue #258's
+  any-segment `--agent` matching (#275).
+
+### Fixed
+
+- **Assistant messages deduped by `message.id` to stop token-usage
+  inflation** (#233, #243). Claude Code streams one logical assistant
+  message as multiple JSONL lines sharing a `message.id`, each carrying
+  the same cumulative usage snapshot; parsing previously summed every
+  fragment, inflating `output_tokens` (and other usage fields) up to 5x
+  for multi-fragment messages.
+- **Transcript walker now traverses `subagents/workflows/wf_*/`** (#253,
+  #255). `Workflow()`-dispatched agents' transcripts were previously
+  invisible to all prospector output (token attribution, tool-usage,
+  everything); the walker now enters this directory shape with the same
+  depth cap and cycle defense as ordinary `subagents/<agent_id>/`
+  entries.
+- **`dashboard --format json` now always includes `by_skill_adoption`,
+  and `--window` correctly scopes it** (#256, #267). The JSON payload
+  previously omitted `by_skill_adoption` even though the HTML renderer
+  always included it, and `compute_skill_adoption()` used unresolved
+  date args instead of the resolved `--window`/`--from`/`--to` bounds.
+
 ## [0.11.2] - 2026-07-14
 
 ### Fixed
