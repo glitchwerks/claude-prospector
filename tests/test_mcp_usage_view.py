@@ -12,13 +12,13 @@ PR #261) before any of it is implemented:
 - The populated path: a non-empty ``by_mcp_usage`` payload passed to
   ``render()`` reaches the client via the embedded ``window.DATA`` JSON.
 
-Test names carry the plan's T-numbers (§6) so failures trace back to the
-requirement they pin. T9 and T12 are **source-containment** assertions, not
-rendering assertions — this repo has no JS execution capability (no
-``package.json``, no jsdom/playwright in CI; see the plan's "What CAN and
-CANNOT be tested automatically" note). They prove the branching code exists
-in ``mcp-usage.js``'s source; they do NOT prove it renders correctly in a
-browser. Correct rendering of F6 (null-vs-zero) and F9 (skipped-sessions
+Test names carry T-numbers from issue #248's implementation plan so
+failures trace back to the requirement they pin. T9 and T12 are
+**source-containment** assertions, not rendering assertions — this repo
+has no JS execution capability (no ``package.json``, no jsdom/playwright
+in CI). They prove the branching code exists in ``mcp-usage.js``'s
+source; they do NOT prove it renders correctly in a browser. Correct
+rendering of F6 (null-vs-zero) and F9 (skipped-sessions
 banner) is a required, blocking **manual** Phase 2 exit gate, not an
 automated one. T11 (view resource resolution) lives in
 ``tests/test_phase3_views.py`` alongside the other view files, not here.
@@ -37,7 +37,7 @@ _MCP_USAGE_JS = (
     _REPO_ROOT / "src" / "claude_prospector" / "static" / "views" / "mcp-usage.js"
 )
 
-# The exact §4.3 by_mcp_usage payload shape (Phase 1's shipped contract),
+# The exact by_mcp_usage payload shape (Phase 1's shipped contract),
 # used as the "populated" fixture below. One server has real usage, one is
 # dormant (sessions_seen_in / avg_calls_per_active_session are null, not 0)
 # so F6's null-vs-zero distinction has fixture data to exercise.
@@ -125,7 +125,7 @@ class TestNullVsZeroSourceContainment:
     """T9: source-containment check for F6's null-vs-zero distinction.
 
     Verified by source containment only; rendering itself is a manual gate
-    (Phase 2 exit gate, plan §5 Phase 2 "What CAN and CANNOT be tested").
+    (Phase 2 exit gate -- this repo has no JS execution capability in CI).
     """
 
     def test_source_has_a_null_check(self) -> None:
@@ -146,8 +146,8 @@ class TestNullVsZeroSourceContainment:
         """mcp-usage.js source must contain a null-state fallback literal.
 
         Looks for one of the conventional "not observable" copy strings
-        the plan names (§2.3 / F6): "unknown", an em dash, or the literal
-        phrase "not observable".
+        F6 requires: "unknown", an em dash, or the literal phrase "not
+        observable".
         """
         content = _read_mcp_usage_js_source()
         fallback_markers = (
@@ -173,7 +173,7 @@ class TestUnreadableTranscriptsBannerSourceContainment:
     """T12: source-containment check for F9's skipped-sessions banner.
 
     Verified by source containment only; rendering itself is a manual gate
-    (Phase 2 exit gate, plan §5 Phase 2 "What CAN and CANNOT be tested").
+    (Phase 2 exit gate -- this repo has no JS execution capability in CI).
     """
 
     def test_source_mentions_unreadable_transcripts(self) -> None:
@@ -236,15 +236,15 @@ class TestMcpTabWiring:
 
 
 class TestMcpTabDispatchReachable:
-    """Guard against the plan's documented `_renderView` trap.
+    """Guard against the documented `_renderView` trap.
 
-    The plan's trap box (§5 Phase 2, step 3) warns that `_renderView`'s
-    existing final `else` is a bare catch-all calling `renderEconomics`,
-    not an explicit `view === 'advanced'` guard. Two failure modes it
-    calls out: shipping the `data-view="mcp"` button with no matching
-    branch at all, or inserting the branch in a position where the
-    catch-all shadows it first -- both make the new tab silently render
-    Economics, with no console error and no visual cue anything is wrong.
+    `_renderView`'s existing final `else` is a bare catch-all calling
+    `renderEconomics`, not an explicit `view === 'advanced'` guard. Two
+    failure modes it calls out: shipping the `data-view="mcp"` button with
+    no matching branch at all, or inserting the branch in a position where
+    the catch-all shadows it first -- both make the new tab silently
+    render Economics, with no console error and no visual cue anything is
+    wrong.
     `TestMcpTabWiring` above only proves the button exists; it does not
     prove clicking it reaches `renderMcpUsage`. This test does not
     mandate a specific branch shape (`else if` vs. an explicit dispatch
@@ -267,7 +267,7 @@ class TestMcpTabDispatchReachable:
             '`view === "mcp"`) comparison. The mcp tab has no reachable '
             "dispatch branch -- clicking it would silently fall through "
             "to the shell's existing catch-all (renderEconomics), per "
-            "the plan's trap box."
+            "the trap described above."
         )
 
         # A bare `else { ... }` (i.e. not `else if`) is the documented
@@ -279,7 +279,7 @@ class TestMcpTabDispatchReachable:
                 raise AssertionError(
                     "_renderView contains a bare catch-all `else { ... }` "
                     "positioned before the 'mcp' dispatch comparison. Per "
-                    "the plan's trap box, the mcp branch must be inserted "
+                    "the trap described above, the mcp branch must be inserted "
                     "BEFORE the catch-all (e.g. as an `else if`), not "
                     "after -- otherwise it is unreachable and the mcp "
                     "tab silently renders Economics instead."

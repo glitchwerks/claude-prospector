@@ -11,13 +11,13 @@ any of it is implemented:
 - ``by_mcp_usage`` appears unconditionally in ``renderer.py``'s ``data``
   dict (``window.DATA``), but only in ``--format json``'s ``payload`` when
   the flag is set (F8's byte-identical guarantee for existing consumers).
-- The exact §4.3 JSON shape: ``by_tool``, ``by_server``,
+- The exact ``by_mcp_usage`` JSON shape: ``by_tool``, ``by_server``,
   ``availability_signal``, ``warnings``, ``window`` -- with ``by_agent`` and
   ``compact`` absent, not empty.
 
-Test names carry the plan's T-numbers (§6) so failures trace back to the
-requirement they pin. T1/T4/T7/T9/T11/T12/T13 are not repeated here --
-T1/T13 are Phase 0 gates already covered by
+Test names carry T-numbers from issue #248's implementation plan so
+failures trace back to the requirement they pin. T1/T4/T7/T9/T11/T12/T13
+are not repeated here -- T1/T13 are Phase 0 gates already covered by
 ``tests/unit/test_tool_collection.py`` and ``tests/unit/test_tool_usage.py``;
 T4 is the existing, unmodified
 ``tests/test_cli_subcommands.py::TestToolUsageSubcommand::test_track_mcp_calls_flag_is_rejected``;
@@ -399,7 +399,7 @@ def test_t14_window_bounds_are_resolved_not_raw_args() -> None:
 
 
 # ---------------------------------------------------------------------------
-# T15 -- exact payload shape (D-K / §4.3)
+# T15 -- exact payload shape (D-K)
 # ---------------------------------------------------------------------------
 
 

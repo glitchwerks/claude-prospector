@@ -234,7 +234,7 @@ def run(args: argparse.Namespace) -> int:
         )  # compact=False
         usage.pop("by_agent", None)  # D-F(a) RESOLVED -- absent, not {}
         usage["warnings"]["unreadable_transcripts"] = skipped
-        usage["window"] = {  # D-K / plan §4.3
+        usage["window"] = {  # D-K (issue #248)
             "start": resolved_from.date().isoformat() if resolved_from else None,
             "end": resolved_to.date().isoformat() if resolved_to else None,
             "sessions": len(per_session),
