@@ -475,8 +475,9 @@ in dashboard output. Issue #195's AC bullet "Collection gated behind opt-in flag
   **Resolved under issue #262**, not #248: shipped as the explicitly-labelled
   proxy option (M4 — a `tool_result` payload-size estimate,
   `estimated_result_tokens`/`cost_attribution`), gated behind the `dashboard`
-  `--track-mcp-call-sizes` flag
-  (`docs/superpowers/plans/262-mcp-token-cost-proxy.md` §6, §7 D-1 resolution).
+  `--track-mcp-call-sizes` flag (metric choice D-1=M4 and the privacy-posture
+  D-4 resolution recorded in issue #262 and PR #270; proxy-labelling output
+  shape in PRs #271, #272).
 
 ### 5.2 Non-functional
 
@@ -520,7 +521,7 @@ provenance; the full option analysis is in this file's git history.
 | D4 | Human-readable output? | **JSON-only for v1.** No `--format table` | F2 |
 | D5 | Where does the resolver live? | **(b)** Public `normalize_mcp_tool_name` in `mcp_names.py`, re-exported | §3, F5, §8 Phase 0 |
 | D6 | Availability source precedence | **Union** — either source suffices; record confirming source(s) | F7, §7 |
-| D7 | Token cost per MCP call | **Omit from #195 entirely**; revisit on #248 → **Resolved under #262** (not #248): shipped as an explicitly-labelled proxy (M4, `--track-mcp-call-sizes`), not dropped; see `docs/superpowers/plans/262-mcp-token-cost-proxy.md` §7 | F13, §10 |
+| D7 | Token cost per MCP call | **Omit from #195 entirely**; revisit on #248 → **Resolved under #262** (not #248): shipped as an explicitly-labelled proxy (M4, `--track-mcp-call-sizes`), not dropped; see issue #262 and PRs #270-#273 | F13, §10 |
 | D8 | Session availability rollup across agents | **(a)** Union across agents in the session | F7, §7 |
 
 ### Notes carried forward from the resolutions
