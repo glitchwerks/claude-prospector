@@ -369,18 +369,27 @@ in dashboard output. Issue #195's AC bullet "Collection gated behind opt-in flag
   Also `--data-dir` for parity with every other subcommand
   (`cli/dashboard.py:77-80`), and `--compact` per F6.
   **No `--track-mcp-calls` (D1 = a)** — the subcommand runs unconditionally.
-  **`--agent <name>` matches by leaf name:** it matches any `by_agent` path
-  (§7, `AGENT_PATH_SEPARATOR`-joined) whose final (rightmost) segment equals
-  `<name>` — e.g. `--agent code-writer` matches both `code-writer` and
-  `general-purpose→code-writer`. When multiple distinct paths share the same
-  leaf name, rather than picking one path or erroring on ambiguity: call
-  totals are summed; session-derived metrics use the union of matching
-  session IDs. Concretely, `total_calls` and the `by_tool`/`by_server` counts
-  under that `--agent` value are **summed** across the matching paths, but
-  `sessions_seen_in`, `sessions_used_in`, and `avg_calls_per_active_session`
-  are recomputed from the **union** of session IDs across those paths —
-  summing per-path session counts would double-count any session in which
-  the same leaf-named agent was invoked from more than one parent path.
+  **`--agent <name>` matches any segment of the agent path:** `<name>`
+  matches when it appears anywhere in the root→leaf `agent_path` ancestry
+  (`_matches_agent` in `tool_collection.py`), not only the leaf (rightmost)
+  segment — e.g. `--agent general-purpose` matches calls attributed to
+  `general-purpose→code-writer`. Filtering happens at record level, before
+  aggregation: only `ToolUseRecord`/`AgentAvailability` entries whose
+  `agent_path` contains `<name>` are kept, and the filtered set is handed to
+  the normal aggregation unchanged. Consequently `by_agent` retains each
+  distinct matching path as its own key — no leaf-name collapsing, no
+  cross-path summing — and `sessions_seen_in` / `sessions_used_in` /
+  `avg_calls_per_active_session` fall out of the ordinary per-session
+  aggregation loop: a session contributes to those counters at most once no
+  matter how many matching agent paths it contains, so no separate union
+  step exists or is needed for the `--agent`-filtered case.
+
+  **Reconciliation note (issue #258):** this paragraph previously documented
+  leaf-name-only matching plus a union-based session-metric aggregation for
+  agents sharing a leaf name — neither of which was ever implemented. The
+  shipped `_matches_agent` helper has always matched any segment of the
+  ancestry tuple. The maintainer decided the shipped any-segment behavior is
+  correct; this spec is corrected to match it rather than the reverse.
 - **F4** `by_tool` counts **every** tool, MCP and built-in alike, keyed by raw
   tool name (issue #195's example includes `Read` and `Grep`).
 - **F5** `by_server` rolls up MCP calls via `normalize_mcp_tool_name`
