@@ -49,6 +49,20 @@
     return GUID_RE.test(name);
   }
 
+  // F5 (issue #248): the available-but-unused case -- a server the
+  // transcripts saw but that was never actually called (total_calls is
+  // 0, but sessions_seen_in is populated from availability signal, not
+  // from calls -- see aggregator.py's server_seen_sessions, filled
+  // independently of server_calls). Issue #281 hides these cards from
+  // renderServers' default output; extracted here (mirrors isGuidLike)
+  // so renderServerCard's badge condition and renderServers' filter
+  // share one definition instead of drifting apart.
+  function isDormantServer(info) {
+    return info.total_calls === 0
+      && info.sessions_seen_in !== null
+      && info.sessions_seen_in !== undefined;
+  }
+
   function fmtWindowBound(iso) {
     if (!iso) return null;
     // window.start/end (cli/dashboard.py) are date-only 'YYYY-MM-DD'
@@ -317,10 +331,12 @@
 
   function renderServerCard(name, info) {
     // F5: the available-but-unused case — a server the transcripts saw
-    // but that was never actually called.
-    const isDormant = info.total_calls === 0
-      && info.sessions_seen_in !== null
-      && info.sessions_seen_in !== undefined;
+    // but that was never actually called. Issue #281 filters these out
+    // of renderServers' default output (replaced by
+    // renderZeroCallHiddenNote below), so this branch is normally
+    // unreachable via that path -- kept correct in case
+    // renderServerCard is ever called with unfiltered data.
+    const isDormant = isDormantServer(info);
 
     return `
       <div class="server-card ${isDormant ? 'dormant' : ''}">
@@ -369,14 +385,39 @@
       </div>`;
   }
 
+  // Issue #281: hidden-count note for zero-call ("dormant" -- F5, issue
+  // #248) servers, mirroring renderGuidHiddenNote's shape immediately
+  // above. The individual dashed-border cards no longer render by
+  // default, but the "available, never called" signal isn't dropped --
+  // it's summarized here instead.
+  function renderZeroCallHiddenNote(hiddenCount) {
+    if (hiddenCount === 0) return '';
+    const plural = hiddenCount === 1 ? '' : 's';
+    return `
+      <div class="blind-spot">
+        <b>${hiddenCount}</b> MCP server${plural} available but never
+        called — hidden (zero total calls).
+      </div>`;
+  }
+
   function renderServers(byServer) {
     const allNames = Object.keys(byServer).sort();
-    const names = allNames.filter(name => !isGuidLike(name));
-    const hiddenCount = allNames.length - names.length;
-    const hiddenNote = renderGuidHiddenNote(hiddenCount);
+    const nonGuidNames = allNames.filter(name => !isGuidLike(name));
+    const names = nonGuidNames.filter(name => !isDormantServer(byServer[name]));
+    const hiddenGuidCount = allNames.length - nonGuidNames.length;
+    const hiddenDormantCount = nonGuidNames.length - names.length;
+    const hiddenNote = renderGuidHiddenNote(hiddenGuidCount)
+      + renderZeroCallHiddenNote(hiddenDormantCount);
 
     if (names.length === 0) {
-      return `${hiddenNote}<div class="empty">No MCP servers recorded.</div>`;
+      // Issue #281: distinguish "nothing was ever recorded" (allNames
+      // empty) from "servers exist but every one was filtered out above"
+      // -- the original unconditional message would be misleading in the
+      // latter case since the hidden-count note(s) just said otherwise.
+      const emptyMessage = allNames.length === 0
+        ? 'No MCP servers recorded.'
+        : 'No MCP servers to show — every entry was hidden by the filters above.';
+      return `${hiddenNote}<div class="empty">${emptyMessage}</div>`;
     }
     return `
       ${hiddenNote}
