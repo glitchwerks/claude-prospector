@@ -259,9 +259,11 @@ costs additional full transcript reads: measured on the maintainer's real
 corpus (~1,800 transcript files, 796 MB), `dashboard --format json` took 4.62s
 with the flag off versus 9.61s with it on — about 2.08x, and still well under
 a minute in absolute terms. The automatic session-end (Stop hook) dashboard
-regeneration does **not** pass this flag — the "MCP Usage" panel is CLI-opt-in
-only in v1; hook-generated dashboards show an empty-state message explaining
-how to enable it via the CLI.
+regeneration passes this flag automatically when the `track_mcp_calls`
+userConfig toggle is enabled (default: disabled) via `/plugin reconfigure
+claude-prospector`. When the toggle is left off, hook-generated dashboards
+show an empty-state message explaining how to enable the panel — either by
+turning on the toggle or by running `dashboard --track-mcp-calls` manually.
 
 `--track-mcp-call-sizes` additionally estimates a per-call token-cost proxy,
 derived from the character length of each MCP call's result (divided by an
