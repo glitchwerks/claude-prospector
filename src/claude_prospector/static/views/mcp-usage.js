@@ -160,15 +160,36 @@
       font-variant-numeric: tabular-nums;
     }
     .lmu-style .server-card .stat .v.unknown { color: #6e7681; font-weight: 500; }
+    /* Issue #284: .methods is a single shared grid so the count/tokens
+       columns line up across every method row. Previously .row was its
+       own flex box with justify-content: space-between -- fine for
+       exactly 2 children (name flush-left, count flush-right), but once
+       the per-method tokens note (issue #262) added a 3rd child, the
+       middle item (count) lost its flush-right anchor and floated to a
+       position based on the surrounding items' widths, shifting
+       row-to-row with method-name length. Setting .row's display to
+       "contents" lets its children become direct grid items of
+       .methods, sharing one set of column tracks across all rows --
+       true columnar alignment instead of per-row flex distribution. */
     .lmu-style .server-card .methods {
       border-top: 1px solid #21262d;
       padding-top: 8px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      column-gap: 10px;
+      row-gap: 6px;
     }
     .lmu-style .server-card .methods .row {
-      display: flex; justify-content: space-between;
-      font-size: 12px; color: #c9d1d9; padding: 3px 0;
+      display: contents;
+      font-size: 12px; color: #c9d1d9;
     }
-    .lmu-style .server-card .methods .row .n { color: #8b949e; font-variant-numeric: tabular-nums; }
+    /* Name column shares its grid track (minmax(0, 1fr) above) with every
+       other row via .methods' shared grid, so an unbounded method name
+       would otherwise overflow past the card edge -- truncate instead. */
+    .lmu-style .server-card .methods .row > div:first-child {
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .lmu-style .server-card .methods .row .n { color: #8b949e; font-variant-numeric: tabular-nums; text-align: right; }
     .lmu-style .server-card .methods .none {
       font-size: 11px; color: #6e7681; font-style: italic;
     }
@@ -228,9 +249,17 @@
   // the additive `by_method_tokens` sibling map Phase 2 emits alongside
   // `by_method` -- absent entirely whenever --track-mcp-call-sizes was
   // off, so every access below is guarded rather than assumed present.
+  // Issue #284: always return a (possibly empty) third cell rather than
+  // '' when stats are absent. `.methods` is a shared 3-column CSS grid
+  // (see css below) and `.row` participates via `display: contents` --
+  // grid auto-placement fills cells left-to-right and wraps after every
+  // 3 items, so a row that emits only 2 children (the '' case) would
+  // shift every subsequent row's cells by one column. Returning an empty
+  // placeholder cell keeps every row's child count at a fixed 3,
+  // regardless of whether per-method token data exists for it.
   function renderMethodTokensNote(method, byMethodTokens) {
     const stats = byMethodTokens && byMethodTokens[method];
-    if (!stats) return '';
+    if (!stats) return '<div class="n"></div>';
     return `<div class="n">(est. ${formatCountOrUnknown(stats.total)} tok)</div>`;
   }
 
