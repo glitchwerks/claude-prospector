@@ -111,10 +111,13 @@ class TestToolCountThresholdMechanismExists:
           identifier via ``>``/``>=``/``<``/``<=`` (covers both a
           literal threshold and a named-constant threshold used
           in-line), OR
-        - A standalone named threshold constant declaration (e.g.
-          ``const TOOL_COLLAPSE_THRESHOLD = 5;``), proving the gate
-          exists even if the comparison site itself is harder to
-          pattern-match.
+        - A named threshold constant declaration (e.g. ``const
+          TOOL_COLLAPSE_THRESHOLD = 5;``) whose name is *also*
+          referenced in a ``.length`` comparison somewhere in the
+          source -- proving the gate is both declared and wired into an
+          actual comparison, not just declared and left unused. (Per
+          CodeRabbit review on PR #293: a declared-but-unreferenced
+          constant does not prove a gate exists.)
         """
         content = _read_mcp_usage_js_source()
 
@@ -126,24 +129,40 @@ class TestToolCountThresholdMechanismExists:
             r"[\w$.]+\s*(?:>=|>|<=|<)\s*"
             r"(?:Object\.keys\([^)]*\)|[\w$.]*(?:[Mm]ethod|[Tt]ool)\w*)\.length"
         )
-        named_constant_pattern = re.compile(
-            r"const\s+\w*(?:THRESHOLD|COLLAPSE|MAX)\w*\s*=\s*\d+",
+
+        named_constant_match = re.search(
+            r"const\s+(?P<name>\w*(?:THRESHOLD|COLLAPSE|MAX)\w*)\s*=\s*\d+",
+            content,
             re.IGNORECASE,
         )
+        named_constant_is_used_in_a_length_comparison = False
+        if named_constant_match is not None:
+            constant_name = re.escape(named_constant_match.group("name"))
+            named_constant_is_used_in_a_length_comparison = bool(
+                re.search(
+                    rf"\.length\s*(?:>=|>|<=|<)\s*{constant_name}\b",
+                    content,
+                )
+                or re.search(
+                    rf"\b{constant_name}\s*(?:>=|>|<=|<)\s*[\w$.]*\.length",
+                    content,
+                )
+            )
 
         found = bool(
             length_threshold_pattern.search(content)
             or reverse_length_threshold_pattern.search(content)
-            or named_constant_pattern.search(content)
+            or named_constant_is_used_in_a_length_comparison
         )
         assert found, (
             "mcp-usage.js has no numeric threshold comparison against a "
             "method/tool-count collection, and no named threshold "
-            "constant declaration (e.g. "
-            "'const TOOL_COLLAPSE_THRESHOLD = 5;'). Issue #283 requires "
-            "a threshold gate deciding whether a server's methods render "
-            "as individual rows or collapse into a single summary row -- "
-            "this mechanism does not exist yet."
+            "constant (e.g. 'const TOOL_COLLAPSE_THRESHOLD = 8;') that "
+            "is actually referenced in a '.length' comparison. Issue "
+            "#283 requires a threshold gate deciding whether a server's "
+            "methods render as individual rows or collapse into a "
+            "single summary row -- declaring a threshold constant "
+            "without using it in a comparison does not satisfy this."
         )
 
 
@@ -308,3 +327,169 @@ class TestFullBreakdownRemainsReachable:
 #    already establish this; a third identical substring check would be
 #    pure duplication, so none is added here.
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# 7. CodeRabbit review of PR #293 (issue #283): issue #283's body asks to
+#    "roll up all tools belonging to one MCP server into a single row
+#    (aggregate calls/tokens)". The collapsed summary row
+#    (``renderMethodsBlock``) aggregates a CALL count today ("N tools,
+#    TOTAL calls"), but not a TOKEN count -- even though
+#    ``info.by_method_tokens`` (the per-method token-estimate map) is
+#    already populated and already used elsewhere in this same file
+#    (``renderMethodTokensNote``, ``renderEstimatedTokensStat``). The
+#    token half of "aggregate calls/tokens" is missing.
+#
+#    ``by_method_tokens`` is only populated when ``--track-mcp-call-
+#    sizes`` was passed -- it is entirely absent otherwise -- so the
+#    aggregate must be guarded, mirroring how ``renderEstimatedTokensStat``
+#    / ``renderCostProxyNote`` already guard on ``estimated_result_tokens``
+#    presence (``tests/test_mcp_usage_view_cost_proxy.py``). These tests
+#    do NOT require a token aggregate to be computed/rendered when
+#    ``by_method_tokens`` is absent -- only that when it IS present, the
+#    collapsed summary computes and displays an aggregate over it.
+# ---------------------------------------------------------------------------
+
+
+def _extract_function_source(content: str, function_name: str) -> str:
+    """Extract one top-level function's source text by name.
+
+    Slices from ``function <function_name>(`` up to (but not including)
+    the next top-level ``function `` declaration, so proximity checks
+    scoped to this one function don't accidentally match unrelated
+    per-method rendering code elsewhere in the file (e.g.
+    ``renderMethodTokensNote``, which already references
+    ``by_method_tokens`` for a different purpose).
+
+    Args:
+        content: The full source text to search.
+        function_name: The bare function name (no ``function`` keyword,
+            no parens).
+
+    Returns:
+        The matched slice, or an empty string if the function is not
+        declared at all.
+    """
+    declaration = re.search(rf"function {re.escape(function_name)}\(", content)
+    if declaration is None:
+        return ""
+    start = declaration.start()
+    next_top_level_fn = re.search(r"\nfunction \w", content[start + 1 :])
+    if next_top_level_fn is None:
+        return content[start:]
+    return content[start : start + 1 + next_top_level_fn.start()]
+
+
+class TestCollapsedSummaryAggregatesTokensAlongsideCalls:
+    """The collapsed ``<details><summary>`` row (``renderMethodsBlock``)
+    must aggregate a TOKEN total alongside the existing CALL total, per
+    issue #283's "aggregate calls/tokens" requirement (CodeRabbit finding
+    on PR #293, since only the call aggregate was implemented).
+
+    All checks are scoped to ``renderMethodsBlock``'s own source window
+    (not the whole file) -- ``by_method_tokens`` already appears
+    elsewhere in the file for an unrelated per-method note
+    (``renderMethodTokensNote``), so an unscoped, whole-file containment
+    check would pass today without the collapsed summary actually
+    aggregating anything.
+    """
+
+    def test_render_methods_block_is_still_declared(self) -> None:
+        """Sanity precondition for every other test in this class: if
+        ``renderMethodsBlock`` is renamed or removed, every proximity
+        check below is scoped to an empty string and would fail for a
+        confusing reason. Fail loudly and specifically here instead.
+        """
+        content = _read_mcp_usage_js_source()
+        assert "function renderMethodsBlock(" in content, (
+            "mcp-usage.js no longer declares `renderMethodsBlock` -- the "
+            "collapsed-summary rendering path from issue #283 must "
+            "still exist for this class's token-aggregation checks to "
+            "mean anything."
+        )
+
+    def test_summary_computes_a_token_aggregate_from_by_method_tokens(
+        self,
+    ) -> None:
+        """Within ``renderMethodsBlock``'s own source, an aggregate must
+        be computed over a token-named collection -- a ``.reduce(`` call
+        (or equivalent summation) whose subject is ``by_method_tokens``
+        or an equivalently token-named parameter/variable within ~120
+        characters before the call. A bare mention of
+        ``by_method_tokens`` (e.g. merely passing it through to the
+        existing ``renderMethodRows`` call for the expanded breakdown)
+        does not satisfy this -- the collapsed summary must itself
+        derive a total.
+        """
+        content = _read_mcp_usage_js_source()
+        block = _extract_function_source(content, "renderMethodsBlock")
+        assert block, "renderMethodsBlock not found -- see the sanity test above."
+
+        token_reduce_found = False
+        for match in re.finditer(r"\.reduce\(", block):
+            preceding = block[max(0, match.start() - 120) : match.start()]
+            if re.search(r"[Tt]okens?", preceding):
+                token_reduce_found = True
+                break
+
+        assert token_reduce_found, (
+            "renderMethodsBlock has no aggregate ('.reduce(') computed "
+            "over a token-named collection (by_method_tokens, or an "
+            "equivalently-named parameter/variable). Issue #283 asks "
+            "the collapsed summary row to 'aggregate calls/tokens' -- "
+            "only the call aggregate exists today; the token aggregate "
+            "is missing."
+        )
+
+    def test_token_aggregate_presence_is_guarded(self) -> None:
+        """``by_method_tokens`` is only populated when
+        ``--track-mcp-call-sizes`` was passed -- it is entirely absent
+        otherwise. Mirroring the guard pattern already established for
+        ``estimated_result_tokens``
+        (``tests/test_mcp_usage_view_cost_proxy.py``), a presence-guard
+        must appear within ``renderMethodsBlock``: optional chaining, a
+        truthy/short-circuit guard, a fallback default (``|| {}``), or
+        reuse of ``formatCountOrUnknown``.
+        """
+        content = _read_mcp_usage_js_source()
+        block = _extract_function_source(content, "renderMethodsBlock")
+        assert block, "renderMethodsBlock not found -- see the sanity test above."
+
+        guard_patterns = (
+            r"by_method_tokens\s*\?\.",
+            r"by_method_tokens\s*&&",
+            r"by_method_tokens\s*\|\|",
+            r"by_method_tokens\s*\?[^.]",
+            r"[\w$.]*[Tt]okens?\w*\s*\|\|\s*\{\}",
+            r"typeof\s+[\w$.]*[Tt]okens?\w*",
+            r"formatCountOrUnknown\([^)]*[Tt]okens?",
+        )
+        found_guard = any(re.search(pattern, block) for pattern in guard_patterns)
+        assert found_guard, (
+            "renderMethodsBlock has no presence-guard around token data "
+            "(checked for optional chaining, '&&'/'||' short-circuiting, "
+            "a '|| {}' fallback default, or formatCountOrUnknown reuse). "
+            "by_method_tokens is entirely absent when "
+            "--track-mcp-call-sizes was off, so an unguarded aggregate "
+            "would throw or silently misbehave for that case."
+        )
+
+    def test_token_aggregate_is_rendered_in_the_summary_text(self) -> None:
+        """The computed token aggregate must actually be displayed --
+        some interpolated expression must sit inside a template literal
+        alongside a 'token(s)' label, not merely be computed and
+        discarded.
+        """
+        content = _read_mcp_usage_js_source()
+        block = _extract_function_source(content, "renderMethodsBlock")
+        assert block, "renderMethodsBlock not found -- see the sanity test above."
+
+        token_label_pattern = re.compile(
+            r"\$\{[^}]{0,80}\}[^`]{0,40}\b[Tt]okens?\b", re.IGNORECASE
+        )
+        assert token_label_pattern.search(block), (
+            "renderMethodsBlock has no interpolated value rendered "
+            "alongside a 'token(s)' label in a template literal -- the "
+            "collapsed summary row must display the aggregate token "
+            "figure it computes, not just compute it."
+        )

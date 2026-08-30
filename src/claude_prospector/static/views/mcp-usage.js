@@ -335,9 +335,11 @@
   // Wraps renderMethodRows' output in `.methods` (unchanged shape/contract
   // -- see #284) and, once a server exceeds TOOL_COLLAPSE_THRESHOLD
   // distinct methods, wraps that whole `.methods` block in a collapsed
-  // <details> summarizing the tool count + aggregate call total. The
-  // <details> element sits *outside* `.methods`, so `.methods`' shared
-  // 3-column grid contract (#284) is untouched either way.
+  // <details> summarizing the tool count + aggregate call total (and,
+  // when --track-mcp-call-sizes populated by_method_tokens, an aggregate
+  // token total alongside it -- issue #283's "aggregate calls/tokens"
+  // ask). The <details> element sits *outside* `.methods`, so `.methods`'
+  // shared 3-column grid contract (#284) is untouched either way.
   function renderMethodsBlock(info) {
     const byMethod = info.by_method || {};
     const entries = Object.entries(byMethod);
@@ -352,9 +354,23 @@
 
     const totalCalls = Object.values(byMethod)
       .reduce((sum, count) => sum + count, 0);
+    // Issue #283 (CodeRabbit, PR #293): the request asks to aggregate
+    // "calls/tokens" -- by_method_tokens is only present when
+    // --track-mcp-call-sizes was passed, so this is guarded the same
+    // way as renderEstimatedTokensStat/renderCostProxyNote (optional
+    // chaining + a null totalTokens when the map is absent), and the
+    // summary text below omits the token clause entirely in that case
+    // rather than rendering a misleading "0 tokens".
+    const byMethodTokens = info.by_method_tokens;
+    const totalTokens = byMethodTokens
+      ? Object.values(byMethodTokens).reduce((sum, stats) => sum + (stats?.total || 0), 0)
+      : null;
+    const tokensClause = totalTokens !== null
+      ? `, ~${formatCountOrUnknown(totalTokens)} tokens`
+      : '';
     return `
         <details class="methods-collapse">
-          <summary>${entries.length} tools, ${CP.fmtTokens(totalCalls)} calls</summary>
+          <summary>${entries.length} tools, ${CP.fmtTokens(totalCalls)} calls${tokensClause}</summary>
           ${methodsHtml}
         </details>`;
   }
