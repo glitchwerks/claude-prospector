@@ -243,6 +243,26 @@
     .lmu-style .server-card .methods .none {
       font-size: 11px; color: #6e7681; font-style: italic;
     }
+    /* Issue #283: collapsed per-method breakdown for servers with a large
+       tool surface (e.g. 20+ mcp__github__* tools). Sits above .methods
+       (not inside it), so .methods' shared 3-column grid contract (#284)
+       is unaffected regardless of collapse state. */
+    .lmu-style .server-card details.methods-collapse {
+      border-top: 1px solid #21262d;
+      padding-top: 8px;
+    }
+    .lmu-style .server-card details.methods-collapse summary {
+      cursor: pointer;
+      font-size: 12px;
+      color: #8b949e;
+    }
+    .lmu-style .server-card details.methods-collapse[open] summary {
+      margin-bottom: 8px;
+    }
+    .lmu-style .server-card details.methods-collapse .methods {
+      border-top: none;
+      padding-top: 0;
+    }
   `;
 
   // ── Render pieces ───────────────────────────────────────────────────────
@@ -341,6 +361,56 @@
       .join('');
   }
 
+  // Issue #283: servers with a large tool surface (e.g. GitHub's 20+
+  // mcp__github__* tools) render one row per tool, dominating the card.
+  // Above this many distinct methods, collapse the breakdown behind a
+  // native <details> disclosure instead -- zero JS event-wiring needed,
+  // and it degrades gracefully (still readable/expandable without CSS/JS).
+  const TOOL_COLLAPSE_THRESHOLD = 8;
+
+  // Wraps renderMethodRows' output in `.methods` (unchanged shape/contract
+  // -- see #284) and, once a server exceeds TOOL_COLLAPSE_THRESHOLD
+  // distinct methods, wraps that whole `.methods` block in a collapsed
+  // <details> summarizing the tool count + aggregate call total (and,
+  // when --track-mcp-call-sizes populated by_method_tokens, an aggregate
+  // token total alongside it -- issue #283's "aggregate calls/tokens"
+  // ask). The <details> element sits *outside* `.methods`, so `.methods`'
+  // shared 3-column grid contract (#284) is untouched either way.
+  function renderMethodsBlock(info, query) {
+    const byMethod = info.by_method || {};
+    const entries = Object.entries(byMethod);
+    const methodsHtml = `
+        <div class="methods">
+          ${renderMethodRows(byMethod, info.by_method_tokens, query)}
+        </div>`;
+
+    if (entries.length <= TOOL_COLLAPSE_THRESHOLD) {
+      return methodsHtml;
+    }
+
+    const totalCalls = Object.values(byMethod)
+      .reduce((sum, count) => sum + count, 0);
+    // Issue #283 (CodeRabbit, PR #293): the request asks to aggregate
+    // "calls/tokens" -- by_method_tokens is only present when
+    // --track-mcp-call-sizes was passed, so this is guarded the same
+    // way as renderEstimatedTokensStat/renderCostProxyBanner (optional
+    // chaining + a null totalTokens when the map is absent), and the
+    // summary text below omits the token clause entirely in that case
+    // rather than rendering a misleading "0 tokens".
+    const byMethodTokens = info.by_method_tokens;
+    const totalTokens = byMethodTokens
+      ? Object.values(byMethodTokens).reduce((sum, stats) => sum + (stats?.total || 0), 0)
+      : null;
+    const tokensClause = totalTokens !== null
+      ? `, ~${formatCountOrUnknown(totalTokens)} tokens`
+      : '';
+    return `
+        <details class="methods-collapse">
+          <summary>${entries.length} tools, ${CP.fmtTokens(totalCalls)} calls${tokensClause}</summary>
+          ${methodsHtml}
+        </details>`;
+  }
+
   // Cost-proxy stat + caveat (issue #262, plan §6c). `estimated_result_tokens`
   // is entirely absent from `info` unless --track-mcp-call-sizes was
   // passed (Phase 2, aggregator.py) -- every access below is guarded via
@@ -412,9 +482,7 @@
           </div>
           ${renderEstimatedTokensStat(info)}
         </div>
-        <div class="methods">
-          ${renderMethodRows(info.by_method, info.by_method_tokens, methodQuery)}
-        </div>
+        ${renderMethodsBlock(info, methodQuery)}
       </div>`;
   }
 
