@@ -63,6 +63,20 @@
       && info.sessions_seen_in !== undefined;
   }
 
+  // Issue #282: the name-filter search box's match predicate -- a
+  // case-insensitive substring test against a server or method/tool
+  // name. `query` is assumed already trimmed+lower-cased once by the
+  // 'input' listener that reads it off the filter box (see
+  // renderMcpUsage below), so only `name` needs normalizing here.
+  // Extracted as its own helper (mirrors isGuidLike/isDormantServer
+  // above) rather than inlined at each filter call site, since it's
+  // applied independently to both server names (renderServers) and
+  // method/tool names (renderMethodRows).
+  function matchesNameFilter(name, query) {
+    if (!query) return true;
+    return String(name).toLowerCase().includes(query);
+  }
+
   function fmtWindowBound(iso) {
     if (!iso) return null;
     // window.start/end (cli/dashboard.py) are date-only 'YYYY-MM-DD'
@@ -107,6 +121,16 @@
     }
     .lmu-style .pagehead h1 span { color: #6e7681; font-weight: 400; }
     .lmu-style .pagehead .sub { color: #8b949e; font-size: 12px; margin-top: 4px; }
+    .lmu-style .pagehead input#mcp-name-filter {
+      background: #0d1117;
+      border: 1px solid #21262d;
+      border-radius: 6px;
+      padding: 6px 10px;
+      color: #c9d1d9;
+      font-size: 12px;
+      min-width: 220px;
+    }
+    .lmu-style .pagehead input#mcp-name-filter::placeholder { color: #6e7681; }
 
     .lmu-style .banner {
       background: #161b22;
@@ -309,12 +333,24 @@
     return `<div class="n">(est. ${formatCountOrUnknown(stats.total)} tok)</div>`;
   }
 
-  function renderMethodRows(byMethod, byMethodTokens) {
+  // Issue #282: `query` narrows the per-method/tool rows shown inside a
+  // server card. Callers only pass a non-empty query when the server's
+  // own name didn't match the filter (see renderServerCard) -- in that
+  // case, a card is only rendered at all because at least one method
+  // matched (renderServers' own filter), so this narrows the card's
+  // body down to the method(s) that earned it a spot.
+  function renderMethodRows(byMethod, byMethodTokens, query) {
     const entries = Object.entries(byMethod || {});
     if (entries.length === 0) {
       return '<div class="none">No per-method breakdown recorded.</div>';
     }
-    return entries
+    const filtered = query
+      ? entries.filter(([method]) => matchesNameFilter(method, query))
+      : entries;
+    if (filtered.length === 0) {
+      return '<div class="none">No tools match the current filter.</div>';
+    }
+    return filtered
       .sort((a, b) => b[1] - a[1])
       .map(([method, count]) => `
         <div class="row">
@@ -340,12 +376,12 @@
   // token total alongside it -- issue #283's "aggregate calls/tokens"
   // ask). The <details> element sits *outside* `.methods`, so `.methods`'
   // shared 3-column grid contract (#284) is untouched either way.
-  function renderMethodsBlock(info) {
+  function renderMethodsBlock(info, query) {
     const byMethod = info.by_method || {};
     const entries = Object.entries(byMethod);
     const methodsHtml = `
         <div class="methods">
-          ${renderMethodRows(byMethod, info.by_method_tokens)}
+          ${renderMethodRows(byMethod, info.by_method_tokens, query)}
         </div>`;
 
     if (entries.length <= TOOL_COLLAPSE_THRESHOLD) {
@@ -357,7 +393,7 @@
     // Issue #283 (CodeRabbit, PR #293): the request asks to aggregate
     // "calls/tokens" -- by_method_tokens is only present when
     // --track-mcp-call-sizes was passed, so this is guarded the same
-    // way as renderEstimatedTokensStat/renderCostProxyNote (optional
+    // way as renderEstimatedTokensStat/renderCostProxyBanner (optional
     // chaining + a null totalTokens when the map is absent), and the
     // summary text below omits the token clause entirely in that case
     // rather than rendering a misleading "0 tokens".
@@ -389,8 +425,14 @@
       </div>`;
   }
 
-  function renderCostProxyNote(info) {
-    if (!info.estimated_result_tokens) return '';
+  // Issue #280: one top-level banner instead of a per-card repeat.
+  // Guarded so it disappears when no server carries
+  // estimated_result_tokens data (--track-mcp-call-sizes was off).
+  function renderCostProxyBanner(byServer) {
+    const hasEstimatedTokens = Object.values(byServer).some(
+      (info) => info.estimated_result_tokens
+    );
+    if (!hasEstimatedTokens) return '';
     return `
       <div class="blind-spot">
         "Est. result tokens" is a proxy, not a measured token count —
@@ -399,7 +441,7 @@
       </div>`;
   }
 
-  function renderServerCard(name, info) {
+  function renderServerCard(name, info, query) {
     // F5: the available-but-unused case — a server the transcripts saw
     // but that was never actually called. Issue #281 filters these out
     // of renderServers' default output (replaced by
@@ -407,6 +449,13 @@
     // unreachable via that path -- kept correct in case
     // renderServerCard is ever called with unfiltered data.
     const isDormant = isDormantServer(info);
+
+    // Issue #282: if the server's own name matched the active filter,
+    // show every method unfiltered (the user searched for the server,
+    // not a specific tool). Otherwise only pass the query through to
+    // renderMethodRows -- this card is only included at all because at
+    // least one method matched (see renderServers), so narrow to those.
+    const methodQuery = (query && !matchesNameFilter(name, query)) ? query : '';
 
     return `
       <div class="server-card ${isDormant ? 'dormant' : ''}">
@@ -433,8 +482,7 @@
           </div>
           ${renderEstimatedTokensStat(info)}
         </div>
-        ${renderMethodsBlock(info)}
-        ${renderCostProxyNote(info)}
+        ${renderMethodsBlock(info, methodQuery)}
       </div>`;
   }
 
@@ -468,12 +516,27 @@
       </div>`;
   }
 
-  function renderServers(byServer) {
+  // Issue #282: `query` is the pre-trimmed, pre-lower-cased name filter
+  // (see renderMcpUsage's 'input' listener) -- '' means no active
+  // filter. Composes with (applied on top of, not instead of) the
+  // #279 GUID filter and #281 zero-call filter above: those determine
+  // what's eligible to render at all, this narrows further by name.
+  function renderServers(byServer, query) {
     const allNames = Object.keys(byServer).sort();
     const nonGuidNames = allNames.filter(name => !isGuidLike(name));
-    const names = nonGuidNames.filter(name => !isDormantServer(byServer[name]));
+    const nonDormantNames = nonGuidNames.filter(name => !isDormantServer(byServer[name]));
+    // A server card stays visible if its own name matches, or any of
+    // its methods/tools do -- checked via `by_method`, the same field
+    // renderServerCard/renderMethodRows read the per-method map from.
+    const names = !query
+      ? nonDormantNames
+      : nonDormantNames.filter(name => {
+          if (matchesNameFilter(name, query)) return true;
+          const methodNames = Object.keys(byServer[name].by_method || {});
+          return methodNames.some(method => matchesNameFilter(method, query));
+        });
     const hiddenGuidCount = allNames.length - nonGuidNames.length;
-    const hiddenDormantCount = nonGuidNames.length - names.length;
+    const hiddenDormantCount = nonGuidNames.length - nonDormantNames.length;
     const hiddenNote = renderGuidHiddenNote(hiddenGuidCount)
       + renderZeroCallHiddenNote(hiddenDormantCount);
 
@@ -482,6 +545,9 @@
       // empty) from "servers exist but every one was filtered out above"
       // -- the original unconditional message would be misleading in the
       // latter case since the hidden-count note(s) just said otherwise.
+      // Issue #282: the name filter reuses this same branch (and copy)
+      // for "no server/tool name matched" -- also correct/non-misleading
+      // since the copy says "filters above" generically.
       const emptyMessage = allNames.length === 0
         ? 'No MCP servers recorded.'
         : 'No MCP servers to show — every entry was hidden by the filters above.';
@@ -490,7 +556,7 @@
     return `
       ${hiddenNote}
       <div class="servers">
-        ${names.map(name => renderServerCard(name, byServer[name])).join('')}
+        ${names.map(name => renderServerCard(name, byServer[name], query)).join('')}
       </div>`;
   }
 
@@ -518,16 +584,33 @@
     const warnings = usage.warnings || {};
     const win = usage.window || {};
 
+    // Issue #282: name/tool search box. Rendered inside its own
+    // #mcp-server-list wrapper (below) so the 'input' listener can
+    // re-render just that container's contents on each keystroke,
+    // rather than replacing `root.innerHTML` wholesale -- doing the
+    // latter would tear down and recreate the input itself, dropping
+    // focus/cursor position mid-typing.
     root.innerHTML = `
       <div class="pagehead">
         <div>
           <h1>MCP Tool Usage</h1>
           <div class="sub">${timeBasisLine(win)}</div>
         </div>
+        <input id="mcp-name-filter" type="text"
+          placeholder="Filter by server/tool name..."
+          aria-label="Filter MCP servers and tools by name" />
       </div>
       ${renderUnreadableBanner(warnings)}
+      ${renderCostProxyBanner(byServer)}
       ${renderBlindSpotNote()}
-      ${renderServers(byServer)}
+      <div id="mcp-server-list">${renderServers(byServer, '')}</div>
     `;
+
+    const filterInput = root.querySelector('#mcp-name-filter');
+    const serverList = root.querySelector('#mcp-server-list');
+    filterInput.addEventListener('input', () => {
+      const query = filterInput.value.trim().toLowerCase();
+      serverList.innerHTML = renderServers(byServer, query);
+    });
   };
 })();
