@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] - 2026-08-30
+
+### Added
+
+- **Client-side name filter for the MCP usage dashboard** (issue #282). A
+  search box scopes the MCP Usage view to matching server/tool names;
+  filters both server-card visibility and per-method/tool rows nested in
+  each card, composing with the existing GUID- and zero-call-hiding
+  filters rather than replacing them (PR #292).
+- **Expandable summary for servers with many tools** (issue #283). Servers
+  exposing more than 8 methods (e.g. `mcp__github__*`) now collapse their
+  per-method breakdown into a native `<details>` disclosure showing tool
+  count and total calls, instead of dominating the card with dozens of
+  rows. Servers at or under the threshold render unchanged (PR #293).
+- **GUID-styled MCP server names hidden by default** (issue #279). Server
+  entries whose name matches the standard 8-4-4-4-12 GUID shape are
+  filtered from the rendered list, with a note showing the hidden count
+  (PR #289).
+- **Zero-call MCP server cards hidden by default** (issue #281). Dormant
+  servers (seen but never called) no longer render individual cards; a
+  single hidden-count note replaces them, preserving the dormant-signal
+  distinction introduced in #248 (PR #290).
+
+### Fixed
+
+- **MCP dashboard method-row count/tokens columns misaligned** (issue
+  #284). `.methods .row` used flexbox `space-between`, which only anchors
+  the first/last child; the 3rd child added by #262's per-method tokens
+  note drifted based on surrounding row widths instead of forming a
+  column. `.methods` is now a shared CSS grid so row children always
+  align (PR #288).
+- **Per-card cost-proxy disclaimer consolidated into one top-level
+  banner** (issue #280). The "estimated token" disclaimer was previously
+  repeated on every server card; it now renders once, at the top of the
+  MCP Usage view, only when any server has estimate data (PR #291).
+
 ## [0.12.0] - 2026-08-29
 
 ### Added
