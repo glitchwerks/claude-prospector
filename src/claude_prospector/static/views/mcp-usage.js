@@ -319,8 +319,14 @@
       </div>`;
   }
 
-  function renderCostProxyNote(info) {
-    if (!info.estimated_result_tokens) return '';
+  // Issue #280: one top-level banner instead of a per-card repeat.
+  // Guarded so it disappears when no server carries
+  // estimated_result_tokens data (--track-mcp-call-sizes was off).
+  function renderCostProxyBanner(byServer) {
+    const hasEstimatedTokens = Object.values(byServer).some(
+      (info) => info.estimated_result_tokens
+    );
+    if (!hasEstimatedTokens) return '';
     return `
       <div class="blind-spot">
         "Est. result tokens" is a proxy, not a measured token count —
@@ -366,7 +372,6 @@
         <div class="methods">
           ${renderMethodRows(info.by_method, info.by_method_tokens)}
         </div>
-        ${renderCostProxyNote(info)}
       </div>`;
   }
 
@@ -458,6 +463,7 @@
         </div>
       </div>
       ${renderUnreadableBanner(warnings)}
+      ${renderCostProxyBanner(byServer)}
       ${renderBlindSpotNote()}
       ${renderServers(byServer)}
     `;
