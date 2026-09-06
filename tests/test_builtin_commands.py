@@ -25,6 +25,14 @@ def test_catalog_classifies_builtins_skills_workflows_and_unknowns() -> None:
     assert catalog.classify("/project-review") == "unclassified"
 
 
+@pytest.mark.parametrize("alias", ["/peers", "/undo", "/bashes", "/tp"])
+def test_catalog_classifies_documented_builtin_aliases(alias: str) -> None:
+    """Documented aliases must contribute to built-in command usage."""
+    catalog = load_command_catalog()
+
+    assert catalog.classify(alias) == "builtin"
+
+
 def test_catalog_exposes_a_dated_official_source() -> None:
     """Users must be able to audit where the classification came from."""
     catalog = load_command_catalog()

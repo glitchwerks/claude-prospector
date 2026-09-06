@@ -131,6 +131,77 @@ class TestParseSessions:
         ]
         assert "secret-client" not in repr(session.commands)
 
+    def test_command_name_tag_after_ordinary_prose_is_not_manual_usage(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Ordinary prompts containing a command tag cannot become usage."""
+        jsonl = tmp_path / "ordinary-prose-command-tag.jsonl"
+        entries = [
+            {
+                "type": "user",
+                "userType": "external",
+                "uuid": "ordinary-prose-command-tag",
+                "timestamp": "2026-04-09T12:00:01.000Z",
+                "message": {
+                    "role": "user",
+                    "content": "Explain <command-name>/fork</command-name>",
+                },
+            },
+            _make_assistant_line("ordinary-prose-command-tag"),
+        ]
+        jsonl.write_text(
+            "\n".join(json.dumps(entry) for entry in entries),
+            encoding="utf-8",
+        )
+
+        session = _parse_session(jsonl, "proj")
+
+        assert session is not None
+        assert session.commands == []
+
+    @pytest.mark.parametrize(
+        "content",
+        [
+            (
+                "<command-message>fork</command-message>\n"
+                "<command-name>/fork</command-name>\n"
+                "<command-args>private details</command-args>"
+            ),
+            (
+                "<command-name>/fork</command-name>\n"
+                "<command-message>fork</command-message>\n"
+                "<command-args>private details</command-args>"
+            ),
+        ],
+    )
+    def test_canonical_command_message_orderings_are_manual_usage(
+        self,
+        tmp_path: Path,
+        content: str,
+    ) -> None:
+        """Observed command-message orderings retain one command name."""
+        jsonl = tmp_path / "canonical-command-envelope.jsonl"
+        entries = [
+            {
+                "type": "user",
+                "userType": "external",
+                "uuid": "canonical-command-envelope",
+                "timestamp": "2026-04-09T12:00:01.000Z",
+                "message": {"role": "user", "content": content},
+            },
+            _make_assistant_line("canonical-command-envelope"),
+        ]
+        jsonl.write_text(
+            "\n".join(json.dumps(entry) for entry in entries),
+            encoding="utf-8",
+        )
+
+        session = _parse_session(jsonl, "proj")
+
+        assert session is not None
+        assert [record.name for record in session.commands] == ["/fork"]
+
     def test_command_collection_deduplicates_entries_and_ignores_automatic_events(
         self,
         tmp_path: Path,

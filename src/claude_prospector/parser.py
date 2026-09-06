@@ -16,7 +16,15 @@ from claude_prospector.models import (
 from claude_prospector.transcript_walker import walk_session
 
 
-_COMMAND_NAME_RE = re.compile(r"<command-name>(/[^\s<>]+)</command-name>")
+_COMMAND_ENVELOPE_RE = re.compile(
+    r"\A\s*(?:"
+    r"<command-message>[^<>]*</command-message>\s*"
+    r"<command-name>(/[^\s<>]+)</command-name>"
+    r"|"
+    r"<command-name>(/[^\s<>]+)</command-name>"
+    r"(?:\s*<command-message>[^<>]*</command-message>)?"
+    r")\s*\Z"
+)
 
 
 def decode_project_hash(hash_name: str) -> str:
@@ -339,14 +347,15 @@ def _extract_manual_command(entry: dict) -> CommandInvocationRecord | None:
         return None
 
     command_wrapper = content.partition("<command-args")[0]
-    match = _COMMAND_NAME_RE.search(command_wrapper)
+    match = _COMMAND_ENVELOPE_RE.fullmatch(command_wrapper)
     if match is None:
         return None
     try:
         timestamp = _parse_timestamp(timestamp_raw)
     except ValueError:
         return None
-    return CommandInvocationRecord(name=match.group(1), timestamp=timestamp)
+    command_name = match.group(1) or match.group(2)
+    return CommandInvocationRecord(name=command_name, timestamp=timestamp)
 
 
 def _parse_jsonl_records(

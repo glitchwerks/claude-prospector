@@ -261,8 +261,10 @@ including invocation counts and distinct sessions. Classification comes from a
 dated snapshot of the official Claude Code command reference; bundled skills
 and workflows (including `/doctor`) are excluded, while unknown command names
 are shown separately for auditability. Only the `<command-name>` value and its
-timestamp are retained in memory during aggregation. Command arguments and
-surrounding prompt text are never collected or written to the dashboard.
+timestamp are retained as parsed command records for aggregation. Command
+arguments and surrounding prompt text are read transiently while parsing the
+transcript JSON, but claude-prospector never retains them or writes them to the
+dashboard.
 
 `--track-mcp-calls` adds a per-session MCP tool-call collection pass, which
 costs additional full transcript reads: measured on the maintainer's real
@@ -749,7 +751,7 @@ The table below lists everything `claude-prospector` writes under that base dire
 
 | Path | Contents | Written by | Contains prompt text? |
 |---|---|---|---|
-| `dashboard.html` | Aggregated token/cost, skill, and command-name stats | `dashboard` subcommand, or the opt-in `dashboard-regen` Stop hook | No — slash-command arguments and surrounding prompt text are not collected |
+| `dashboard.html` | Aggregated token/cost, skill, and command-name stats | `dashboard` subcommand, or the opt-in `dashboard-regen` Stop hook | No — command arguments and surrounding prompt text are read transiently from transcript JSON, but are never retained or written by claude-prospector or the dashboard |
 | `hook.log` | One diagnostic line, e.g. `skipped: no skills found in Agent prompt for <agent>`; truncated and overwritten on every hook run | All hooks | No — logs the target agent *name*, never prompt content |
 | `config.json` | User settings (`project_exclude_patterns`, legacy `autoregen`) | `config` subcommand / manual edit | No |
 | `skill-tracking/<YYYY-MM-DD>.jsonl` | Skill name, timestamp, session-id, and (for Agent dispatches) target agent name, for each `Skill`/`Agent` tool-use event | `skill-tracker` PreToolUse hook — runs automatically on every `Skill`/`Agent` tool call once setup is `VALID` | No — only the matched skill *name* is stored, never the surrounding prompt |
