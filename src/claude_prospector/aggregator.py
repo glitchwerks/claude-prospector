@@ -144,9 +144,28 @@ def aggregate(
             # ``agent_tokens`` maps EVERY observed path-key (not just leaves)
             # to its real accumulated tokens from this session so clients
             # can use accurate attribution instead of the equal-share heuristic.
-            session_agent_tokens: dict[str, int] = defaultdict(int)
+            session_agent_stats: dict[str, dict] = {}
+            session_agent_models: dict[str, Counter] = defaultdict(Counter)
+            session_agent_model_tokens: dict[str, Counter] = defaultdict(Counter)
             for m in session_messages:
-                session_agent_tokens[_path_key(m)] += m.total_tokens
+                agent_key = _path_key(m)
+                if agent_key not in session_agent_stats:
+                    session_agent_stats[agent_key] = {}
+                _add_tokens(session_agent_stats[agent_key], m)
+                session_agent_models[agent_key][m.model_short] += 1
+                session_agent_model_tokens[agent_key][m.model_short] += m.total_tokens
+            for agent_key, models in session_agent_models.items():
+                session_agent_stats[agent_key]["primary_model"] = models.most_common(1)[
+                    0
+                ][0]
+                session_agent_stats[agent_key]["model_message_counts"] = dict(models)
+                session_agent_stats[agent_key]["model_split"] = dict(
+                    session_agent_model_tokens[agent_key]
+                )
+            session_agent_tokens = {
+                agent_key: stats["total_tokens"]
+                for agent_key, stats in session_agent_stats.items()
+            }
 
             result.sessions.append(
                 {
@@ -158,7 +177,8 @@ def aggregate(
                     ).isoformat(),
                     "root_agent": session.root_agent,
                     "agents": agents_in_session,
-                    "agent_tokens": dict(session_agent_tokens),
+                    "agent_tokens": session_agent_tokens,
+                    "agent_stats": session_agent_stats,
                     "total_tokens": sum(m.total_tokens for m in session_messages),
                     "input_tokens": sum(m.input_tokens for m in session_messages),
                     "output_tokens": sum(m.output_tokens for m in session_messages),
@@ -196,7 +216,7 @@ def aggregate(
 
     agent_session_count: dict[str, set] = defaultdict(set)
     for session_summary in result.sessions:
-        for agent in session_summary["agents"]:
+        for agent in session_summary["agent_stats"]:
             agent_session_count[agent].add(session_summary["session_id"])
     for agent in result.by_agent:
         result.by_agent[agent]["session_count"] = len(

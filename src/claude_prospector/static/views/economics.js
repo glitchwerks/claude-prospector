@@ -796,15 +796,6 @@
   }
 
   // ── Render: Per-agent economics table ──────────────────────────────────
-  // We display agents as leaf-segment + dim chain (Goodhart-guard friendly).
-  function agentLeaf(name) {
-    const SEP = '→';
-    const parts = name.split(SEP);
-    const leaf = parts[parts.length - 1];
-    if (parts.length === 1) return `<span class="leaf">${leaf}</span>`;
-    return `<span class="leaf">${leaf}</span><br><span class="chain">${parts.slice(0, -1).join(' ' + SEP + ' ')} ${SEP}</span>`;
-  }
-
   function renderAgentTable(ctx) {
     const byAgent = window.DATA.by_agent;
     const { recent: recentAP, prior: priorAP } = ctx.agentPeriods;
@@ -851,7 +842,7 @@
         </div>
         ${rows.map(r => `
           <div class="agent-row">
-            <div class="nm">${agentLeaf(r.name)}</div>
+            <div class="nm">${CP.agentLeaf(r.name)}</div>
             <div><span class="badge badge-${r.info.primary_model || 'unknown'}">${r.info.primary_model || '—'}</span></div>
             <div class="metric">
               <div class="v">${fmtSig(r.tpmCur)}</div>
@@ -894,7 +885,7 @@
     function row(r, kind) {
       return `
         <div class="score-row">
-          <div class="nm">${agentLeaf(r.name)}</div>
+          <div class="nm">${CP.agentLeaf(r.name)}</div>
           <div class="cur">${fmtSig(r.cur)}</div>
           <div class="prev">${fmtSig(r.pre)}</div>
           <div class="delta ${kind}">${r.deltaPct > 0 ? '+' : ''}${r.deltaPct.toFixed(0)}%</div>

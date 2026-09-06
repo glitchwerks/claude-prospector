@@ -1,6 +1,8 @@
 // Shared utilities, palette, chart defaults.
 
 (function () {
+  const AGENT_PATH_SEP = '→';
+
   // ── Palette (GitHub-dark inspired) ───────────────────────────────────────
   const PALETTE = {
     bg:        '#0d1117',
@@ -62,6 +64,20 @@
   }
   function fmtDay(iso) {
     return new Date(iso + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  }
+
+  const _ESC_MAP = {
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  };
+  function esc(value) {
+    return String(value).replace(/[&<>"']/g, (char) => _ESC_MAP[char]);
+  }
+  function agentLeaf(name) {
+    const parts = String(name).split(AGENT_PATH_SEP);
+    const leaf = esc(parts[parts.length - 1]);
+    if (parts.length === 1) return `<span class="leaf">${leaf}</span>`;
+    const chain = parts.slice(0, -1).map(esc).join(` ${AGENT_PATH_SEP} `);
+    return `<span class="leaf">${leaf}</span><br><span class="chain">${chain} ${AGENT_PATH_SEP}</span>`;
   }
   // Return a YYYY-MM-DD string in the viewer's local timezone.
   // Uses toLocaleDateString('en-CA') which yields ISO-format local date
@@ -127,35 +143,76 @@
       // The old equal-apportionment (total / agents.length) over-attributed parent
       // tokens to sub-agents; agent_tokens was added to the aggregator output to
       // provide accurate per-agent breakdowns per session.
-      const agentKeys = Object.keys(s.agent_tokens || {}).length > 0
-        ? Object.keys(s.agent_tokens)
-        : (s.agents || []);
+      const agentKeys = Object.keys(s.agent_stats || {}).length > 0
+        ? Object.keys(s.agent_stats)
+        : (Object.keys(s.agent_tokens || {}).length > 0
+          ? Object.keys(s.agent_tokens)
+          : (s.agents || []));
       for (const agent of agentKeys) {
-        if (!byAgent[agent]) byAgent[agent] = { total_tokens: 0, session_count: 0, primary_model: null, _modelTokens: {} };
+        if (!byAgent[agent]) {
+          byAgent[agent] = {
+            total_tokens: 0,
+            message_count: 0,
+            session_count: 0,
+            cache_creation_tokens: 0,
+            cache_read_tokens: 0,
+            primary_model: null,
+            _modelCounts: {},
+            _modelTokens: {},
+          };
+        }
         byAgent[agent].session_count += 1;
-        const agentShare = s.agent_tokens && s.agent_tokens[agent] != null
-          ? s.agent_tokens[agent]
-          : Math.round(s.total_tokens / Math.max(1, agentKeys.length));
+        const exact = s.agent_stats && s.agent_stats[agent];
+        const agentShare = exact
+          ? exact.total_tokens
+          : (s.agent_tokens && s.agent_tokens[agent] != null
+            ? s.agent_tokens[agent]
+            : Math.round(s.total_tokens / Math.max(1, agentKeys.length)));
         byAgent[agent].total_tokens += agentShare;
         // Model split: apportion by this agent's token fraction of session total.
         const sessionTotal = s.total_tokens || 1;
         const agentFraction = agentShare / sessionTotal;
-        for (const [m, t] of Object.entries(s.model_split || {})) {
-          byAgent[agent]._modelTokens[m] = (byAgent[agent]._modelTokens[m] || 0) + Math.round(t * agentFraction);
+        byAgent[agent].message_count += exact
+          ? exact.message_count
+          : Math.round((s.message_count || 0) * agentFraction);
+        byAgent[agent].cache_creation_tokens += exact
+          ? exact.cache_creation_tokens
+          : Math.round((s.cache_creation_tokens || 0) * agentFraction);
+        byAgent[agent].cache_read_tokens += exact
+          ? exact.cache_read_tokens
+          : Math.round((s.cache_read_tokens || 0) * agentFraction);
+        if (exact) {
+          for (const [m, count] of Object.entries(exact.model_message_counts || {})) {
+            byAgent[agent]._modelCounts[m] =
+              (byAgent[agent]._modelCounts[m] || 0) + count;
+          }
+          for (const [m, t] of Object.entries(exact.model_split || {})) {
+            byAgent[agent]._modelTokens[m] =
+              (byAgent[agent]._modelTokens[m] || 0) + t;
+          }
+        } else {
+          for (const [m, t] of Object.entries(s.model_split || {})) {
+            byAgent[agent]._modelTokens[m] =
+              (byAgent[agent]._modelTokens[m] || 0)
+              + Math.round(t * agentFraction);
+          }
         }
       }
     }
 
     for (const [agent, info] of Object.entries(byAgent)) {
-      if (authoritative[agent] && authoritative[agent].primary_model) {
-        info.primary_model = authoritative[agent].primary_model;
-      } else {
-        let best = null, bestC = 0;
-        for (const [m, c] of Object.entries(info._modelTokens || {})) {
-          if (c > bestC) { best = m; bestC = c; }
-        }
-        info.primary_model = best;
+      let best = null, bestCount = 0;
+      for (const [m, count] of Object.entries(info._modelCounts || {})) {
+        if (count > bestCount) { best = m; bestCount = count; }
       }
+      if (!best) {
+        for (const [m, tokens] of Object.entries(info._modelTokens || {})) {
+          if (tokens > bestCount) { best = m; bestCount = tokens; }
+        }
+      }
+      info.primary_model = best
+        || (authoritative[agent] && authoritative[agent].primary_model)
+        || null;
     }
 
     return { byModel, byAgent, byProject, byDay, totalTokens };
@@ -260,8 +317,10 @@
 
   // ── Export ───────────────────────────────────────────────────────────────
   window.CP = {
+    AGENT_PATH_SEP,
     PALETTE,
     fmtTokens, fmtTokensFull, fmtPct, fmtDuration, fmtRelTime, fmtDay,
+    esc, agentLeaf,
     localDateKey,
     modelColor,
     windowCutoff, filterSessions, reAggregate, computeBuckets, forecastHit,

@@ -42,6 +42,8 @@
   /* Segmented view toggle */
   .view-toggle {
     display: inline-flex;
+    max-width: 100%;
+    overflow-x: auto;
     background: #161b22;
     border: 1px solid #30363d;
     border-radius: 10px;
@@ -49,6 +51,7 @@
     gap: 2px;
   }
   .view-toggle button {
+    flex: 0 0 auto;
     background: transparent;
     border: 0;
     color: #8b949e;
@@ -295,6 +298,7 @@
 <script>{{ layout_b_diag_js | safe }}</script>
 <script>{{ economics_js | safe }}</script>
 <script>{{ mcp_usage_js | safe }}</script>
+<script>{{ agents_js | safe }}</script>
 
 <div class="stage">
   <div class="shell-head">
@@ -305,18 +309,22 @@
       </div>
     </div>
     <div class="view-toggle" role="tablist" aria-label="View mode">
-      <button data-view="basic" class="active" role="tab" aria-selected="true">
+      <button data-view="basic" class="active" role="tab" aria-selected="true"
+        tabindex="0">
         Overview
       </button>
-      <button data-view="detail" role="tab" aria-selected="false">
+      <button data-view="detail" role="tab" aria-selected="false" tabindex="-1">
         Breakdown
       </button>
       <button data-view="advanced" class="advanced" role="tab"
-        aria-selected="false">
+        aria-selected="false" tabindex="-1">
         Advanced <span class="badge">Power user</span>
       </button>
-      <button data-view="mcp" role="tab" aria-selected="false">
+      <button data-view="mcp" role="tab" aria-selected="false" tabindex="-1">
         MCP Usage
+      </button>
+      <button data-view="agents" role="tab" aria-selected="false" tabindex="-1">
+        Agents
       </button>
     </div>
   </div>
@@ -342,6 +350,8 @@
     mcp:
       "Whole-corpus MCP server/tool call volume — not filtered by the " +
       "period selector above.",
+    agents:
+      "Search every agent path and inspect usage for a selected period.",
   };
 
   function _renderView(view) {
@@ -359,8 +369,12 @@
       renderLayoutBDiag(_container);
     } else if (view === 'mcp') {
       renderMcpUsage(_container);
-    } else {
+    } else if (view === 'agents') {
+      renderAgents(_container);
+    } else if (view === 'advanced') {
       renderEconomics(_container);
+    } else {
+      console.error('Unknown view:', view);
     }
     _sub.innerHTML = _VIEW_SUBS[view] || '';
   }
@@ -370,12 +384,30 @@
       const active = b.dataset.view === view;
       b.classList.toggle('active', active);
       b.setAttribute('aria-selected', active ? 'true' : 'false');
+      b.setAttribute('tabindex', active ? '0' : '-1');
     });
     _renderView(view);
   }
 
   _buttons.forEach(function(b) {
     b.addEventListener('click', function() { setView(b.dataset.view); });
+    b.addEventListener('keydown', function(e) {
+      const current = Array.prototype.indexOf.call(_buttons, b);
+      let next = null;
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+        next = (current - 1 + _buttons.length) % _buttons.length;
+      } else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+        next = (current + 1) % _buttons.length;
+      } else if (e.key === 'Home') {
+        next = 0;
+      } else if (e.key === 'End') {
+        next = _buttons.length - 1;
+      }
+      if (next === null) return;
+      e.preventDefault();
+      _buttons[next].focus();
+      setView(_buttons[next].dataset.view);
+    });
   });
 
   // Allow the overview "Switch to Advanced" CTA to drive the shell
