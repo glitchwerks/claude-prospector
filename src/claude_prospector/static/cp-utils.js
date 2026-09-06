@@ -218,6 +218,71 @@
     return { byModel, byAgent, byProject, byDay, totalTokens };
   }
 
+  // Re-aggregate only agent metrics, filtering timestamped activity exactly.
+  // Legacy session payloads retain the original start-time fallback.
+  function reAggregateAgents(sessions, period, authoritative = {}) {
+    const cutoff = windowCutoff(period);
+    const projected = [];
+
+    for (const session of sessions) {
+      const activity = Array.isArray(session.agent_activity)
+        ? session.agent_activity
+        : [];
+      if (!activity.length) {
+        if (!cutoff || new Date(session.start_time) >= cutoff) {
+          projected.push(session);
+        }
+        continue;
+      }
+
+      const selected = cutoff
+        ? activity.filter(item => new Date(item.timestamp) >= cutoff)
+        : activity;
+      if (!selected.length) continue;
+
+      const agentStats = {};
+      let totalTokens = 0;
+      for (const item of selected) {
+        const agent = item.agent;
+        if (!agentStats[agent]) {
+          agentStats[agent] = {
+            total_tokens: 0,
+            message_count: 0,
+            cache_creation_tokens: 0,
+            cache_read_tokens: 0,
+            model_message_counts: {},
+            model_split: {},
+          };
+        }
+        const stats = agentStats[agent];
+        const tokens = item.total_tokens || 0;
+        stats.total_tokens += tokens;
+        stats.message_count += 1;
+        stats.cache_creation_tokens += item.cache_creation_tokens || 0;
+        stats.cache_read_tokens += item.cache_read_tokens || 0;
+        stats.model_message_counts[item.model] =
+          (stats.model_message_counts[item.model] || 0) + 1;
+        stats.model_split[item.model] =
+          (stats.model_split[item.model] || 0) + tokens;
+        totalTokens += tokens;
+      }
+
+      projected.push({
+        ...session,
+        start_time: selected[0].timestamp,
+        agents: Object.keys(agentStats),
+        agent_tokens: Object.fromEntries(
+          Object.entries(agentStats).map(([agent, stats]) => [agent, stats.total_tokens]),
+        ),
+        agent_stats: agentStats,
+        total_tokens: totalTokens,
+        message_count: selected.length,
+      });
+    }
+
+    return { byAgent: reAggregate(projected, authoritative).byAgent };
+  }
+
   // ── Budget computations ──────────────────────────────────────────────────
   function computeBuckets(sessions, limits, now = window.MOCK_NOW || new Date()) {
     const c5h = new Date(now.getTime() - 5  * 60 * 60 * 1000);
@@ -323,7 +388,8 @@
     esc, agentLeaf,
     localDateKey,
     modelColor,
-    windowCutoff, filterSessions, reAggregate, computeBuckets, forecastHit,
+    windowCutoff, filterSessions, reAggregate, reAggregateAgents,
+    computeBuckets, forecastHit,
     sparkline,
     applyChartDefaults, destroyChart, destroyChartsByPrefix, registerChart,
     modelSeries,

@@ -17,8 +17,9 @@
 
   function periodAgents(period) {
     if (period === 'all') return window.DATA.by_agent || {};
-    const sessions = CP.filterSessions(window.DATA.sessions, period);
-    return CP.reAggregate(sessions, window.DATA.by_agent).byAgent;
+    return CP.reAggregateAgents(
+      window.DATA.sessions, period, window.DATA.by_agent,
+    ).byAgent;
   }
 
   function renderPeriodTabs(activePeriod) {

@@ -75,6 +75,25 @@ def _add_tokens(bucket: dict, msg: MessageRecord) -> None:
     bucket["message_count"] = bucket.get("message_count", 0) + 1
 
 
+def _agent_activity(msg: MessageRecord) -> dict:
+    """Return the compact agent fields needed for exact client cutoffs.
+
+    Args:
+        msg: Message whose timestamped agent usage is summarized.
+
+    Returns:
+        A JSON-serializable per-message agent activity record.
+    """
+    return {
+        "timestamp": msg.timestamp.isoformat(),
+        "agent": _path_key(msg),
+        "model": msg.model_short,
+        "total_tokens": msg.total_tokens,
+        "cache_creation_tokens": msg.cache_creation_tokens,
+        "cache_read_tokens": msg.cache_read_tokens,
+    }
+
+
 def aggregate(
     sessions: list[SessionRecord],
     from_date: datetime | None = None,
@@ -179,6 +198,7 @@ def aggregate(
                     "agents": agents_in_session,
                     "agent_tokens": session_agent_tokens,
                     "agent_stats": session_agent_stats,
+                    "agent_activity": [_agent_activity(m) for m in session_messages],
                     "total_tokens": sum(m.total_tokens for m in session_messages),
                     "input_tokens": sum(m.input_tokens for m in session_messages),
                     "output_tokens": sum(m.output_tokens for m in session_messages),

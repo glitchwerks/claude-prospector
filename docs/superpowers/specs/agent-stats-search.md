@@ -45,20 +45,26 @@ feature branch on 2026-09-05.
 
 ## 1. What this is, and what it is not
 
-**It adds a presentation surface plus exact per-session agent summaries.**
-`AggregateResult.by_agent` (`aggregator.py:55`, populated
-`aggregator.py:207-211`) already holds every observed agent path-key with no
-truncation, and `renderer.py:92` already ships it into `window.DATA`. The bounded
-periods selected in D-4 require exact message, cache, and model totals per agent,
-so session summaries now add `agent_stats` while retaining `agent_tokens` for
-compatibility (`aggregator.py:139-181`; #295). There is no raw-data collection or
-CLI-command change.
+**It adds a presentation surface plus exact per-session agent summaries and
+timestamped agent activity.**
+`AggregateResult.by_agent` (`src/claude_prospector/aggregator.py:L54-L59`,
+populated `src/claude_prospector/aggregator.py:L227-L243`) already holds every
+observed agent path-key with no truncation, and
+`src/claude_prospector/renderer.py:L92` already ships it into `window.DATA`.
+The bounded periods selected in D-4 require exact message, cache, and model
+totals per agent, so session summaries add `agent_stats` and compact per-message
+`agent_activity` while retaining `agent_tokens` for compatibility
+(`src/claude_prospector/aggregator.py:L158-L201`; #295; PR #299). There is no
+message content in this payload and no CLI-command change
+(`src/claude_prospector/aggregator.py:L78-L94`).
 
-**Additive `--format json` schema change.** `cli/dashboard.py:271` already emits
-the complete `by_agent` map in JSON mode. Exact bounded-period metrics add an
-`agent_stats` object to each session summary while retaining the existing
-`agent_tokens` field (`aggregator.py:139-181`; #295). The command and existing
-fields are unchanged.
+**Additive `--format json` schema change.**
+`src/claude_prospector/cli/dashboard.py:L271` already emits
+the complete `by_agent` map in JSON mode. Exact bounded-period metrics add
+`agent_stats` and `agent_activity` to each session summary while retaining the
+existing `agent_tokens` field
+(`src/claude_prospector/aggregator.py:L158-L201`; #295; PR #299). The command
+and existing fields are unchanged.
 
 **Non-goal — deleting the curated Top-N lists.** Issue #295's ask is *"no way to
 look up an arbitrary agent's stats"* — an additive lookup capability. The three
@@ -86,7 +92,7 @@ Three facts that constrain the design:
 1. **The key space is uniform.** `by_agent` keys are
    `AGENT_PATH_SEPARATOR.join(msg.agent_path)` (`aggregator.py:27-43`), separator
    `→` U+2192 (`constants.py:9-12`). `session.agent_tokens` uses the *same*
-   `_path_key(m)` (`aggregator.py:151-154`), and `CP.reAggregate` keys off
+   `_path_key(m)` (`aggregator.py:169-175`), and `CP.reAggregate` keys off
    `s.agent_stats` with an `agent_tokens` compatibility fallback
    (`cp-utils.js:142-170`). So all three views and `by_agent`
    share one key space. A single match predicate works everywhere.
@@ -192,19 +198,24 @@ the follow-up.
 
 **R-7 (applies — D-1=(b), D-4=(b)) — Period-aware, with an exact all-time
 path.** The lookup surface defaults to `7d` and exposes `5h`, `24h`, `7d`,
-`30d`, and `all`. Bounded periods filter `window.DATA.sessions` through
-`CP.filterSessions` and rebuild agent totals through `CP.reAggregate` from the
-exact per-session `agent_stats` payload (`aggregator.py:139-181`,
-`static/cp-utils.js:142-216`); `all` reads the authoritative
-`window.DATA.by_agent` payload directly (`aggregator.py:207-211`). State the
+`30d`, and `all`. Bounded periods pass all sessions to the agent-specific
+`CP.reAggregateAgents`, which applies the cutoff to each `agent_activity`
+timestamp and rebuilds exact session-scoped agent totals; stale payloads without
+`agent_activity` retain the session-start `agent_stats` / `agent_tokens`
+compatibility fallback (`src/claude_prospector/static/cp-utils.js:L221-L284`).
+The Agents view uses that helper without changing the shared Breakdown path
+(`src/claude_prospector/static/views/agents.js:L18-L22`; PR #299). `all` reads
+the authoritative `window.DATA.by_agent` payload directly
+(`src/claude_prospector/static/views/agents.js:L18-L20`). State the
 selected-period basis in the panel copy. User decision: #295.
 
 **R-8 (applies — D-1=(b)) — Columns.** Show, per matched agent path: leaf + parent
 chain, `primary_model` (badge), `total_tokens`, `message_count`,
 `session_count`, and the cache split (`cache_creation_tokens` /
-`cache_read_tokens`) — every field `aggregator.py:64-75,207-223` actually
-populates. No derived metrics that duplicate the Advanced tab's per-message
-economics.
+`cache_read_tokens`) — every field
+`src/claude_prospector/aggregator.py:L64-L75` and
+`src/claude_prospector/aggregator.py:L227-L243` actually populates. No derived
+metrics that duplicate the Advanced tab's per-message economics.
 
 **R-9 (applies — D-1=(b)) — Tab-shell wiring.** See §5. The `_renderView`
 fallthrough is a live footgun; stacking a new branch ahead of the existing
@@ -222,8 +233,8 @@ target is an id **other than** the view root, proving the scoped-swap.
 Additionally (now unconditional — D-1=(b)): a `data-view="agents"` assertion in
 rendered HTML (mirroring `tests/test_mcp_usage_view.py:226-233`); an
 entry-function-name assertion (mirroring `tests/test_phase3_views.py:224-231`);
-assertions for all five approved period values and the
-`CP.filterSessions`/`CP.reAggregate` path;
+assertions for all five approved period values and the agent-specific
+`CP.reAggregateAgents` path;
 assertions that an explicit `else if (view === 'advanced')` branch and explicit
 no-match handling exist (§5's BLOCKING fix); and a `_VIEW_SUBS` `agents:`
 key-presence assertion in rendered HTML (§5, §7 Phase 3).
@@ -380,15 +391,19 @@ merely large, (b) is right regardless.
 
 - (a) No — whole-corpus `by_agent`, with a stated time basis (mirrors MCP Usage,
   `mcp-usage.js:1-5,99-110`).
-- (b) Yes — re-aggregate client-side via `CP.reAggregate(CP.filterSessions(...))`
-  (`cp-utils.js:101-218`), giving 5h/24h/7d/30d/all like the Breakdown tab.
+- (b) Yes — re-aggregate client-side via `CP.reAggregateAgents(...)`, applying
+  each bounded cutoff to timestamped per-message agent activity while retaining
+  a start-time fallback for legacy session payloads
+  (`src/claude_prospector/static/cp-utils.js:L221-L284`), giving
+  5h/24h/7d/30d/all like the Breakdown tab.
 
 **User confirmed 2026-09-05: option (b), recorded in #295.** The new tab owns
 its period control because the shell has no global selector.
 
 The implemented choice is (b): the new tab owns its period control because the
-shell has no global selector, and the exact per-session payload prevents bounded
-periods from presenting apportioned message, cache, or model totals (#295).
+shell has no global selector, and timestamped agent activity prevents a session
+that spans a cutoff from dropping valid later activity or presenting apportioned
+message, cache, or model totals (#295; PR #299).
 
 ### D-5 — Ship one PR or two? — **RESOLVED: (a)**
 
@@ -435,7 +450,7 @@ than left as an informal cross-spec note (§5 Site 6). **Gate:** full
 `<input id="agent-name-filter">`, and a tab-local `5h`/`24h`/`7d`/`30d`/`all`
 control, then `<div id="agent-result-list">` as the scoped swap target (R-3).
 Default to `7d`; use the exact authoritative `by_agent` payload for `all` and
-the R-7 exact per-session filtered/re-aggregated path for bounded periods.
+the R-7 exact timestamped agent-activity path for bounded periods.
 Render R-8's columns
 for every matching agent entry, including labeled root-session context for
 `general`.

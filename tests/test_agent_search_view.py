@@ -143,8 +143,10 @@ def test_agent_view_supports_every_approved_period() -> None:
 
     for period in ("5h", "24h", "7d", "30d", "all"):
         assert f"'{period}'" in source
-    assert "CP.filterSessions(window.DATA.sessions, period)" in source
-    assert "CP.reAggregate(" in source
+    assert "CP.reAggregateAgents(" in source
+    assert "window.DATA.sessions, period, window.DATA.by_agent" in re.sub(
+        r"\s+", " ", source
+    )
     assert "window.DATA.by_agent" in source
 
 
@@ -253,6 +255,139 @@ process.stdout.write(JSON.stringify(window.CP.reAggregate(sessions).byAgent));
     by_agent = json.loads(completed.stdout)
 
     assert by_agent["general"]["primary_model"] == "sonnet"
+
+
+def test_bounded_agent_period_keeps_activity_after_session_start(
+    tmp_path: Path,
+) -> None:
+    """A session starting before the cutoff must retain later agent messages."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is unavailable; JavaScript execution test skipped")
+
+    runner = tmp_path / "bounded-agent-check.js"
+    runner.write_text(
+        """
+const fs = require('fs');
+const vm = require('vm');
+global.window = { MOCK_NOW: new Date('2026-09-05T12:00:00+00:00') };
+vm.runInThisContext(fs.readFileSync(process.argv[2], 'utf8'));
+const sessions = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
+const byAgent = window.CP.reAggregateAgents
+  ? window.CP.reAggregateAgents(sessions, '5h').byAgent
+  : window.CP.reAggregate(window.CP.filterSessions(sessions, '5h')).byAgent;
+process.stdout.write(JSON.stringify(byAgent));
+""",
+        encoding="utf-8",
+    )
+    sessions_path = tmp_path / "bounded-agent-sessions.json"
+    sessions_path.write_text(
+        json.dumps(
+            [
+                {
+                    "session_id": "spans-cutoff",
+                    "project": "proj",
+                    "start_time": "2026-09-05T06:00:00+00:00",
+                    "total_tokens": 1250,
+                    "message_count": 4,
+                    "model_split": {"haiku": 50, "opus": 1000, "sonnet": 200},
+                    "agent_stats": {
+                        "general": {
+                            "total_tokens": 1250,
+                            "message_count": 4,
+                            "cache_creation_tokens": 36,
+                            "cache_read_tokens": 57,
+                            "model_split": {
+                                "haiku": 50,
+                                "opus": 1000,
+                                "sonnet": 200,
+                            },
+                            "model_message_counts": {
+                                "haiku": 1,
+                                "opus": 1,
+                                "sonnet": 2,
+                            },
+                        }
+                    },
+                    "agent_activity": [
+                        {
+                            "timestamp": "2026-09-05T06:00:00+00:00",
+                            "agent": "general",
+                            "model": "haiku",
+                            "total_tokens": 50,
+                            "cache_creation_tokens": 1,
+                            "cache_read_tokens": 2,
+                        },
+                        {
+                            "timestamp": "2026-09-05T08:00:00+00:00",
+                            "agent": "general",
+                            "model": "opus",
+                            "total_tokens": 1000,
+                            "cache_creation_tokens": 20,
+                            "cache_read_tokens": 40,
+                        },
+                        {
+                            "timestamp": "2026-09-05T10:00:00+00:00",
+                            "agent": "general",
+                            "model": "sonnet",
+                            "total_tokens": 100,
+                            "cache_creation_tokens": 10,
+                            "cache_read_tokens": 10,
+                        },
+                        {
+                            "timestamp": "2026-09-05T11:00:00+00:00",
+                            "agent": "general",
+                            "model": "sonnet",
+                            "total_tokens": 100,
+                            "cache_creation_tokens": 5,
+                            "cache_read_tokens": 5,
+                        },
+                    ],
+                },
+                {
+                    "session_id": "legacy-in-window",
+                    "project": "proj",
+                    "start_time": "2026-09-05T09:00:00+00:00",
+                    "total_tokens": 75,
+                    "message_count": 1,
+                    "model_split": {"haiku": 75},
+                    "agent_tokens": {"legacy-agent": 75},
+                    "agent_stats": {
+                        "legacy-agent": {
+                            "total_tokens": 75,
+                            "message_count": 1,
+                            "cache_creation_tokens": 3,
+                            "cache_read_tokens": 4,
+                            "model_split": {"haiku": 75},
+                            "model_message_counts": {"haiku": 1},
+                        }
+                    },
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [node, str(runner), str(_CP_UTILS_JS), str(sessions_path)],
+        capture_output=True,
+        check=True,
+        text=True,
+    )
+    by_agent = json.loads(completed.stdout)
+
+    assert by_agent["general"] == {
+        "total_tokens": 1200,
+        "message_count": 3,
+        "session_count": 1,
+        "cache_creation_tokens": 35,
+        "cache_read_tokens": 55,
+        "primary_model": "sonnet",
+        "_modelCounts": {"opus": 1, "sonnet": 2},
+        "_modelTokens": {"opus": 1000, "sonnet": 200},
+    }
+    assert by_agent["legacy-agent"]["total_tokens"] == 75
+    assert by_agent["legacy-agent"]["primary_model"] == "haiku"
 
 
 def test_agents_tab_is_inlined_and_wired(tmp_path: Path) -> None:

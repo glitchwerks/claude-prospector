@@ -188,6 +188,56 @@ class TestAggregateByAgent:
             "model_message_counts": {"sonnet": 1},
         }
 
+    def test_session_summary_preserves_timestamped_agent_activity(self):
+        """A cutoff inside a session must retain later agent activity."""
+        before_cutoff = datetime(2026, 4, 9, 6, 0, tzinfo=timezone.utc)
+        after_cutoff = datetime(2026, 4, 9, 10, 0, tzinfo=timezone.utc)
+        sessions = [
+            _session(
+                [
+                    _msg(
+                        agent="general-purpose",
+                        model="claude-opus-4-6",
+                        input_t=100,
+                        output_t=50,
+                        cache_read=25,
+                        cache_create=10,
+                        ts=before_cutoff,
+                    ),
+                    _msg(
+                        agent="general-purpose",
+                        model="claude-sonnet-4-6",
+                        input_t=40,
+                        output_t=20,
+                        cache_read=5,
+                        cache_create=2,
+                        ts=after_cutoff,
+                    ),
+                ]
+            )
+        ]
+
+        result = aggregate(sessions)
+
+        assert result.sessions[0]["agent_activity"] == [
+            {
+                "timestamp": "2026-04-09T06:00:00+00:00",
+                "agent": "general-purpose",
+                "model": "opus",
+                "total_tokens": 185,
+                "cache_creation_tokens": 10,
+                "cache_read_tokens": 25,
+            },
+            {
+                "timestamp": "2026-04-09T10:00:00+00:00",
+                "agent": "general-purpose",
+                "model": "sonnet",
+                "total_tokens": 67,
+                "cache_creation_tokens": 2,
+                "cache_read_tokens": 5,
+            },
+        ]
+
 
 class TestAggregateBySkill:
     def test_groups_by_skill(self):
