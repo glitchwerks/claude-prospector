@@ -345,6 +345,10 @@ class TestVendorJsInlined:
             "Rendered HTML does not contain window.CP. "
             "cp-utils.js should be inlined via the renderer."
         )
+        assert "matchesNameFilter" in html, (
+            "Rendered HTML does not contain CP.matchesNameFilter. "
+            "The current cp-utils.js content should be inlined."
+        )
 
 
 # ---------------------------------------------------------------------------

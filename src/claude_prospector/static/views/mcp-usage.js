@@ -60,20 +60,6 @@
       && info.sessions_seen_in !== undefined;
   }
 
-  // Issue #282: the name-filter search box's match predicate -- a
-  // case-insensitive substring test against a server or method/tool
-  // name. `query` is assumed already trimmed+lower-cased once by the
-  // 'input' listener that reads it off the filter box (see
-  // renderMcpUsage below), so only `name` needs normalizing here.
-  // Extracted as its own helper (mirrors isGuidLike/isDormantServer
-  // above) rather than inlined at each filter call site, since it's
-  // applied independently to both server names (renderServers) and
-  // method/tool names (renderMethodRows).
-  function matchesNameFilter(name, query) {
-    if (!query) return true;
-    return String(name).toLowerCase().includes(query);
-  }
-
   function fmtWindowBound(iso) {
     if (!iso) return null;
     // window.start/end (cli/dashboard.py) are date-only 'YYYY-MM-DD'
@@ -342,7 +328,7 @@
       return '<div class="none">No per-method breakdown recorded.</div>';
     }
     const filtered = query
-      ? entries.filter(([method]) => matchesNameFilter(method, query))
+      ? entries.filter(([method]) => CP.matchesNameFilter(method, query))
       : entries;
     if (filtered.length === 0) {
       return '<div class="none">No tools match the current filter.</div>';
@@ -452,7 +438,7 @@
     // not a specific tool). Otherwise only pass the query through to
     // renderMethodRows -- this card is only included at all because at
     // least one method matched (see renderServers), so narrow to those.
-    const methodQuery = (query && !matchesNameFilter(name, query)) ? query : '';
+    const methodQuery = (query && !CP.matchesNameFilter(name, query)) ? query : '';
 
     return `
       <div class="server-card ${isDormant ? 'dormant' : ''}">
@@ -528,9 +514,9 @@
     const names = !query
       ? nonDormantNames
       : nonDormantNames.filter(name => {
-          if (matchesNameFilter(name, query)) return true;
+          if (CP.matchesNameFilter(name, query)) return true;
           const methodNames = Object.keys(byServer[name].by_method || {});
-          return methodNames.some(method => matchesNameFilter(method, query));
+          return methodNames.some(method => CP.matchesNameFilter(method, query));
         });
     const hiddenGuidCount = allNames.length - nonGuidNames.length;
     const hiddenDormantCount = nonGuidNames.length - nonDormantNames.length;

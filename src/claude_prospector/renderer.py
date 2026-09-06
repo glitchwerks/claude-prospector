@@ -124,6 +124,7 @@ def render(
         economics_js=_read_static("views/economics.js"),
         mcp_usage_js=_read_static("views/mcp-usage.js"),
         agents_js=_read_static("views/agents.js"),
+        skills_js=_read_static("views/skills.js"),
     )
 
     if output_path is None:

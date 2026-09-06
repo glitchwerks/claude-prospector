@@ -8,14 +8,14 @@ box, not a CLI flag -- ``window.DATA.by_mcp_usage`` already carries the
 full server/tool data client-side, so filtering is a pure rendering-layer
 concern confined to this one file, with no aggregator/CLI changes.
 
-These are **source-containment** assertions, not rendering assertions --
-this repo has no JS execution capability (no ``package.json``, no
-jsdom/playwright in CI). They mirror the established pattern in
+Most of these are **source-containment** assertions. A focused Node.js
+regression also executes the real renderer with a minimal DOM boundary;
+it is skipped when Node.js is unavailable. The source checks mirror the
+established pattern in
 ``tests/test_mcp_usage_view_guid_filter.py`` (issue #279) and
 ``tests/test_mcp_usage_view_zero_call_filter.py`` (issue #281): they prove
 the feature's structural markers exist in ``mcp-usage.js``'s source --
-element markup, event wiring, and a filter-predicate function -- they do
-NOT prove pixel-perfect rendering or a simulated keystroke in a browser.
+element markup, event wiring, and a filter-predicate function.
 
 Contract pinned by this test file (names chosen here as the frozen
 contract for the implementer to satisfy):
@@ -38,13 +38,19 @@ contract for the implementer to satisfy):
 
 from __future__ import annotations
 
+import json
 import re
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _MCP_USAGE_JS = (
     _REPO_ROOT / "src" / "claude_prospector" / "static" / "views" / "mcp-usage.js"
 )
+_CP_UTILS_JS = _REPO_ROOT / "src" / "claude_prospector" / "static" / "cp-utils.js"
 
 _FILTER_INPUT_ID = "mcp-name-filter"
 _FILTER_PREDICATE_NAME = "matchesNameFilter"
@@ -212,11 +218,12 @@ class TestNameFilterPredicateExists:
         must exist (a two-parameter function, whatever the parameter
         names).
         """
-        content = _read_mcp_usage_js_source()
+        content = _CP_UTILS_JS.read_text(encoding="utf-8")
         assert re.search(
             rf"function {_FILTER_PREDICATE_NAME}\(\s*\w+\s*,\s*\w+\s*\)", content
         ), (
-            f"mcp-usage.js does not declare a standalone "
+            f"cp-utils.js does not satisfy the shared-helper contract: "
+            f"it does not declare a standalone "
             f"`function {_FILTER_PREDICATE_NAME}(name, query)` helper -- "
             "issue #282 requires a dedicated, testable name-matching "
             "predicate, not inline comparisons duplicated at each filter "
@@ -233,7 +240,7 @@ class TestNameFilterPredicateExists:
         input), so this does not pin normalization to happen twice inside
         the predicate body.
         """
-        content = _read_mcp_usage_js_source()
+        content = _CP_UTILS_JS.read_text(encoding="utf-8")
         fn_body = _extract_function_body(content, f"function {_FILTER_PREDICATE_NAME}(")
         lower_count = fn_body.count(".toLowerCase()")
         assert lower_count >= 1, (
@@ -322,7 +329,7 @@ class TestNameFilterInvokedAtIndependentCallSites:
         ``matchesNameFilter`` must exist in the source.
         """
         content = _read_mcp_usage_js_source()
-        windows = _invocation_windows(content, _FILTER_PREDICATE_NAME)
+        windows = _invocation_windows(content, f"CP.{_FILTER_PREDICATE_NAME}")
         assert len(windows) >= 2, (
             f"{_FILTER_PREDICATE_NAME} has only {len(windows)} call "
             "site(s) -- issue #282 requires filtering both server names "
@@ -331,6 +338,105 @@ class TestNameFilterInvokedAtIndependentCallSites:
             "name, one applied to each method/tool name), not a single "
             "call site reused for both."
         )
+
+    def test_all_predicate_calls_use_the_shared_cp_helper(self) -> None:
+        """A stale bare call must not bypass the shared ``CP`` helper."""
+        content = _read_mcp_usage_js_source()
+        unqualified = re.findall(
+            rf"(?<![.\w]){_FILTER_PREDICATE_NAME}\(",
+            content,
+        )
+        assert not unqualified, (
+            "mcp-usage.js contains an unqualified matchesNameFilter() call; "
+            "all renderer paths must use the shared CP.matchesNameFilter() "
+            "helper from cp-utils.js."
+        )
+
+
+def test_matching_server_and_tool_queries_render_without_errors(
+    tmp_path: Path,
+) -> None:
+    """Server matches keep all methods; tool matches narrow method rows."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is unavailable; JavaScript execution test skipped")
+
+    runner = tmp_path / "mcp-name-filter-check.js"
+    runner.write_text(
+        """
+const fs = require('fs');
+const vm = require('vm');
+global.window = {
+  DATA: {
+    by_mcp_usage: {
+      by_server: {
+        github: {
+          total_calls: 5,
+          sessions_seen_in: 1,
+          avg_calls_per_active_session: 5,
+          by_method: { create_issue: 3, list_repos: 2 },
+        },
+      },
+      by_tool: { create_issue: 3, list_repos: 2 },
+      warnings: {},
+      window: { start: null, end: null },
+    },
+  },
+};
+global.document = {
+  getElementById: () => null,
+  createElement: () => ({ id: '', textContent: '' }),
+  head: { appendChild: () => {} },
+};
+vm.runInThisContext(fs.readFileSync(process.argv[2], 'utf8'));
+global.CP = window.CP;
+vm.runInThisContext(fs.readFileSync(process.argv[3], 'utf8'));
+
+let onInput = null;
+const filterInput = {
+  value: '',
+  addEventListener: (event, handler) => {
+    if (event === 'input') onInput = handler;
+  },
+};
+const serverList = { innerHTML: '' };
+const root = {
+  innerHTML: '',
+  classList: { add: () => {} },
+  querySelector: (selector) => (
+    selector === '#mcp-name-filter' ? filterInput : serverList
+  ),
+};
+window.renderMcpUsage(root);
+
+function search(query) {
+  filterInput.value = query;
+  onInput();
+  return serverList.innerHTML;
+}
+
+process.stdout.write(JSON.stringify({
+  server: search('github'),
+  tool: search('issue'),
+}));
+""",
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [node, str(runner), str(_CP_UTILS_JS), str(_MCP_USAGE_JS)],
+        capture_output=True,
+        check=True,
+        text=True,
+    )
+    rendered = json.loads(completed.stdout)
+
+    assert "github" in rendered["server"]
+    assert "create_issue" in rendered["server"]
+    assert "list_repos" in rendered["server"]
+    assert "github" in rendered["tool"]
+    assert "create_issue" in rendered["tool"]
+    assert "list_repos" not in rendered["tool"]
 
 
 class TestNameFilterAppliesToServerNames:
@@ -342,7 +448,7 @@ class TestNameFilterAppliesToServerNames:
         ``byServer``, or ``server-card``).
         """
         content = _read_mcp_usage_js_source()
-        windows = _invocation_windows(content, _FILTER_PREDICATE_NAME)
+        windows = _invocation_windows(content, f"CP.{_FILTER_PREDICATE_NAME}")
         assert windows, (
             f"{_FILTER_PREDICATE_NAME} is declared but never invoked -- "
             "issue #282 requires the predicate to actually be applied "
@@ -381,7 +487,7 @@ class TestNameFilterAppliesToToolMethodNames:
         field that carry per-method/tool names.
         """
         content = _read_mcp_usage_js_source()
-        windows = _invocation_windows(content, _FILTER_PREDICATE_NAME)
+        windows = _invocation_windows(content, f"CP.{_FILTER_PREDICATE_NAME}")
         assert windows, (
             f"{_FILTER_PREDICATE_NAME} is declared but never invoked -- "
             "issue #282 requires the predicate to actually be applied "

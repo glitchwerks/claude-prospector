@@ -92,21 +92,26 @@ def test_existing_views_consume_shared_helpers() -> None:
     assert "const esc = CP.esc;" in mcp_source
 
 
-def test_agent_filter_matches_full_paths_case_insensitively() -> None:
-    """Breaking full-path substring matching must fail the suite."""
-    source = _read_agents_js_source()
-    match = re.search(
-        r"function\s+matchesAgentFilter\s*\(\s*name\s*,\s*query\s*\)\s*\{"
-        r"(?P<body>.*?)\n\s*\}",
-        source,
-        re.DOTALL,
-    )
+def test_shared_name_filter_helper_is_exported_and_consumed() -> None:
+    """Both dashboard consumers must use the shared name-filter helper."""
+    cp_source = _CP_UTILS_JS.read_text(encoding="utf-8")
+    agents_source = _read_agents_js_source()
+    mcp_source = _MCP_USAGE_JS.read_text(encoding="utf-8")
 
-    assert match is not None
-    body = match.group("body")
-    assert body.count(".toLowerCase()") >= 2
-    assert ".includes(" in body
-    assert "name" in body
+    assert "function matchesNameFilter(name, query)" in cp_source
+    assert "matchesNameFilter," in cp_source
+    assert "function matchesAgentFilter(" not in agents_source
+    assert "function matchesNameFilter(" not in mcp_source
+    assert "CP.matchesNameFilter(" in agents_source
+    assert "CP.matchesNameFilter(" in mcp_source
+
+
+def test_shared_name_filter_trims_both_operands() -> None:
+    """The shared predicate must trim both stringified operands."""
+    source = _CP_UTILS_JS.read_text(encoding="utf-8")
+
+    assert "const normalizedName = String(name).trim().toLowerCase();" in source
+    assert "const normalizedQuery = String(query).trim().toLowerCase();" in source
 
 
 def test_agent_filter_has_accessible_control_and_scoped_results() -> None:
@@ -407,7 +412,7 @@ def test_view_dispatch_is_exhaustive_and_rejects_unknown_views(
     body = _extract_render_view_body(html)
     view_names = set(re.findall(r'data-view="([^"]+)"', html))
 
-    assert view_names == {"basic", "detail", "advanced", "mcp", "agents"}
+    assert view_names == {"basic", "detail", "advanced", "mcp", "agents", "skills"}
     for view_name in view_names:
         assert re.search(
             rf"view\s*===\s*['\"]{view_name}['\"]",

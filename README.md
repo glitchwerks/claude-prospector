@@ -70,7 +70,8 @@ The generated HTML dashboard includes:
 - **Model breakdown** — donut chart and daily stacked bar chart (Opus / Sonnet / Haiku)
 - **Agent breakdown and lookup** — token usage per agent with model attribution,
   nested sub-agent tracing, full-path search, and selectable time periods
-- **Skill usage** — invocation counts per skill
+- **Skill usage and adoption** — searchable union of invoked and agent-passed
+  skills, adoption-gap highlighting, and per-target-agent disclosures
 - **Project breakdown** — tokens per project
 - **Session drill-down** — click a day to see individual sessions with agents, tokens, and model split
 
