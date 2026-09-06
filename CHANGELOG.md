@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Skill Usage dashboard report** (issue #296). A dedicated searchable tab
+  combines transcript invocation totals with skill-tracker adoption data,
+  highlights passed-but-never-invoked skills, and exposes labeled per-target-agent
+  disclosures while preserving unknown-versus-zero distinctions.
 - **Searchable Agents dashboard view** (issue #295, PR #299). A dedicated tab
   searches full agent paths, includes labeled root-session context, and reports model,
   token, message, session, and cache totals across selectable 5h, 24h, 7d,
