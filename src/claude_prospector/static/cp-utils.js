@@ -381,7 +381,7 @@
   }
 
   function matchesNameFilter(name, query) {
-    const normalizedName = String(name).toLowerCase();
+    const normalizedName = String(name).trim().toLowerCase();
     const normalizedQuery = String(query).trim().toLowerCase();
     return normalizedName.includes(normalizedQuery);
   }

@@ -106,6 +106,14 @@ def test_shared_name_filter_helper_is_exported_and_consumed() -> None:
     assert "CP.matchesNameFilter(" in mcp_source
 
 
+def test_shared_name_filter_trims_both_operands() -> None:
+    """The shared predicate must trim both stringified operands."""
+    source = _CP_UTILS_JS.read_text(encoding="utf-8")
+
+    assert "const normalizedName = String(name).trim().toLowerCase();" in source
+    assert "const normalizedQuery = String(query).trim().toLowerCase();" in source
+
+
 def test_agent_filter_has_accessible_control_and_scoped_results() -> None:
     """Removing the accessible filter or scoped result target must fail."""
     source = _read_agents_js_source()
