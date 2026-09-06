@@ -91,8 +91,12 @@
       ...Object.keys(adoption),
     ])];
     return names.map(name => {
-      const invocationInfo = bySkill[name] || null;
-      const adoptionInfo = adoption[name] || null;
+      const invocationInfo = Object.prototype.hasOwnProperty.call(bySkill, name)
+        ? bySkill[name]
+        : null;
+      const adoptionInfo = Object.prototype.hasOwnProperty.call(adoption, name)
+        ? adoption[name]
+        : null;
       const tracked = Boolean(adoptionInfo);
       return {
         name,
@@ -126,6 +130,11 @@
   }
 
   function timeBasisLine(win) {
+    if (win === undefined) {
+      return 'Whole-corpus totals · scoped by the dashboard CLI window · '
+        + 'not filtered by the period selector above.';
+    }
+    win = win || {};
     const start = formatWindowBound(win.start);
     const end = formatWindowBound(win.end);
     const scope = (win.start == null && win.end == null)
@@ -203,6 +212,8 @@
       <div class="skills-note">
         Adoption tracking unavailable — enable the skill-tracker PreToolUse hook.
       </div>`;
+    const passEventsStat = adoptionAvailable ? `
+        <span><strong>${CP.esc(CP.fmtTokens(passedToAgents))}</strong> recorded pass events</span>` : '';
     const gapCallout = gaps.length === 0 ? '' : `
       <aside class="skills-gap" aria-label="Skills passed to agents but never invoked">
         <strong>Adoption gaps</strong>
@@ -233,7 +244,7 @@
     return `
       <div class="skills-stats">
         <span><strong>${CP.esc(CP.fmtTokens(invokedSkills))}</strong> skills invoked</span>
-        <span><strong>${CP.esc(CP.fmtTokens(passedToAgents))}</strong> passed to agents</span>
+        ${passEventsStat}
       </div>
       ${unavailable}
       ${gapCallout}
@@ -257,7 +268,7 @@
         <div class="skills-toolbar">
           <div>
             <h1>Skill Usage</h1>
-            <p>${timeBasisLine(window.DATA.by_mcp_usage?.window || {})}</p>
+            <p>${timeBasisLine(window.DATA.by_mcp_usage?.window)}</p>
           </div>
           <input id="skill-name-filter" type="search"
             placeholder="Search skill names"

@@ -328,7 +328,7 @@
       return '<div class="none">No per-method breakdown recorded.</div>';
     }
     const filtered = query
-      ? entries.filter(([method]) => matchesNameFilter(method, query))
+      ? entries.filter(([method]) => CP.matchesNameFilter(method, query))
       : entries;
     if (filtered.length === 0) {
       return '<div class="none">No tools match the current filter.</div>';
@@ -438,7 +438,7 @@
     // not a specific tool). Otherwise only pass the query through to
     // renderMethodRows -- this card is only included at all because at
     // least one method matched (see renderServers), so narrow to those.
-    const methodQuery = (query && !matchesNameFilter(name, query)) ? query : '';
+    const methodQuery = (query && !CP.matchesNameFilter(name, query)) ? query : '';
 
     return `
       <div class="server-card ${isDormant ? 'dormant' : ''}">
