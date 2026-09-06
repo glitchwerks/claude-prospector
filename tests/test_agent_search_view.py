@@ -412,7 +412,7 @@ def test_view_dispatch_is_exhaustive_and_rejects_unknown_views(
     body = _extract_render_view_body(html)
     view_names = set(re.findall(r'data-view="([^"]+)"', html))
 
-    assert view_names == {"basic", "detail", "advanced", "mcp", "agents"}
+    assert view_names == {"basic", "detail", "advanced", "mcp", "agents", "skills"}
     for view_name in view_names:
         assert re.search(
             rf"view\s*===\s*['\"]{view_name}['\"]",

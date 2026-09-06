@@ -299,6 +299,7 @@
 <script>{{ economics_js | safe }}</script>
 <script>{{ mcp_usage_js | safe }}</script>
 <script>{{ agents_js | safe }}</script>
+<script>{{ skills_js | safe }}</script>
 
 <div class="stage">
   <div class="shell-head">
@@ -326,6 +327,9 @@
       <button data-view="agents" role="tab" aria-selected="false" tabindex="-1">
         Agents
       </button>
+      <button data-view="skills" role="tab" aria-selected="false" tabindex="-1">
+        Skills
+      </button>
     </div>
   </div>
 
@@ -352,6 +356,8 @@
       "period selector above.",
     agents:
       "Search every agent path and inspect usage for a selected period.",
+    skills:
+      "Whole-corpus skill invocation and adoption reporting — scoped by the dashboard CLI window.",
   };
 
   function _renderView(view) {
@@ -371,6 +377,8 @@
       renderMcpUsage(_container);
     } else if (view === 'agents') {
       renderAgents(_container);
+    } else if (view === 'skills') {
+      renderSkills(_container);
     } else if (view === 'advanced') {
       renderEconomics(_container);
     } else {

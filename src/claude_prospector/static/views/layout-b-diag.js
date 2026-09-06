@@ -411,6 +411,16 @@
     .lbd-style .skills-scroll { overflow-y: auto; flex: 1; margin: 0 -4px; padding: 0 4px; scrollbar-width: thin; scrollbar-color: #30363d transparent; }
     .lbd-style .skills-scroll::-webkit-scrollbar { width: 6px; }
     .lbd-style .skills-scroll::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+    .lbd-style .skill-report-link {
+      align-self: flex-start; margin-top: 10px; padding: 5px 9px;
+      border: 1px solid #30363d; border-radius: 6px;
+      background: #21262d; color: #c9d1d9; font: inherit; font-size: 11px;
+      cursor: pointer;
+    }
+    .lbd-style .skill-report-link:hover { background: #30363d; color: #f0f6fc; }
+    .lbd-style .skill-report-link:focus-visible {
+      outline: 2px solid #58a6ff; outline-offset: 2px;
+    }
   `;
 
   // ── Diagnostic computations ─────────────────────────────────────────────
@@ -983,7 +993,7 @@
     }
     root.classList.add('lbd-style');
 
-    const state = { period: '7d', tab: 'burn', skill: { q: '', sort: 'use' } };
+    const state = { period: '7d', tab: 'burn' };
 
     function compute() {
       // Phase 3: read window.DATA / window.LIMITS (aggregator payload)
@@ -1053,7 +1063,7 @@
             <div class="chart-container"><canvas id="lbd-daily"></canvas></div>
           </div>
           <div class="card skills-card">
-            <div class="h"><div class="title">Skills</div><div class="meta">${allSkills.length} installed</div></div>
+            <div class="h"><div class="title">Skills</div><div class="meta">${allSkills.length} invoked</div></div>
             <div class="skills-head">
               <div>Skill</div>
               <div class="h-adopt" title="Adoption: of sessions where this skill's description was passed, what % invoked it">Adopt.</div>
@@ -1073,6 +1083,7 @@
                   </div>`;
               }).join('')}
             </div>
+            <button type="button" class="skill-report-link">Open full Skills report</button>
           </div>
         </div>`;
     }
@@ -1179,6 +1190,15 @@
       root.querySelectorAll('.diag-tab').forEach(b => {
         b.addEventListener('click', () => { state.tab = b.dataset.tab; render(); });
       });
+      const skillReportLink = root.querySelector('.skill-report-link');
+      if (skillReportLink) {
+        skillReportLink.addEventListener('click', () => {
+          window.dispatchEvent(new CustomEvent(
+            'economy:switch-view',
+            { detail: { view: 'skills' } },
+          ));
+        });
+      }
     }
 
     render();

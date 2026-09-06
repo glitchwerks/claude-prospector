@@ -74,6 +74,11 @@ class TestViewFilesOnDisk:
         p = _STATIC_VIEWS / "mcp-usage.js"
         assert p.is_file(), f"Missing: {p}"
 
+    def test_skills_exists(self) -> None:
+        """skills.js must exist under static/views/."""
+        p = _STATIC_VIEWS / "skills.js"
+        assert p.is_file(), f"Missing: {p}"
+
     def test_economics_basic_non_empty(self) -> None:
         """economics-basic.js must be non-trivially large (>5 KB)."""
         p = _STATIC_VIEWS / "economics-basic.js"
@@ -159,6 +164,15 @@ class TestViewFilesImportlibResources:
             "importlib.resources — check pyproject.toml package-data."
         )
 
+    def test_skills_accessible(self) -> None:
+        """importlib.resources can locate static/views/skills.js."""
+        pkg = importlib.resources.files("claude_prospector")
+        asset = pkg / "static" / "views" / "skills.js"
+        assert asset.is_file(), (
+            "static/views/skills.js is not accessible via "
+            "importlib.resources — check pyproject.toml package-data."
+        )
+
     def test_economics_basic_content_non_empty(self) -> None:
         """economics-basic.js content must be non-empty via importlib."""
         pkg = importlib.resources.files("claude_prospector")
@@ -186,6 +200,13 @@ class TestViewFilesImportlibResources:
         asset = pkg / "static" / "views" / "mcp-usage.js"
         content = asset.read_text(encoding="utf-8")
         assert content.strip(), "mcp-usage.js has no content."
+
+    def test_skills_content_non_empty(self) -> None:
+        """skills.js content must be non-empty via importlib."""
+        pkg = importlib.resources.files("claude_prospector")
+        asset = pkg / "static" / "views" / "skills.js"
+        content = asset.read_text(encoding="utf-8")
+        assert content.strip(), "skills.js has no content."
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +251,14 @@ class TestRenderedHtmlFunctionNames:
         assert "renderMcpUsage" in html, (
             "Rendered HTML does not contain 'renderMcpUsage'. "
             "mcp-usage.js is not wired in."
+        )
+
+    def test_render_skills_present(self, tmp_path: Path) -> None:
+        """Rendered HTML must contain 'window.renderSkills'."""
+        html = _render_html(tmp_path)
+        assert "window.renderSkills" in html, (
+            "Rendered HTML does not contain 'window.renderSkills'. "
+            "skills.js is not wired in."
         )
 
 

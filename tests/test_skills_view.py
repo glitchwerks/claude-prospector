@@ -3,6 +3,9 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from claude_prospector.aggregator import AggregateResult
+from claude_prospector.renderer import render
+
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _SKILLS_JS = (
@@ -75,3 +78,29 @@ def test_empty_and_adoption_unavailable_states_are_distinct() -> None:
 def test_report_has_no_client_period_control() -> None:
     source = _source()
     assert "data-period=" not in source
+
+
+def test_skills_tab_is_inlined_and_wired(tmp_path: Path) -> None:
+    output = tmp_path / "dashboard.html"
+    render(AggregateResult(), output_path=output, open_browser=False)
+    html = output.read_text(encoding="utf-8")
+    assert 'data-view="skills"' in html
+    assert "window.renderSkills" in html
+    assert "skills:" in html
+    assert "renderSkills(_container)" in html
+
+
+def test_breakdown_card_points_to_the_full_report() -> None:
+    source = (
+        _REPO_ROOT
+        / "src"
+        / "claude_prospector"
+        / "static"
+        / "views"
+        / "layout-b-diag.js"
+    ).read_text(encoding="utf-8")
+    assert "skill: { q: '', sort: 'use' }" not in source
+    assert "invoked" in source
+    assert "Open full Skills report" in source
+    assert "economy:switch-view" in source
+    assert "view: 'skills'" in source
