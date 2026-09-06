@@ -3,6 +3,8 @@ title: Dashboard Skill Usage Report (promote skills from a buried card to a real
 touches:
   - src/claude_prospector/static/views/skills.js
   - src/claude_prospector/static/views/layout-b-diag.js
+  - src/claude_prospector/static/views/agents.js
+  - src/claude_prospector/static/views/mcp-usage.js
   - src/claude_prospector/static/cp-utils.js
   - src/claude_prospector/templates/dashboard.html
   - src/claude_prospector/renderer.py
@@ -17,16 +19,14 @@ skills_relevant:
 
 # Dashboard Skill Usage Report — scoping spec (issue #296)
 
-**Status: DRAFT — D-1 resolved 2026-09-02; 6 open decisions (§6: D-2–D-7) still
-pending user resolution. Not ready to implement.** D-1 is settled: a new
-top-level **Skills** tab (option (a)), promoting skill-usage reporting out of
-the buried Breakdown-tab card. The BLOCKING findings from project-reviewer's
-combined review of this spec and its sibling (issue #295) are folded in below
-as required changes, not open questions — see §5. This spec also depends on
-#295 landing first for its CP-namespace API surface — see §5 *sequencing*.
-Remaining recommended answers (D-2–D-7) are marked *Recommendation* and are
-explicitly **not** settled. Resolve those next; §7's phasing is written
-against the recommendations and must be re-derived if one lands elsewhere.
+**Status: READY TO IMPLEMENT — D-1 resolved 2026-09-02; D-2–D-7 resolved
+2026-09-06.** The approved design adds a top-level **Skills** tab, retains a
+corrected Breakdown card with a pointer to the full report, surfaces labeled
+per-target-agent disclosures, deletes the dead `state.skill` stub, omits a
+period control, includes a case-insensitive name filter, and ships as its own
+PR after merged PR #299/#295. The decision record and Phase 0 measurements are
+durable in issue #296 comment `5559442726`; the approved shared-filter
+resolution is recorded in issue #296 comment `5559494713`.
 
 Tracking: issue **#296** (open, created 2026-09-02, milestone **#8** — verified
 2026-09-02 via `api.github.com/repos/glitchwerks/claude-prospector/issues/296`,
@@ -193,15 +193,9 @@ bug.
 `mcp-usage.js:17-24` escapes a second time. New code must escape. (The existing
 card at `layout-b-diag.js:1069` does not — pre-existing, see §9.)
 
-**Conditional on #295's landing (BLOCKING — project-reviewer, 2026-09-02).**
-agent-stats-search.md (issue #295, confirmed D-1=(b)) promotes a shared
-`CP.esc` export to `cp-utils.js` in its own Phase 1. Per §5's sequencing,
-#295 lands first. Therefore: **if `CP.esc` is already exported when this
-feature is implemented, use it directly; otherwise copy `esc()` from
-`mcp-usage.js:17-24` and file a follow-up issue to migrate this copy to
-`CP.esc` once #295 lands.** Do not copy-paste `esc()` unconditionally —
-doing so after #295 has already promoted it would recreate exactly the
-code-triplication agent-stats-search.md's own R-6 says to avoid.
+**Satisfied by PR #299.** The #295 implementation promoted `CP.esc` to
+`cp-utils.js`; this feature must use that shared export directly. Do not add a
+private `esc()` copy.
 
 **R-4 — Empty and partial-empty states are different.**
 `by_skill_adoption` is `{}` whenever the skill-tracker hook log yields no events
@@ -217,17 +211,14 @@ CLI window and cannot respond to any client-side period selector. Say so in the
 panel subtitle, mirroring `mcp-usage.js:102-110` / `dashboard.html:342-344`. Do
 **not** ship a period control that silently does nothing.
 
-**R-6 — Search/sort follow the established pattern.** If a filter box ships
-(D-6): standalone `matchesNameFilter`-shaped predicate, a scoped inner wrapper
-whose `.innerHTML` alone the `input` listener replaces (never `root.innerHTML` —
-that drops focus mid-keystroke; `mcp-usage.js:587-614`), and a purpose-hinting
-placeholder + `aria-label`. Do not write a third local copy of this predicate:
-agent-stats-search.md flags the same duplication (its own `matchesAgentFilter`
-vs. `mcp-usage.js`'s `matchesNameFilter`) and recommends a follow-up issue
-promoting a single `CP.matchesNameFilter` (§7 Phase 1 of that spec). If that
-issue exists by the time D-6 is implemented, use it; otherwise add a local
-copy here and note it against that same follow-up issue rather than filing a
-fourth one.
+**R-6 — Search/sort follow the established pattern.** The filter box ships
+under D-6=(a): a scoped inner wrapper whose `.innerHTML` alone the `input`
+listener replaces (never `root.innerHTML` — that drops focus mid-keystroke;
+`mcp-usage.js:587-614`), plus a purpose-hinting placeholder and `aria-label`.
+Per the approved resolution in issue #296 comment `5559494713`, promote the
+case-insensitive substring predicate to `CP.matchesNameFilter`, migrate the
+Agents and MCP Usage views to consume it without behavior changes, and consume
+it from the new Skills view. Do not retain local predicate copies.
 
 **R-7 — Shell wiring (applies — D-1=(a), new tab confirmed).** See §5. The
 `_renderView` terminal `else` is `renderEconomics` (`dashboard.html:362-363`)
@@ -274,10 +265,10 @@ same six collision sites. Five are textual — same lines in `renderer.py` /
 sixth is semantic, a shared JS namespace, and does **not** show up as a merge
 conflict, which is exactly what makes it easy to miss (*Site 6* below).
 
-**Sequencing (required).** #295 lands first. Its spec owns the CP-namespace
-promotion (`CP.esc`, `CP.agentLeaf`, `CP.AGENT_PATH_SEP`) and the
-`_renderView` no-match-handling fix (below). This spec's R-3 is written
-conditionally on that landing.
+**Sequencing (satisfied).** PR #299/#295 landed first and owns the CP-namespace
+promotion (`CP.esc`, `CP.agentLeaf`, `CP.AGENT_PATH_SEP`) plus the
+`_renderView` no-match-handling fix. This implementation consumes and extends
+those shipped interfaces.
 
 1. `renderer.py:122-125` — `_read_static("views/*.js")` kwargs.
 2. `templates/dashboard.html:293-297` — inline `<script>` block.
@@ -315,23 +306,18 @@ unzip -l dist/claude_prospector-*.whl | grep views
 
 ---
 
-## 6. Open decisions
+## 6. Resolved decisions
 
-**D-1 is RESOLVED (2026-09-02, user confirmed).** D-2 through D-7 remain
-**UNRESOLVED, user input required.**
+**D-1 was resolved 2026-09-02. D-2 through D-7 were resolved 2026-09-06**
+by user approval; the durable decision record is issue #296 comment
+`5559442726`.
 
-**`touches:` confirmed for D-1=(a).** The new `views/skills.js` plus
-`renderer.py` and `dashboard.html` are in scope. `layout-b-diag.js` also
-remains in scope: D-2 options (a) (delete the card) and (c) (keep it but fix
-the label) both edit it; only D-2=(b) (keep it unchanged) would not — kept in
-`touches:` as pre-declared breadth until D-2 resolves.
+**`touches:` confirmed.** The new `views/skills.js`, `renderer.py`,
+`dashboard.html`, and `layout-b-diag.js` are in scope under the resolved
+D-1=(a) and D-2=(c) choices.
 
-D-2 and D-4 are now **live** questions — previously scoped as "only
-meaningful if D-1=(a)" / "flips to (b) if D-1=(b)"; that D-1=(b) branch is
-moot since D-1=(a) is what was chosen. D-3 and D-5 can default to the
-recommendations; D-6 depends on §8's dataset-size measurement; D-7 (one PR or
-two, with #295) is independent of the fix ordering — see §5's sequencing
-note, which holds regardless of how D-7 resolves.
+The approved answers match the recommendations the reviewed draft recorded.
+Section §7 is therefore the implementation sequence without re-derivation.
 
 ### D-1 — New top-level "Skills" tab, or expand the existing Breakdown card? — **RESOLVED: (a)**
 
@@ -356,9 +342,7 @@ target-agent breakdown do not fit a half-width card in a two-column `.row`
 and its sequencing is required; R-7 applies; §4 and §7 describe the confirmed
 direction, not an assumption.
 
-### D-2 — What happens to the existing Breakdown card?
-
-**Now live — D-1=(a) confirmed.**
+### D-2 — What happens to the existing Breakdown card? — **RESOLVED: (c)**
 
 - (a) Delete it; the Breakdown tab's `_VIEW_SUBS` copy at `dashboard.html:338`
   currently promises *"projects, agents, skills and adoption"* and would need
@@ -367,12 +351,13 @@ direction, not an assumption.
   §2.2, and keeps the "installed" mislabel, §2.3).
 - (c) Keep it but fix the label and add a "see full report" affordance.
 
-*Recommendation: (c)* — cheapest correct answer; deleting it changes a tab users
-already rely on, keeping it as-is knowingly leaves a wrong label on screen.
+**Chosen: (c).** This is the cheapest correct answer; deleting it changes a
+tab users already rely on, while keeping it as-is knowingly leaves a wrong
+label on screen.
 **Note:** the §2.3 mislabel fix comes free only under (a) or (c); under (b) it
 should be filed separately.
 
-### D-3 — Surface `by_target_agent` per skill, or keep it aggregate-only?
+### D-3 — Surface `by_target_agent` per skill? — **RESOLVED: (a)**
 
 Per §2.4 it is **not** joinable to `by_agent`.
 
@@ -383,68 +368,62 @@ Per §2.4 it is **not** joinable to `by_agent`.
   surface.
 - (b) Keep aggregate-only for v1.
 
-*Recommendation: (a) with the labelling constraint.* It is the only place this
+**Chosen: (a), with the labelling constraint.** It is the only place this
 data is visible at all, and it answers "which agents ignore this skill" — the
 natural follow-up to the adoption-gap callout. **Hard constraint either way: no
 join to `by_agent`, no leaf-name matching between the two key spaces.**
 
-### D-4 — Finish the dead `state.skill` stub, or delete it?
+### D-4 — Finish the dead `state.skill` stub, or delete it? — **RESOLVED: (a)**
 
 - (a) Delete `skill: { q: '', sort: 'use' }` from `layout-b-diag.js:986`.
 - (b) Wire it up for an in-card search/sort — **moot: only coherent under
   D-1=(b), which was not chosen.**
 
-*Recommendation: (a).* Under the confirmed D-1=(a), the stub's intended home
+**Chosen: (a).** Under the confirmed D-1=(a), the stub's intended home
 moves to the new view entirely, and a new view should own its own state
 rather than inherit an abandoned shape. Deleting it is a one-line diff with
 zero behaviour change (it is read nowhere — §2.6).
 
-### D-5 — Ship a period control?
+### D-5 — Ship a period control? — **RESOLVED: no**
 
-*Recommendation: no* — §2.5 makes it impossible without a data-layer change, and
-a control that silently does nothing is worse than none. State the time basis in
-copy instead (R-5). **Only in play as an alternative:** add a `skills` field to
-each session summary in `aggregator.py:151-174`, which is a real aggregator
-change and belongs in its own issue, not here.
+**Chosen: no.** Section §2.5 makes it impossible without a data-layer change,
+and a control that silently does nothing is worse than none. State the time
+basis in copy instead (R-5). Adding a `skills` field to each session summary
+in `aggregator.py:151-174` remains separate, out-of-scope aggregator work.
 
-### D-6 — Ship a name filter in v1?
+### D-6 — Ship a name filter in v1? — **RESOLVED: (a)**
 
 - (a) Yes — copy the #282/PR #292 pattern (R-6).
 - (b) No — the current card is already an untruncated scrollable list
   (`layout-b-diag.js:1063-1075`), so search may be unnecessary at this dataset
   size.
 
-*Recommendation: depends on §8's dataset-size check.* Under ~30 skills a sortable
-table needs no search box. **Do not decide this from the armchair — run the count
-first.**
+**Chosen: (a).** The 2026-09-06 Phase 0 check found 52 adoption-tracked skills,
+47 invoked skills, and 27 passed-never-invoked skills (issue #296 comment
+`5559442726`). This exceeds the draft's ~30-skill threshold for a sortable
+table without search.
 
-### D-7 — Ship one PR or two (with #295)?
+### D-7 — Ship one PR or two (with #295)? — **RESOLVED: (a)**
 
 - (a) Two sequential PRs, sequenced #295 → #296.
 - (b) One bundled PR closing both.
 
-*Recommendation: (a).* Mirrors #295's D-5; keeps per-issue review granularity and
-per-issue changelog entries. **Requires** the second implementer to be told the
-first has landed, since both edit the same six sites (§5). **Note:** the
-#295 → #296 ordering itself is now required regardless of how D-7 resolves —
-this spec's R-3 depends on #295's `CP.esc` export and this spec's Phase 3
-depends on #295's `_renderView` no-match-handling fix (§5). D-7 only decides
-whether that ordering happens as two PRs or as one PR with two
-internally-sequenced phases.
+**Chosen: (a).** PR #299 closed #295 before implementation of #296 began; the
+separate #296 PR keeps per-issue review granularity and per-issue changelog
+entries. The required #295 → #296 ordering has been satisfied; this spec's
+R-3 consumes #295's `CP.esc` export and Phase 3 extends #295's `_renderView`
+no-match handling (§5).
 
 ---
 
-## 7. Phasing (D-1=(a) confirmed; written against D-2=(c), D-3=(a), D-4=(a), D-5=no, D-7=(a) recommendations)
+## 7. Phasing (all decisions confirmed)
 
-**D-1 is settled — this phasing is the confirmed direction, not an
-assumption. Re-derive Phases 2-5 below only if D-2, D-3, D-4, D-5, or D-7
-resolve differently from their recommendations.**
+**D-1 through D-7 are settled — this phasing is the confirmed direction.**
 
-**Phase 0 — dataset reality check.** Run §8's command. Its output resolves D-6
-and tells you whether the adoption-gap callout will have any rows at all on this
-machine. **Do not skip:** if `by_skill_adoption` is `{}` here, the whole R-1
-union finding is unobservable locally and every review of this feature is
-blind-flying.
+**Phase 0 — dataset reality check — COMPLETE 2026-09-06.** The §8 command found
+47 invoked skills, 52 adoption-tracked skills, and 27 passed-never-invoked
+skills (issue #296 comment `5559442726`). This resolves D-6 to include the
+filter and confirms the R-1 union finding is observable locally.
 
 **Phase 1 — test-first.** `tests/test_skills_view.py` per R-8. Red for the right
 reason (`FileNotFoundError` on the missing `views/skills.js`).
@@ -484,7 +463,7 @@ spec replaces (§2.1). Plus a `CHANGELOG.md` `### Added` entry citing
 
 ## 8. Risks
 
-- **`unverified:` — the report may be empty on the target machine.** Whether
+- **The report may be empty on another target machine.** Whether
   `by_skill_adoption` has data depends entirely on whether the `skill-tracker`
   PreToolUse hook is installed and has been logging (`README.md:116`;
   `cli/dashboard.py:207`). Check before building:
@@ -504,7 +483,9 @@ spec replaces (§2.1). Plus a `CHANGELOG.md` `### Added` entry citing
   returns before `render()` (`cli/dashboard.py:264-282`), so `--no-open` is a
   no-op here.
 
-  **This is load-bearing.** If the third number is 0, the feature's headline
+  The 2026-09-06 local run returned `47 | 52 | 27` for these three numbers
+  (issue #296 comment `5559442726`). **This remains load-bearing for visual
+  review on other machines:** if the third number is 0, the feature's headline
   callout has nothing to show on this machine, and the cost of the §5
   collision with #295 (already accepted via D-1) is being paid for a report
   that can't demonstrate its own reason to exist locally — worth flagging to
