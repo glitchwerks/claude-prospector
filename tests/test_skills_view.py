@@ -195,6 +195,104 @@ def test_available_adoption_labels_recorded_pass_events(tmp_path: Path) -> None:
     assert "<strong>2</strong> recorded pass events" in rendered
 
 
+def test_builtin_command_report_renders_counts_and_unclassified_names(
+    tmp_path: Path,
+) -> None:
+    """Built-ins and unknown commands remain visibly distinct."""
+    rendered = _render_skills(
+        tmp_path,
+        {
+            "by_skill": {},
+            "by_skill_adoption": {},
+            "by_mcp_usage": {},
+            "by_command_usage": {
+                "classification": {
+                    "available": True,
+                    "source_url": "https://code.claude.com/docs/en/commands",
+                    "retrieved_at": "2026-09-06",
+                },
+                "by_command": {
+                    "/fork": {"invocation_count": 3, "sessions_used_in": 2},
+                },
+                "unclassified": {
+                    "/project-review": {
+                        "invocation_count": 1,
+                        "sessions_used_in": 1,
+                    },
+                },
+            },
+        },
+    )["root"]
+
+    assert "Built-in Commands" in rendered
+    assert "/fork" in rendered
+    assert ">3</td>" in rendered
+    assert ">2</td>" in rendered
+    assert "/project-review" in rendered
+    assert "not counted as built-ins" in rendered
+    assert "2026-09-06" in rendered
+
+
+def test_builtin_command_report_has_empty_and_unavailable_states(
+    tmp_path: Path,
+) -> None:
+    """No observations and no catalog are reported differently."""
+    empty = _render_skills(
+        tmp_path,
+        {
+            "by_skill": {},
+            "by_skill_adoption": {},
+            "by_mcp_usage": {},
+            "by_command_usage": {
+                "classification": {
+                    "available": True,
+                    "source_url": "https://code.claude.com/docs/en/commands",
+                    "retrieved_at": "2026-09-06",
+                },
+                "by_command": {},
+                "unclassified": {},
+            },
+        },
+    )["root"]
+    unavailable = _render_skills(
+        tmp_path,
+        {
+            "by_skill": {},
+            "by_skill_adoption": {},
+            "by_mcp_usage": {},
+            "by_command_usage": {},
+        },
+    )["root"]
+
+    assert "No manual built-in command usage recorded" in empty
+    assert "Command classification unavailable" in unavailable
+
+
+def test_builtin_command_names_are_html_escaped(tmp_path: Path) -> None:
+    """Transcript-derived unknown names cannot inject dashboard markup."""
+    rendered = _render_skills(
+        tmp_path,
+        {
+            "by_skill": {},
+            "by_skill_adoption": {},
+            "by_mcp_usage": {},
+            "by_command_usage": {
+                "classification": {"available": True},
+                "by_command": {},
+                "unclassified": {
+                    "/</code><script>alert(1)</script>": {
+                        "invocation_count": 1,
+                        "sessions_used_in": 1,
+                    },
+                },
+            },
+        },
+    )["root"]
+
+    assert "<script>alert(1)</script>" not in rendered
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in rendered
+
+
 def test_gap_detection_uses_the_actual_adoption_rate() -> None:
     source = _source()
     assert "row.adoptionRate === 0" in source

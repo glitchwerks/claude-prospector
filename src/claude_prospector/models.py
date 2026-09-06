@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 
 
@@ -70,6 +70,19 @@ class MessageRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class CommandInvocationRecord:
+    """A manual slash-command invocation from an external user entry.
+
+    Attributes:
+        name: Literal command name, including its leading slash.
+        timestamp: When the user invoked the command.
+    """
+
+    name: str
+    timestamp: datetime
+
+
+@dataclass(frozen=True, slots=True)
 class SessionRecord:
     """A parsed session with all its messages (including subagent messages).
 
@@ -89,6 +102,8 @@ class SessionRecord:
         messages: All messages from this session and its subagents.
         subagent_types: Sorted, de-duplicated list of subagent type names
             encountered at any depth.
+        commands: Manual slash-command invocations. Records retain only the
+            command name and timestamp, never arguments or prompt content.
     """
 
     session_id: str
@@ -98,6 +113,7 @@ class SessionRecord:
     root_agent: str
     messages: list[MessageRecord]
     subagent_types: list[str]
+    commands: list[CommandInvocationRecord] = field(default_factory=list)
 
     @property
     def total_tokens(self) -> int:

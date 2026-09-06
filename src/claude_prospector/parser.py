@@ -8,8 +8,23 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
-from claude_prospector.models import MessageRecord, SessionRecord
+from claude_prospector.models import (
+    CommandInvocationRecord,
+    MessageRecord,
+    SessionRecord,
+)
 from claude_prospector.transcript_walker import walk_session
+
+
+_COMMAND_ENVELOPE_RE = re.compile(
+    r"\A\s*(?:"
+    r"<command-message>[^<>]*</command-message>\s*"
+    r"<command-name>(/[^\s<>]+)</command-name>"
+    r"|"
+    r"<command-name>(/[^\s<>]+)</command-name>"
+    r"(?:\s*<command-message>[^<>]*</command-message>)?"
+    r")\s*\Z"
+)
 
 
 def decode_project_hash(hash_name: str) -> str:
@@ -313,14 +328,60 @@ def _extract_skill(content: list[dict]) -> str | None:
     return None
 
 
-def _parse_jsonl_messages(
+def _extract_manual_command(entry: dict) -> CommandInvocationRecord | None:
+    """Extract one privacy-safe manual command from an external user entry.
+
+    Args:
+        entry: Decoded transcript entry.
+
+    Returns:
+        A name-and-timestamp record when the canonical wrapper is valid;
+        otherwise ``None``. Content inside ``<command-args>`` is never scanned.
+    """
+    message = entry.get("message")
+    if not isinstance(message, dict):
+        return None
+    content = message.get("content")
+    timestamp_raw = entry.get("timestamp")
+    if not isinstance(content, str) or not isinstance(timestamp_raw, str):
+        return None
+
+    command_wrapper = content.partition("<command-args")[0]
+    match = _COMMAND_ENVELOPE_RE.fullmatch(command_wrapper)
+    if match is None:
+        return None
+    try:
+        timestamp = _parse_timestamp(timestamp_raw)
+    except ValueError:
+        return None
+    command_name = match.group(1) or match.group(2)
+    return CommandInvocationRecord(name=command_name, timestamp=timestamp)
+
+
+def _parse_jsonl_records(
     jsonl_path: Path,
     agent_type: str,
     agent_path: tuple[str, ...] = (),
-) -> list[MessageRecord]:
-    """Parse assistant messages from a JSONL file, attributing to agent."""
+    *,
+    collect_commands: bool = True,
+) -> tuple[list[MessageRecord], list[CommandInvocationRecord]]:
+    """Parse assistant messages and manual commands in one transcript pass.
+
+    Args:
+        jsonl_path: Transcript JSONL file to parse.
+        agent_type: Leaf agent name assigned to assistant messages.
+        agent_path: Full agent ancestry assigned to assistant messages.
+        collect_commands: Whether to extract manual command records. This is
+            enabled only for a session's root transcript.
+
+    Returns:
+        Assistant message records and manual command records. Command records
+        retain only the command-name tag and timestamp.
+    """
     messages: list[MessageRecord] = []
+    commands: list[CommandInvocationRecord] = []
     message_indexes: dict[str, int] = {}
+    command_entry_ids: set[str] = set()
     with open(jsonl_path, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
@@ -330,6 +391,20 @@ def _parse_jsonl_messages(
                 entry = json.loads(line)
             except json.JSONDecodeError:
                 continue
+
+            if (
+                collect_commands
+                and entry.get("type") == "user"
+                and entry.get("userType") == "external"
+            ):
+                entry_id = entry.get("uuid")
+                if isinstance(entry_id, str) and entry_id in command_entry_ids:
+                    continue
+                command = _extract_manual_command(entry)
+                if command is not None:
+                    commands.append(command)
+                    if isinstance(entry_id, str):
+                        command_entry_ids.add(entry_id)
 
             if entry.get("type") != "assistant":
                 continue
@@ -370,6 +445,30 @@ def _parse_jsonl_messages(
             )
             if message_id is not None:
                 message_indexes[message_id] = len(messages) - 1
+    return messages, commands
+
+
+def _parse_jsonl_messages(
+    jsonl_path: Path,
+    agent_type: str,
+    agent_path: tuple[str, ...] = (),
+) -> list[MessageRecord]:
+    """Parse assistant messages from a JSONL file, attributing to agent.
+
+    Args:
+        jsonl_path: Transcript JSONL file to parse.
+        agent_type: Leaf agent name assigned to assistant messages.
+        agent_path: Full agent ancestry assigned to assistant messages.
+
+    Returns:
+        Parsed assistant message records.
+    """
+    messages, _ = _parse_jsonl_records(
+        jsonl_path,
+        agent_type,
+        agent_path,
+        collect_commands=False,
+    )
     return messages
 
 
@@ -440,14 +539,16 @@ def _parse_session(
     transcripts, subagent_types = walk_session(jsonl_path, root_agent)
 
     messages: list[MessageRecord] = []
+    commands: list[CommandInvocationRecord] = []
     for unit in transcripts:
-        messages.extend(
-            _parse_jsonl_messages(
-                unit.jsonl_path,
-                agent_type=unit.agent_type,
-                agent_path=unit.agent_path,
-            )
+        unit_messages, unit_commands = _parse_jsonl_records(
+            unit.jsonl_path,
+            agent_type=unit.agent_type,
+            agent_path=unit.agent_path,
+            collect_commands=unit.jsonl_path == jsonl_path,
         )
+        messages.extend(unit_messages)
+        commands.extend(unit_commands)
 
     if not messages:
         start_time = datetime.now(timezone.utc)
@@ -462,6 +563,7 @@ def _parse_session(
         root_agent=root_agent,
         messages=messages,
         subagent_types=sorted(set(subagent_types)),
+        commands=commands,
     )
 
 
