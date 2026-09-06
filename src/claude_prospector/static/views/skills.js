@@ -145,13 +145,18 @@
   function renderTargetAgents(row) {
     if (row.timesPassed === null) return '';
     const entries = Object.entries(row.byTargetAgent).sort((left, right) => (
-      right[1] - left[1] || String(left[0]).localeCompare(String(right[0]))
+      (Number(right[1].passed) || 0) - (Number(left[1].passed) || 0)
+      || (Number(right[1].invoked) || 0) - (Number(left[1].invoked) || 0)
+      || String(left[0]).localeCompare(String(right[0]))
     ));
     const agents = entries.length === 0
       ? '<li>No target agent recorded.</li>'
-      : entries.map(([agent, count]) => (
-          `<li>${CP.esc(agent)}: ${CP.esc(CP.fmtTokens(count))}</li>`
-        )).join('');
+      : entries.map(([agent, agentInfo]) => {
+          const passed = agentInfo.passed;
+          const invoked = agentInfo.invoked;
+          return `<li>${CP.esc(agent)} — Passed: ${CP.esc(CP.fmtTokens(passed))}; `
+            + `Invoked: ${CP.esc(CP.fmtTokens(invoked))}</li>`;
+        }).join('');
     return `
       <details class="skill-targets">
         <summary>Target agent as recorded by the skill-tracker hook</summary>

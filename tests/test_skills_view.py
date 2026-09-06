@@ -8,14 +8,7 @@ from claude_prospector.renderer import render
 
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-_SKILLS_JS = (
-    _REPO_ROOT
-    / "src"
-    / "claude_prospector"
-    / "static"
-    / "views"
-    / "skills.js"
-)
+_SKILLS_JS = _REPO_ROOT / "src" / "claude_prospector" / "static" / "views" / "skills.js"
 
 
 def _source() -> str:
@@ -50,6 +43,14 @@ def test_target_agent_disclosure_is_labeled_and_escaped() -> None:
     assert "<details" in source
     assert "by_target_agent" in source
     assert "CP.esc(" in source
+
+
+def test_target_agent_disclosure_reads_structured_passed_and_invoked_counts() -> None:
+    source = _source()
+    assert "const passed = agentInfo.passed;" in source
+    assert "const invoked = agentInfo.invoked;" in source
+    assert "Passed: ${CP.esc(CP.fmtTokens(passed))}" in source
+    assert "Invoked: ${CP.esc(CP.fmtTokens(invoked))}" in source
 
 
 def test_filter_updates_only_the_results_wrapper() -> None:
