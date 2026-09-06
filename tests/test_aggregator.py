@@ -2,7 +2,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from claude_prospector.aggregator import AGENT_PATH_SEPARATOR, aggregate
-from claude_prospector.models import MessageRecord, SessionRecord
+from claude_prospector.models import (
+    CommandInvocationRecord,
+    MessageRecord,
+    SessionRecord,
+)
 from claude_prospector.parser import parse_sessions
 
 
@@ -36,6 +40,7 @@ def _session(
     project="proj",
     root_agent="general-purpose",
     subagent_types=None,
+    commands=None,
 ):
     start = (
         min(m.timestamp for m in messages)
@@ -50,6 +55,15 @@ def _session(
         root_agent=root_agent,
         messages=messages,
         subagent_types=subagent_types or [],
+        commands=commands or [],
+    )
+
+
+def _command(name: str, hour: int, minute: int = 0) -> CommandInvocationRecord:
+    """Build a command record at a hand-controlled UTC timestamp."""
+    return CommandInvocationRecord(
+        name=name,
+        timestamp=datetime(2026, 4, 9, hour, minute, tzinfo=timezone.utc),
     )
 
 
@@ -259,6 +273,56 @@ class TestAggregateBySkill:
             result.by_skill["commit-commands:commit-push-pr"]["invocation_count"] == 1
         )
         assert None not in result.by_skill
+
+
+class TestAggregateCommandUsage:
+    def test_counts_builtins_by_invocation_and_session_within_window(self) -> None:
+        """Windowed totals exclude bundled skills and surface unknown names."""
+        sessions = [
+            _session(
+                [_msg()],
+                session_id="s1",
+                commands=[
+                    _command("/fork", 12, 5),
+                    _command("/fork", 12, 10),
+                    _command("/branch", 12, 15),
+                    _command("/doctor", 12, 20),
+                    _command("/project-review", 12, 25),
+                ],
+            ),
+            _session(
+                [_msg()],
+                session_id="s2",
+                commands=[
+                    _command("/fork", 12, 30),
+                    _command("/fork", 14),
+                ],
+            ),
+        ]
+
+        result = aggregate(
+            sessions,
+            from_date=datetime(2026, 4, 9, 12, tzinfo=timezone.utc),
+            to_date=datetime(2026, 4, 9, 13, tzinfo=timezone.utc),
+        )
+
+        assert result.by_command_usage == {
+            "classification": {
+                "available": True,
+                "source_url": "https://code.claude.com/docs/en/commands",
+                "retrieved_at": "2026-09-06",
+            },
+            "by_command": {
+                "/branch": {"invocation_count": 1, "sessions_used_in": 1},
+                "/fork": {"invocation_count": 3, "sessions_used_in": 2},
+            },
+            "unclassified": {
+                "/project-review": {
+                    "invocation_count": 1,
+                    "sessions_used_in": 1,
+                }
+            },
+        }
 
 
 class TestAggregateByProject:

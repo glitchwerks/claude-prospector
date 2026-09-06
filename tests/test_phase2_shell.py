@@ -376,15 +376,15 @@ class TestPhase3Placeholders:
 
 
 class TestJsonPayloadUnchanged:
-    """Verify the dashboard --format json payload shape is unchanged."""
+    """Verify the dashboard --format json payload shape is intentional."""
 
     def test_json_output_has_expected_top_level_keys(self) -> None:
-        """dashboard --format json must have the same top-level keys as before.
+        """dashboard --format json must have the approved top-level keys.
 
         Phase 2 itself was template-only — no Python-side data contract
         changes. This test still pins the pre-#256 key set, but now includes
-        "by_skill_adoption", added by #256; the rest of the key set remains
-        unchanged from Phase 2.
+        "by_skill_adoption", added by #256, and "by_command_usage", added by
+        #298.
         """
         import json
         import subprocess
@@ -432,6 +432,7 @@ class TestJsonPayloadUnchanged:
             "by_agent",
             "by_skill",
             "by_skill_adoption",
+            "by_command_usage",
             "by_project",
             "by_day",
             "sessions",

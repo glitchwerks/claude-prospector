@@ -77,6 +77,29 @@
     }
     .skills-style .skills-empty { padding: 28px 20px; text-align: center; color: #8b949e; }
     .skills-style .skills-empty strong { display: block; color: #f0f6fc; margin-bottom: 5px; }
+    .skills-style .command-report {
+      margin-top: 28px; padding-top: 24px; border-top: 1px solid #21262d;
+    }
+    .skills-style .command-heading { margin-bottom: 12px; }
+    .skills-style .command-heading h2 {
+      margin: 0; color: #f0f6fc; font-size: 17px; font-weight: 600;
+    }
+    .skills-style .command-heading p {
+      margin: 4px 0 0; color: #8b949e; font-size: 11px; line-height: 1.45;
+    }
+    .skills-style .command-table { min-width: 440px; }
+    .skills-style .command-name {
+      color: #79c0ff; font-family: ui-monospace, SFMono-Regular, Consolas,
+        'Liberation Mono', monospace; font-weight: 600;
+    }
+    .skills-style .command-warning {
+      margin-top: 12px; padding: 10px 12px; color: #c9d1d9;
+      background: #161b22; border: 1px solid #21262d;
+      border-left: 3px solid #d29922; border-radius: 8px; font-size: 12px;
+    }
+    .skills-style .command-warning strong { color: #d29922; }
+    .skills-style .command-warning ul { margin: 7px 0 0; padding-left: 20px; }
+    .skills-style .command-warning li { margin: 3px 0; }
     @media (max-width: 600px) {
       .skills-style .skills-toolbar { align-items: stretch; }
       .skills-style input#skill-name-filter { width: 100%; min-width: 0; }
@@ -251,6 +274,91 @@
       ${table}`;
   }
 
+  function sortedCommandEntries(commands) {
+    return Object.entries(commands || {}).sort((left, right) => (
+      (Number(right[1].invocation_count) || 0)
+      - (Number(left[1].invocation_count) || 0)
+      || String(left[0]).localeCompare(String(right[0]))
+    ));
+  }
+
+  function commandRows(entries) {
+    return entries.map(([name, info]) => `
+      <tr>
+        <td class="command-name">${CP.esc(name)}</td>
+        <td>${CP.esc(CP.fmtTokens(info.invocation_count || 0))}</td>
+        <td>${CP.esc(CP.fmtTokens(info.sessions_used_in || 0))}</td>
+      </tr>`).join('');
+  }
+
+  function renderCommandUsage(usage) {
+    usage = usage || {};
+    const classification = usage.classification || {};
+    const provenance = classification.retrieved_at
+      ? `Official Claude Code command reference · catalog retrieved ${CP.esc(classification.retrieved_at)}`
+      : 'Official Claude Code command reference';
+    const heading = `
+      <div class="command-heading">
+        <h2 id="command-report-heading">Built-in Commands</h2>
+        <p>${provenance} · command names only; arguments are never retained.</p>
+      </div>`;
+
+    if (!classification.available) {
+      return `
+        <section class="command-report" aria-labelledby="command-report-heading">
+          ${heading}
+          <div class="skills-empty">
+            <strong>Command classification unavailable</strong>
+            The packaged command catalog could not be loaded.
+          </div>
+        </section>`;
+    }
+
+    const builtins = sortedCommandEntries(usage.by_command);
+    const unclassified = sortedCommandEntries(usage.unclassified);
+    if (builtins.length === 0 && unclassified.length === 0) {
+      return `
+        <section class="command-report" aria-labelledby="command-report-heading">
+          ${heading}
+          <div class="skills-empty">
+            <strong>No manual built-in command usage recorded</strong>
+            Invoke a built-in slash command to populate this report.
+          </div>
+        </section>`;
+    }
+
+    const table = builtins.length === 0 ? `
+      <div class="skills-empty">No classified built-in commands recorded.</div>` : `
+      <div class="skill-table-wrap">
+        <table class="skill-table command-table">
+          <thead>
+            <tr>
+              <th scope="col">Command</th>
+              <th scope="col">Invocations</th>
+              <th scope="col">Sessions</th>
+            </tr>
+          </thead>
+          <tbody>${commandRows(builtins)}</tbody>
+        </table>
+      </div>`;
+    const warning = unclassified.length === 0 ? '' : `
+      <aside class="command-warning" aria-label="Unclassified slash commands">
+        <strong>Unclassified commands</strong> are shown for auditability and
+        not counted as built-ins.
+        <ul>${unclassified.map(([name, info]) => `
+          <li><span class="command-name">${CP.esc(name)}</span> —
+            ${CP.esc(CP.fmtTokens(info.invocation_count || 0))} invocation(s)
+            in ${CP.esc(CP.fmtTokens(info.sessions_used_in || 0))} session(s)
+          </li>`).join('')}</ul>
+      </aside>`;
+    return `
+      <section class="command-report" aria-labelledby="command-report-heading">
+        ${heading}
+        ${table}
+        ${warning}
+      </section>`;
+  }
+
   function renderSkills(root) {
     if (!document.getElementById('skills-css')) {
       const style = document.createElement('style');
@@ -275,6 +383,7 @@
             aria-label="Search skills by name">
         </div>
         <div id="skill-results" aria-live="polite"></div>
+        ${renderCommandUsage(window.DATA.by_command_usage)}
       </section>`;
 
     const filterInput = root.querySelector('#skill-name-filter');

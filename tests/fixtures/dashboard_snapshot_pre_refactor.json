@@ -26,6 +26,15 @@
     }
   },
   "by_skill": {},
+  "by_command_usage": {
+    "classification": {
+      "available": true,
+      "source_url": "https://code.claude.com/docs/en/commands",
+      "retrieved_at": "2026-09-06"
+    },
+    "by_command": {},
+    "unclassified": {}
+  },
   "by_project": {
     "fake-project-abc123": {
       "total_tokens": 15,

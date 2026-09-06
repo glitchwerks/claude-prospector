@@ -97,6 +97,172 @@ class TestParseSessions:
         sessions = parse_sessions(tmp_path)
         assert sessions == []
 
+    def test_extracts_only_manual_command_name(self, tmp_path: Path):
+        """A manual command retains its name and timestamp, not its arguments."""
+        jsonl = tmp_path / "manual-command.jsonl"
+        entries = [
+            {
+                "type": "user",
+                "userType": "external",
+                "uuid": "user-command-1",
+                "timestamp": "2026-04-09T12:00:01.000Z",
+                "message": {
+                    "role": "user",
+                    "content": (
+                        "<command-name>/fork</command-name>"
+                        "<command-args>keep "
+                        "<command-name>/secret-client</command-name> private"
+                        "</command-args>"
+                    ),
+                },
+            },
+            _make_assistant_line("manual-command"),
+        ]
+        jsonl.write_text(
+            "\n".join(json.dumps(entry) for entry in entries),
+            encoding="utf-8",
+        )
+
+        session = _parse_session(jsonl, "proj")
+
+        assert session is not None
+        assert [(record.name, record.timestamp) for record in session.commands] == [
+            ("/fork", datetime(2026, 4, 9, 12, 0, 1, tzinfo=timezone.utc))
+        ]
+        assert "secret-client" not in repr(session.commands)
+
+    def test_command_collection_deduplicates_entries_and_ignores_automatic_events(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Repeated fragments and automatic summaries cannot inflate usage."""
+        jsonl = tmp_path / "command-boundaries.jsonl"
+        manual = {
+            "type": "user",
+            "userType": "external",
+            "uuid": "user-command-1",
+            "timestamp": "2026-04-09T12:00:01.000Z",
+            "message": {
+                "role": "user",
+                "content": "<command-name>/compact</command-name>",
+            },
+        }
+        automatic = {
+            "type": "system",
+            "subtype": "compact_boundary",
+            "uuid": "automatic-compact-1",
+            "timestamp": "2026-04-09T12:00:02.000Z",
+            "message": {
+                "content": "<command-name>/compact</command-name>",
+            },
+        }
+        entries = [manual, manual, automatic, _make_assistant_line("boundaries")]
+        jsonl.write_text(
+            "\n".join(json.dumps(entry) for entry in entries),
+            encoding="utf-8",
+        )
+
+        session = _parse_session(jsonl, "proj")
+
+        assert session is not None
+        assert [record.name for record in session.commands] == ["/compact"]
+
+    def test_command_name_tag_cannot_capture_whitespace_or_arguments(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Malformed command-name content cannot retain private arguments."""
+        jsonl = tmp_path / "command-name-privacy.jsonl"
+        entries = [
+            {
+                "type": "user",
+                "userType": "external",
+                "uuid": "command-with-inline-args",
+                "timestamp": "2026-04-09T12:00:00.000Z",
+                "message": {
+                    "role": "user",
+                    "content": ("<command-name>/fork private details</command-name>"),
+                },
+            },
+            _make_assistant_line("command-name-privacy"),
+        ]
+        jsonl.write_text(
+            "\n".join(json.dumps(entry) for entry in entries),
+            encoding="utf-8",
+        )
+
+        session = _parse_session(jsonl, "proj")
+
+        assert session is not None
+        assert session.commands == []
+
+    def test_subagent_command_tags_are_not_manual_usage(
+        self,
+        sample_session_dir: Path,
+    ) -> None:
+        """Synthetic subagent prompts cannot become manual command usage."""
+        subagent_file = next(
+            (sample_session_dir / "projects").glob("*/*/subagents/*.jsonl")
+        )
+        synthetic_prompt = {
+            "type": "user",
+            "userType": "external",
+            "uuid": "synthetic-subagent-command",
+            "timestamp": "2026-04-09T12:06:00.000Z",
+            "message": {
+                "role": "user",
+                "content": "<command-name>/fork</command-name>",
+            },
+        }
+        with subagent_file.open("a", encoding="utf-8") as stream:
+            stream.write("\n" + json.dumps(synthetic_prompt) + "\n")
+
+        session = parse_sessions(sample_session_dir)[0]
+
+        assert session.commands == []
+
+    def test_malformed_external_command_entries_are_ignored(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Malformed user records cannot terminate dashboard parsing."""
+        jsonl = tmp_path / "malformed-command-entries.jsonl"
+        entries = [
+            {
+                "type": "user",
+                "userType": "external",
+                "message": None,
+            },
+            {
+                "type": "user",
+                "userType": "external",
+                "uuid": "missing-timestamp",
+                "message": {
+                    "content": "<command-name>/fork</command-name>",
+                },
+            },
+            {
+                "type": "user",
+                "userType": "external",
+                "uuid": "invalid-timestamp",
+                "timestamp": "not-a-timestamp",
+                "message": {
+                    "content": "<command-name>/fork</command-name>",
+                },
+            },
+            _make_assistant_line("malformed-command-entries"),
+        ]
+        jsonl.write_text(
+            "\n".join(json.dumps(entry) for entry in entries),
+            encoding="utf-8",
+        )
+
+        session = _parse_session(jsonl, "proj")
+
+        assert session is not None
+        assert session.commands == []
+        assert len(session.messages) == 1
+
 
 # ---------------------------------------------------------------------------
 # Helpers for agent-setting resolution tests

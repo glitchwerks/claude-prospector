@@ -305,6 +305,31 @@ def test_real_data_depth3_renders_correct_by_agent_values(
     )
 
 
+def test_command_usage_reaches_embedded_dashboard_data(tmp_path: Path) -> None:
+    """The renderer preserves command counts and catalog provenance."""
+    usage = {
+        "classification": {
+            "available": True,
+            "source_url": "https://code.claude.com/docs/en/commands",
+            "retrieved_at": "2026-09-06",
+        },
+        "by_command": {"/fork": {"invocation_count": 2, "sessions_used_in": 1}},
+        "unclassified": {},
+    }
+    output = tmp_path / "dashboard-commands.html"
+    render(
+        AggregateResult(by_command_usage=usage),
+        output_path=output,
+        open_browser=False,
+    )
+    html = output.read_text(encoding="utf-8")
+    marker = "window.DATA = "
+    data_start = html.index(marker) + len(marker)
+    data, _ = json.JSONDecoder().raw_decode(html, data_start)
+
+    assert data["by_command_usage"] == usage
+
+
 def test_data_json_escapes_script_breakout_from_mcp_usage_keys(
     tmp_path: Path,
 ) -> None:

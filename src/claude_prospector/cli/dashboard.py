@@ -270,6 +270,7 @@ def run(args: argparse.Namespace) -> int:
             "by_model": result.by_model,
             "by_agent": result.by_agent,
             "by_skill": result.by_skill,
+            "by_command_usage": result.by_command_usage,
             "by_project": result.by_project,
             "by_day": result.by_day,
             "sessions": result.sessions,

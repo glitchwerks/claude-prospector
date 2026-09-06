@@ -29,6 +29,7 @@ EXPECTED_TOP_LEVEL_KEYS = {
     "by_agent",
     "by_skill",
     "by_skill_adoption",
+    "by_command_usage",
     "by_project",
     "by_day",
     "sessions",
@@ -89,6 +90,47 @@ class TestFormatJson:
         assert "opus" in data["by_model"]
         assert "general-purpose" in data["by_agent"]
         assert len(data["sessions"]) == 1
+
+    def test_contains_manual_builtin_command_usage(
+        self, sample_session_dir: Path
+    ) -> None:
+        """JSON output carries command names without command arguments."""
+        session_file = next((sample_session_dir / "projects").glob("*/*.jsonl"))
+        command_entry = {
+            "type": "user",
+            "userType": "external",
+            "uuid": "command-1",
+            "timestamp": "2026-04-09T12:02:00.000Z",
+            "message": {
+                "role": "user",
+                "content": (
+                    "<command-name>/fork</command-name>"
+                    "<command-args>private follow-up prompt</command-args>"
+                ),
+            },
+        }
+        with session_file.open("a", encoding="utf-8") as stream:
+            stream.write("\n" + json.dumps(command_entry) + "\n")
+
+        result = run_cli(
+            [
+                "dashboard",
+                "--format",
+                "json",
+                "--no-open",
+                "--data-dir",
+                str(sample_session_dir),
+            ],
+            cwd=WORKTREE_ROOT,
+        )
+
+        assert result.returncode == 0, f"CLI failed:\n{result.stderr}"
+        data = json.loads(result.stdout)
+        assert data["by_command_usage"]["by_command"]["/fork"] == {
+            "invocation_count": 1,
+            "sessions_used_in": 1,
+        }
+        assert "private follow-up prompt" not in result.stdout
 
     def test_generated_at_is_iso8601(self, sample_session_dir: Path):
         """generated_at must be a valid ISO-8601 datetime string."""

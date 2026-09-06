@@ -6,6 +6,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
+from claude_prospector.builtin_commands import load_command_catalog
 from claude_prospector.constants import AGENT_PATH_SEPARATOR as _AGENT_PATH_SEPARATOR
 from claude_prospector.mcp_names import normalize_mcp_tool_name
 from claude_prospector.models import (
@@ -59,6 +60,7 @@ class AggregateResult:
     sessions: list[dict] = field(default_factory=list)
     by_skill_adoption: dict[str, dict] = field(default_factory=dict)
     by_mcp_usage: dict[str, dict] = field(default_factory=dict)
+    by_command_usage: dict[str, dict] = field(default_factory=dict)
 
 
 def _add_tokens(bucket: dict, msg: MessageRecord) -> None:
@@ -91,6 +93,66 @@ def _agent_activity(msg: MessageRecord) -> dict:
         "total_tokens": msg.total_tokens,
         "cache_creation_tokens": msg.cache_creation_tokens,
         "cache_read_tokens": msg.cache_read_tokens,
+    }
+
+
+def _compute_command_usage(
+    sessions: list[SessionRecord],
+    from_date: datetime | None,
+    to_date: datetime | None,
+) -> dict[str, dict]:
+    """Aggregate manual built-in commands for the selected dashboard window.
+
+    Args:
+        sessions: Parsed sessions containing command records.
+        from_date: Inclusive lower timestamp bound.
+        to_date: Exclusive upper timestamp bound.
+
+    Returns:
+        Classification metadata plus built-in and unclassified command counts.
+        Bundled skills and workflows are excluded.
+    """
+    catalog = load_command_catalog()
+    command_counts: Counter[str] = Counter()
+    command_sessions: dict[str, set[str]] = defaultdict(set)
+    unclassified_counts: Counter[str] = Counter()
+    unclassified_sessions: dict[str, set[str]] = defaultdict(set)
+
+    for session in sessions:
+        for command in session.commands:
+            if from_date and command.timestamp < from_date:
+                continue
+            if to_date and command.timestamp >= to_date:
+                continue
+            kind = catalog.classify(command.name)
+            if kind == "builtin":
+                command_counts[command.name] += 1
+                command_sessions[command.name].add(session.session_id)
+            elif kind == "unclassified":
+                unclassified_counts[command.name] += 1
+                unclassified_sessions[command.name].add(session.session_id)
+
+    def summarize(
+        counts: Counter[str],
+        used_sessions: dict[str, set[str]],
+    ) -> dict[str, dict[str, int]]:
+        """Convert counters and session sets into the public payload shape."""
+        return {
+            name: {
+                "invocation_count": counts[name],
+                "sessions_used_in": len(used_sessions[name]),
+            }
+            for name in sorted(counts)
+        }
+
+    return {
+        "classification": {
+            "available": catalog.available,
+            "source_url": catalog.source_url,
+            "retrieved_at": catalog.retrieved_at,
+        },
+        "by_command": summarize(command_counts, command_sessions),
+        "unclassified": summarize(unclassified_counts, unclassified_sessions),
     }
 
 
@@ -278,6 +340,7 @@ def aggregate(
         result.by_day[day]["by_model"][model] += msg.total_tokens
 
     result.sessions.sort(key=lambda s: s["start_time"], reverse=True)
+    result.by_command_usage = _compute_command_usage(sessions, from_date, to_date)
 
     return result
 
