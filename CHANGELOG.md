@@ -9,8 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Searchable Agents dashboard view** (issue #295). A dedicated tab searches
-  full agent paths, includes labeled root-session context, and reports model,
+- **Searchable Agents dashboard view** (issue #295, PR #299). A dedicated tab
+  searches full agent paths, includes labeled root-session context, and reports model,
   token, message, session, and cache totals across selectable 5h, 24h, 7d,
   30d, and all-time periods. Session summaries now include additive exact
   per-agent statistics for bounded-period reporting.
