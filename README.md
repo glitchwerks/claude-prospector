@@ -68,7 +68,8 @@ The generated HTML dashboard includes:
 
 - **Budget gauges** — estimated usage against each billing bucket (5h / 7d / Sonnet-only 7d)
 - **Model breakdown** — donut chart and daily stacked bar chart (Opus / Sonnet / Haiku)
-- **Agent breakdown** — token usage per agent with model attribution and nested sub-agent tracing
+- **Agent breakdown and lookup** — token usage per agent with model attribution,
+  nested sub-agent tracing, full-path search, and selectable time periods
 - **Skill usage** — invocation counts per skill
 - **Project breakdown** — tokens per project
 - **Session drill-down** — click a day to see individual sessions with agents, tokens, and model split

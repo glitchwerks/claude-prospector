@@ -18,10 +18,7 @@
   // sanitized — see renderer.py's data_json escaping comment) rendered via
   // innerHTML below. Escape before interpolating so a crafted name can't
   // break out of its containing tag.
-  const _ESC_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
-  function esc(s) {
-    return String(s).replace(/[&<>"']/g, (c) => _ESC_MAP[c]);
-  }
+  const esc = CP.esc;
 
   // F6: sessions_seen_in / avg_calls_per_active_session can be `null`
   // ("not observable" — the server was never seen in a transcript) or `0`

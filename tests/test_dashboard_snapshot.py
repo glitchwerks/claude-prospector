@@ -1,7 +1,7 @@
-"""Regression test: dashboard JSON output is byte-identical after refactor.
+"""Regression test for the dashboard JSON contract snapshot.
 
-Compares 'claude-prospector dashboard --format json' output against the
-snapshot captured on main before the subparser refactor (Phase 0).
+The fixture originated before the subparser refactor and is updated when an
+intentional additive schema change is approved.
 """
 
 from __future__ import annotations
@@ -29,12 +29,12 @@ SNAPSHOT_FILE = (
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
-def test_existing_dashboard_unchanged() -> None:
-    """dashboard --format json output must be byte-identical to pre-refactor.
+def test_dashboard_json_matches_contract_snapshot() -> None:
+    """Dashboard JSON output must match the current committed contract snapshot.
 
     Runs the dashboard subcommand against the committed minimal fixture
-    tree and compares stdout to the snapshot captured on main before the
-    refactor. Any diff indicates a behavior regression in the refactor.
+    tree and compares stdout to the committed snapshot. Any unapproved diff
+    indicates a behavior regression or an undocumented schema change.
 
     Note: generated_at will differ between runs (it is the current
     timestamp). The comparison therefore normalises that field to a
@@ -74,7 +74,7 @@ def test_existing_dashboard_unchanged() -> None:
     expected["generated_at"] = "__normalised__"
 
     assert actual == expected, (
-        "Dashboard JSON output differs from pre-refactor snapshot.\n"
-        "If this is intentional, re-capture the snapshot (Phase 0 Task 0 "
-        "Step 2) and commit the updated file."
+        "Dashboard JSON output differs from the contract snapshot.\n"
+        "If this is intentional, document the schema change and commit the "
+        "updated snapshot."
     )

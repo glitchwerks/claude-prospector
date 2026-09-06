@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Searchable Agents dashboard view** (issue #295, PR #299). A dedicated tab
+  searches full agent paths, includes labeled root-session context, and reports model,
+  token, message, session, and cache totals across selectable 5h, 24h, 7d,
+  30d, and all-time periods. Session summaries now include additive exact
+  timestamped agent activity so bounded periods remain exact when a session
+  spans the selected cutoff.
+
 ## [0.13.0] - 2026-08-30
 
 ### Added

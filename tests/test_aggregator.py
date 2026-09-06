@@ -9,6 +9,7 @@ from claude_prospector.parser import parse_sessions
 def _msg(
     model="claude-opus-4-6",
     agent="general-purpose",
+    agent_path=None,
     skill=None,
     input_t=100,
     output_t=50,
@@ -20,7 +21,7 @@ def _msg(
         timestamp=ts or datetime(2026, 4, 9, 12, 0, 0, tzinfo=timezone.utc),
         model=model,
         agent_type=agent,
-        agent_path=(agent,),
+        agent_path=agent_path or (agent,),
         skill=skill,
         input_tokens=input_t,
         output_tokens=output_t,
@@ -111,6 +112,131 @@ class TestAggregateByAgent:
         ]
         result = aggregate(sessions)
         assert result.by_agent["general-purpose"]["primary_model"] == "opus"
+
+    def test_parent_agent_session_count_includes_nested_sessions(self):
+        """A parent path used in a nested session must not report zero sessions."""
+        sessions = [
+            _session(
+                [
+                    _msg(agent="general", agent_path=("general",)),
+                    _msg(
+                        agent="code-writer",
+                        agent_path=("general", "code-writer"),
+                    ),
+                ]
+            )
+        ]
+
+        result = aggregate(sessions)
+
+        assert result.by_agent["general"]["session_count"] == 1
+        assert (
+            result.by_agent[f"general{AGENT_PATH_SEPARATOR}code-writer"][
+                "session_count"
+            ]
+            == 1
+        )
+
+    def test_session_summary_preserves_exact_per_agent_metrics(self):
+        """Period re-aggregation must not estimate message or cache totals."""
+        sessions = [
+            _session(
+                [
+                    _msg(
+                        agent="general-purpose",
+                        model="claude-opus-4-6",
+                        input_t=100,
+                        output_t=50,
+                        cache_read=25,
+                        cache_create=10,
+                    ),
+                    _msg(
+                        agent="code-writer",
+                        model="claude-sonnet-4-6",
+                        input_t=40,
+                        output_t=20,
+                        cache_read=5,
+                        cache_create=2,
+                    ),
+                ]
+            )
+        ]
+
+        result = aggregate(sessions)
+        agent_stats = result.sessions[0]["agent_stats"]
+
+        assert agent_stats["general-purpose"] == {
+            "total_tokens": 185,
+            "input_tokens": 100,
+            "output_tokens": 50,
+            "cache_read_tokens": 25,
+            "cache_creation_tokens": 10,
+            "message_count": 1,
+            "primary_model": "opus",
+            "model_split": {"opus": 185},
+            "model_message_counts": {"opus": 1},
+        }
+        assert agent_stats["code-writer"] == {
+            "total_tokens": 67,
+            "input_tokens": 40,
+            "output_tokens": 20,
+            "cache_read_tokens": 5,
+            "cache_creation_tokens": 2,
+            "message_count": 1,
+            "primary_model": "sonnet",
+            "model_split": {"sonnet": 67},
+            "model_message_counts": {"sonnet": 1},
+        }
+
+    def test_session_summary_preserves_timestamped_agent_activity(self):
+        """A cutoff inside a session must retain later agent activity."""
+        before_cutoff = datetime(2026, 4, 9, 6, 0, tzinfo=timezone.utc)
+        after_cutoff = datetime(2026, 4, 9, 10, 0, tzinfo=timezone.utc)
+        sessions = [
+            _session(
+                [
+                    _msg(
+                        agent="general-purpose",
+                        model="claude-opus-4-6",
+                        input_t=100,
+                        output_t=50,
+                        cache_read=25,
+                        cache_create=10,
+                        ts=before_cutoff,
+                    ),
+                    _msg(
+                        agent="general-purpose",
+                        model="claude-sonnet-4-6",
+                        input_t=40,
+                        output_t=20,
+                        cache_read=5,
+                        cache_create=2,
+                        ts=after_cutoff,
+                    ),
+                ]
+            )
+        ]
+
+        result = aggregate(sessions)
+
+        assert result.sessions[0]["agent_activity"] == [
+            {
+                "timestamp": "2026-04-09T06:00:00+00:00",
+                "agent": "general-purpose",
+                "model": "opus",
+                "total_tokens": 185,
+                "cache_creation_tokens": 10,
+                "cache_read_tokens": 25,
+            },
+            {
+                "timestamp": "2026-04-09T10:00:00+00:00",
+                "agent": "general-purpose",
+                "model": "sonnet",
+                "total_tokens": 67,
+                "cache_creation_tokens": 2,
+                "cache_read_tokens": 5,
+            },
+        ]
 
 
 class TestAggregateBySkill:
