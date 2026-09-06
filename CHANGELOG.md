@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Skill Usage dashboard report** (issue #296). A dedicated searchable tab
+- **Skill Usage dashboard report** (issue #296, PR #300). A dedicated searchable tab
   combines transcript invocation totals with skill-tracker adoption data,
   highlights passed-but-never-invoked skills, and exposes labeled per-target-agent
   disclosures while preserving unknown-versus-zero distinctions.
