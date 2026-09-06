@@ -45,6 +45,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 _MCP_USAGE_JS = (
     _REPO_ROOT / "src" / "claude_prospector" / "static" / "views" / "mcp-usage.js"
 )
+_CP_UTILS_JS = _REPO_ROOT / "src" / "claude_prospector" / "static" / "cp-utils.js"
 
 _FILTER_INPUT_ID = "mcp-name-filter"
 _FILTER_PREDICATE_NAME = "matchesNameFilter"
@@ -212,7 +213,7 @@ class TestNameFilterPredicateExists:
         must exist (a two-parameter function, whatever the parameter
         names).
         """
-        content = _read_mcp_usage_js_source()
+        content = _CP_UTILS_JS.read_text(encoding="utf-8")
         assert re.search(
             rf"function {_FILTER_PREDICATE_NAME}\(\s*\w+\s*,\s*\w+\s*\)", content
         ), (
@@ -233,7 +234,7 @@ class TestNameFilterPredicateExists:
         input), so this does not pin normalization to happen twice inside
         the predicate body.
         """
-        content = _read_mcp_usage_js_source()
+        content = _CP_UTILS_JS.read_text(encoding="utf-8")
         fn_body = _extract_function_body(content, f"function {_FILTER_PREDICATE_NAME}(")
         lower_count = fn_body.count(".toLowerCase()")
         assert lower_count >= 1, (
@@ -322,7 +323,7 @@ class TestNameFilterInvokedAtIndependentCallSites:
         ``matchesNameFilter`` must exist in the source.
         """
         content = _read_mcp_usage_js_source()
-        windows = _invocation_windows(content, _FILTER_PREDICATE_NAME)
+        windows = _invocation_windows(content, f"CP.{_FILTER_PREDICATE_NAME}")
         assert len(windows) >= 2, (
             f"{_FILTER_PREDICATE_NAME} has only {len(windows)} call "
             "site(s) -- issue #282 requires filtering both server names "
@@ -342,7 +343,7 @@ class TestNameFilterAppliesToServerNames:
         ``byServer``, or ``server-card``).
         """
         content = _read_mcp_usage_js_source()
-        windows = _invocation_windows(content, _FILTER_PREDICATE_NAME)
+        windows = _invocation_windows(content, f"CP.{_FILTER_PREDICATE_NAME}")
         assert windows, (
             f"{_FILTER_PREDICATE_NAME} is declared but never invoked -- "
             "issue #282 requires the predicate to actually be applied "
@@ -381,7 +382,7 @@ class TestNameFilterAppliesToToolMethodNames:
         field that carry per-method/tool names.
         """
         content = _read_mcp_usage_js_source()
-        windows = _invocation_windows(content, _FILTER_PREDICATE_NAME)
+        windows = _invocation_windows(content, f"CP.{_FILTER_PREDICATE_NAME}")
         assert windows, (
             f"{_FILTER_PREDICATE_NAME} is declared but never invoked -- "
             "issue #282 requires the predicate to actually be applied "

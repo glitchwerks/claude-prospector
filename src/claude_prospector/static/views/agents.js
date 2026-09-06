@@ -3,10 +3,6 @@
 (function () {
   const PERIODS = ['5h', '24h', '7d', '30d', 'all'];
 
-  function matchesAgentFilter(name, query) {
-    return String(name).toLowerCase().includes(String(query).trim().toLowerCase());
-  }
-
   function modelClass(model) {
     const value = String(model || '').toLowerCase();
     if (value.includes('opus')) return 'badge-opus';
@@ -34,7 +30,7 @@
   function renderAgentRows(state) {
     const agents = periodAgents(state.period);
     const rows = Object.entries(agents)
-      .filter(([name]) => matchesAgentFilter(name, state.query))
+      .filter(([name]) => CP.matchesNameFilter(name, state.query))
       .sort((left, right) => {
         const tokenDelta = (right[1].total_tokens || 0)
           - (left[1].total_tokens || 0);

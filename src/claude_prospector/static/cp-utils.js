@@ -380,12 +380,18 @@
     return out;
   }
 
+  function matchesNameFilter(name, query) {
+    const normalizedName = String(name).toLowerCase();
+    const normalizedQuery = String(query).trim().toLowerCase();
+    return normalizedName.includes(normalizedQuery);
+  }
+
   // ── Export ───────────────────────────────────────────────────────────────
   window.CP = {
     AGENT_PATH_SEP,
     PALETTE,
     fmtTokens, fmtTokensFull, fmtPct, fmtDuration, fmtRelTime, fmtDay,
-    esc, agentLeaf,
+    esc, agentLeaf, matchesNameFilter,
     localDateKey,
     modelColor,
     windowCutoff, filterSessions, reAggregate, reAggregateAgents,
