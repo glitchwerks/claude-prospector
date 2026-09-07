@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.14.0] - 2026-09-06
 
 ### Added
 
@@ -19,6 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   30d, and all-time periods. Session summaries now include additive exact
   timestamped agent activity so bounded periods remain exact when a session
   spans the selected cutoff.
+- **Built-in command usage reporting** (issue #298, PR #303). The Skills tab
+  now reports manual Claude Code built-in slash-command invocations and
+  distinct-session counts from a dated official command catalog, keeps
+  documented aliases distinct, excludes bundled skills and workflows, and
+  surfaces unclassified command names for auditability. Parsing retains only
+  command names and timestamps; arguments and surrounding prompt text are
+  never retained or written.
 
 ## [0.13.0] - 2026-08-30
 
