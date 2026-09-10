@@ -88,8 +88,9 @@ config.json migration mechanism (`hooks/dashboard-regen.py:164-199`).
 
 ## § 2. Design decisions (locked)
 
-Decisions D1–D7 are imported verbatim from WAYFINDER-SPEC § 2 unless
-noted. D8–D12 are prospector-specific.
+Decisions D1–D7 were imported verbatim from WAYFINDER-SPEC § 2 unless
+noted. D8–D14 are prospector-specific. D14 supersedes D1 for install-source
+selection; D1 remains below to preserve the original rationale.
 
 | #   | Decision                                                                                                                                                                                              | Rationale                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -106,6 +107,7 @@ noted. D8–D12 are prospector-specific.
 | D11 | **Setup-state flag lives at `${CLAUDE_PLUGIN_DATA}/setup-state.json`.** Always. `CLAUDE_PROSPECTOR_BASE_DIR` does **not** override flag location.                                                      | The prospector three-tier resolver (`hooks/skill-tracker.py:35-56`, `hooks/dashboard-regen.py:74-95`) was designed for **runtime artifacts** (tracking JSONL, dashboard HTML, hook.log) that pre-date Pattern W. Pattern W's flag is **install-state**, not runtime state — its location must be predictable for the SessionStart hook before the venv is materialised. Pinning to `${CLAUDE_PLUGIN_DATA}` matches wayfinder, matches Anthropic's documented `${CLAUDE_PLUGIN_DATA}` mechanism (per `claude-code-plugin-authoring` skill § 4), and keeps the helper's path-resolution single-tier. **Rejected**: route flag through the three-tier base_dir() — premature generality, breaks the wayfinder symmetry. |
 | D12 | **Version target: `v0.7.0`.** Minor bump, not breaking userspace beyond the one-time `/setup-prospector` invocation.                                                                                  | Pattern W adds a new install requirement (run `/setup-prospector` once after upgrade) but does not change any existing CLI flag, hook payload shape, dashboard output, or skill behaviour. The userspace-visible change is the SessionStart banner on first v0.7.0 session. Minor-version semantics (SemVer "added functionality in a backward-compatible manner") fit. Pre-release rehearsal: `v0.7.0rc1` to TestPyPI for end-to-end CI validation before publishing to PyPI proper. **Rejected**: major v1.0.0 — premature; reserve for if/when the v0.6.0 → v0.7.0 migration story turns out worse than expected.                                                                                          |
 | D13 | **Setup pipeline uses `python -m pip install`, not `uv pip install`.**                                                                                                                               | End-user portability: `uv` is not assumed to be installed on user machines. The venv created by `python -m venv` already provides `pip` via `ensurepip`; using it in the setup pipeline means the end-user path requires nothing beyond a Python ≥ 3.10 interpreter. CI smoke jobs may use either `pip` or `uv` since CI already provides both. **Rejected**: `uv` as the install verb for the setup pipeline — would constrain end-user machine prerequisites without meaningful benefit. |
+| D14 | **PyPI first; approval-gated, commit-pinned source fallback.** Setup first attempts the exact default `claude-prospector==<plugin-version>` spec from PyPI. Only after that attempt fails may it offer a fallback, and it must receive explicit user approval before accessing GitHub. The fallback resolves and verifies the public repository's `v<plugin-version>` tag to an immutable commit SHA, then downloads, builds, and installs that exact revision with the venv's Python and pip. `CLAUDE_PROSPECTOR_PIP_SPEC` remains authoritative and never triggers an automatic fallback. | Supersedes D1 for corporate environments whose configured package index is unreachable or has not mirrored the required release. Pinning the approved fallback to the SHA prevents a moving ref from changing the installed source. The fallback still requires Git and access to GitHub, and build/runtime dependencies must be available from the configured package index or local cache. Source: issue #306. |
 
 ---
 
@@ -144,8 +146,8 @@ noted. D8–D12 are prospector-specific.
 │    2. Discover Python (D6, Python >= 3.10)                               │
 │    3. Wipe ${CLAUDE_PLUGIN_DATA}/venv/ if it exists                      │
 │    4. Create venv: <python> -m venv <data>/venv                          │
-│    5. Install: <venv-python> -m pip install claude-prospector==<X>       │
-│       (X = plugin version, read from pyproject.toml / plugin.json)       │
+│    5. Install exact version from PyPI (preferred); on failure, offer    │
+│       an approval-gated source build pinned to verified tag commit SHA  │
 │    6. Verify: <venv-python> -c "import claude_prospector"                │
 │    7. setup_state.write({version, venv_path, interpreter, installed_at}) │
 │    8. Tell user: "Setup complete. Open a new session to activate."       │
@@ -185,7 +187,11 @@ noted. D8–D12 are prospector-specific.
   three-tier `CLAUDE_PROSPECTOR_BASE_DIR` resolver continues to govern
   runtime artifacts (skill-tracking JSONL, dashboard HTML, hook.log)
   only.
-- **PyPI is the only install source.**
+- **PyPI is always the first and preferred install source.** The source
+  fallback is offered only after the default exact-version install fails and
+  runs only with explicit user approval. `CLAUDE_PROSPECTOR_PIP_SPEC` is
+  authoritative and disables this fallback. Approved source installs verify
+  `v<plugin-version>` against an immutable commit SHA before building.
 - **`${user_config.autoregen}` substitution is preserved.** The Stop
   hook command in `hooks/hooks.json` keeps the `--autoregen
   "${user_config.autoregen}"` arg; only the executable changes (from
@@ -202,9 +208,10 @@ noted. D8–D12 are prospector-specific.
 | `hooks/skill-tracker.py`                   | **Modified.** Add `setup_state.read()` guard at top of `main()`. If not VALID, exit 0 silent. If VALID, the rest of `main()` proceeds as today.     | +20 -0     | The inline `_get_allowlist()` ImportError fallback (`hooks/skill-tracker.py:107-119`) is **retained** for defense — even when VALID, importing `claude_prospector.skill_tracking` from the current `sys.executable` (which is the harness Python, not the venv Python) may still fail; the filesystem fallback is correct behaviour and not removed by Pattern W.        |
 | `hooks/dashboard-regen.py`                 | **Modified.** Add `setup_state.read()` guard. **Both** subprocess callsites replace `sys.executable` with `get_venv_python(flag.venv_path)` and drop the `cwd=` arg: `:506-514` (version-mismatch gate — `subprocess.run([sys.executable, "-m", "claude_prospector", "--version"], ...)`) and `:543-560` (dashboard regen — `subprocess.run([sys.executable, "-m", "claude_prospector", "dashboard", ...])`). | +30 -12    | Removes the brittle `Path(sys.executable).parent.parent.parent` CWD inference from both callsites. New contract: `--data-dir` defaults to absolute `Path.home() / ".claude"` (verifiable in `claude_prospector/cli/dashboard.py:79`); `--output` is required-absolute in the spec'd invocation; no other argument resolves relative to cwd — so dropping `cwd=` is safe today. Implementers MUST re-verify this if any new dashboard CLI arg is added later. The `--autoregen` arg, version-mismatch gate logic, and migration-notice logic are all preserved untouched. |
 | `hooks/hooks.json`                         | **Modified.** Add `SessionStart` entry. Existing `PreToolUse` and `Stop` entries unchanged.                                                         | +12 -0     | New entry shape: `"SessionStart": [{ "hooks": [{ "type": "command", "command": "python \"${CLAUDE_PLUGIN_ROOT}/hooks/check-prospector-setup.py\"" }] }]`. Note that `python` here means the harness-provided Python — same as the other hooks today. Only the **logic inside** the hooks gates work behind Pattern W; the `hooks.json` command interpreter does not change. |
-| `skills/setup-prospector/SKILL.md`         | **New.** Mirrors `skills/setup-wayfinder/SKILL.md`.                                                                                                 | ~150       | Frontmatter with NL triggers (D5). Body: 8-step checklist matching § 3 architecture flow. Explicit env-var name `CLAUDE_PROSPECTOR_BOOTSTRAP_PYTHON`. Probe asserts Python ≥ 3.10.                                                                                                                                                                                       |
-| `tests/integration/setup_pipeline.py`      | **New.** Executable mirror of skill body's 8 steps. CI calls `run_full_pipeline(version, prior_interpreter=None)`.                                  | ~320       | Test seams: `$CLAUDE_PLUGIN_DATA`, `$CLAUDE_PROSPECTOR_BOOTSTRAP_PYTHON`, `$CLAUDE_PROSPECTOR_PIP_SPEC` (install from local checkout instead of PyPI — required for pre-publish CI; matches wayfinder's `CLAUDE_WAYFINDER_PIP_SPEC` pattern). Includes a `<venv-python> -m ensurepip --upgrade` step before `pip install` as defensive plumbing for Windows runners where `ensurepip` may be disabled (see § 9.5). Per D13, the install verb is `pip`.                                                                                                                              |
+| `skills/setup-prospector/SKILL.md`         | **New.** Mirrors `skills/setup-wayfinder/SKILL.md`.                                                                                                 | ~150       | Frontmatter with NL triggers (D5). Body: 8-step checklist matching § 3 architecture flow. Explicit env-var name `CLAUDE_PROSPECTOR_BOOTSTRAP_PYTHON`. Probe asserts Python ≥ 3.10. D14 adds the approval-gated, SHA-pinned source fallback without changing the eight-step outline. |
+| `tests/integration/setup_pipeline.py`      | **New.** Executable mirror of skill body's 8 steps. CI calls `run_full_pipeline(version, prior_interpreter=None)`.                                  | ~500       | Test seams: `$CLAUDE_PLUGIN_DATA`, `$CLAUDE_PROSPECTOR_BOOTSTRAP_PYTHON`, `$CLAUDE_PROSPECTOR_PIP_SPEC` (install from local checkout instead of PyPI — required for pre-publish CI; matches wayfinder's `CLAUDE_WAYFINDER_PIP_SPEC` pattern). Includes a `<venv-python> -m ensurepip --upgrade` step before `pip install` as defensive plumbing for Windows runners where `ensurepip` may be disabled (see § 9.5). Per D13, the install verb is `pip`; D14 adds approval and tag-resolution seams. |
 | `tests/integration/test_setup_skill.py`    | **New.** Pytest harness around `setup_pipeline.py`. Asserts venv exists, import succeeds, flag JSON shape valid.                                    | ~120       | Runs in CI smoke matrix.                                                                                                                                                                                                                                                                                                                                                |
+| `tests/integration/test_setup_pipeline_fallback.py` | **New for issue #306.** Focused tests for the source-install fallback. | ~650 | Covers PyPI failure and timeout, mandatory approval and decline, authoritative set/empty `CLAUDE_PROSPECTOR_PIP_SPEC`, annotated and lightweight tag resolution, malformed or duplicate refs, missing/unavailable Git, SHA-pinned source install, preserved diagnostics, and partial-venv cleanup on resolution or build/install failure. |
 | `tests/unit/test_setup_state.py`           | **New.** Unit tests for `hooks/lib/setup_state.py`. ~12 cases mirroring WAYFINDER-SPEC § 7.                                                         | ~250       | Fixture states from WAYFINDER-SPEC § 7 helper-unit-tests table.                                                                                                                                                                                                                                                                                                          |
 | `tests/test_skill_pipeline_sync.py`        | **New.** Diff skill body's numbered steps against `setup_pipeline.py` headings to catch drift.                                                      | ~80        | Same purpose as wayfinder's sync test.                                                                                                                                                                                                                                                                                                                                  |
 | `.github/workflows/ci.yml`                 | **Modified.** Add `skill-smoke-{ubuntu,windows}` jobs running `tests/integration/test_setup_skill.py` with `CLAUDE_PROSPECTOR_PIP_SPEC=$GITHUB_WORKSPACE`. | +35 -0     | Matrix decision in § 9. macOS deferred (see § 9).                                                                                                                                                                                                                                                                                                                       |
@@ -328,21 +335,28 @@ D4 (always-wipe-first) makes this structural, not error-handling.
 
 ```
 Skill step 5: pip install → exit 1.
-Skill DOES NOT write flag. Surfaces pip stderr verbatim.
-User retries when network/PyPI returns.
+Skill surfaces pip stderr and asks whether to use the source fallback.
+If user declines: skill wipes the partial venv and DOES NOT write flag.
+If user approves: skill resolves v<plugin-version> in the public repository,
+verifies its immutable commit SHA, and builds/installs that exact revision.
+The fallback fails cleanly if GitHub is unreachable, tag/SHA verification
+fails, or dependencies are unavailable from the configured index or cache.
 ```
+
+When `CLAUDE_PROSPECTOR_PIP_SPEC` is set, its failed install is authoritative:
+the skill wipes the partial venv and exits without offering the fallback.
 
 ---
 
 ## § 7. Error modes
 
-Adapted from WAYFINDER-SPEC § 6, with two prospector-specific additions (F9, F10).
+Adapted from WAYFINDER-SPEC § 6, with prospector-specific additions.
 
 | ID  | Failure                                        | Where                          | Recovery                                                                                                                                                                                              |
 | --- | ---------------------------------------------- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | F1  | No Python ≥ 3.10 interpreter found             | Skill step 2                   | Ask user for absolute path; persist to flag's `interpreter` field.                                                                                                                                    |
 | F2  | `python -m venv` fails                         | Skill step 4                   | Surface stderr; wipe partial; exit without writing flag.                                                                                                                                              |
-| F3  | `pip install` fails                            | Skill step 5                   | Surface pip stderr; wipe half-built venv; user retries.                                                                                                                                               |
+| F3  | Default exact-version PyPI install fails       | Skill step 5                   | Surface pip stderr and ask for explicit approval to use the D14 source fallback. If approval is declined, wipe the partial venv and exit without writing the flag. If `CLAUDE_PROSPECTOR_PIP_SPEC` is set, treat its failure as authoritative, wipe, and exit without offering the fallback. |
 | F4  | Import verification fails after install        | Skill step 6                   | Wipe venv; report import error; suggest `pip cache purge` and retry.                                                                                                                                  |
 | F5  | Flag write fails                               | Skill step 7                   | Wipe the just-built venv; surface write error.                                                                                                                                                        |
 | F6  | Skill interrupted mid-run                      | Anywhere in steps 3-7          | Self-healing via D4.                                                                                                                                                                                  |
@@ -350,6 +364,7 @@ Adapted from WAYFINDER-SPEC § 6, with two prospector-specific additions (F9, F1
 | F8  | Banner emission fails                          | `check-prospector-setup.py`    | Hook exits 0 (never blocks session); degrades to silent-no-op.                                                                                                                                        |
 | F9  | Legacy `~/.claude/.venv` import shadowing      | `check-prospector-setup.py` import probe | If a user has prospector installed in `~/.claude/.venv` AND the new venv's import probe spawns the **wrong** Python (e.g. user's PATH points there), the probe might "pass" against the legacy install rather than the new venv. **Mitigation**: the probe always uses `get_venv_python(flag.venv_path)` (an absolute path), never `python` from PATH. This is structural, not configurable. See § 11 for migration guidance to users running both. |
 | F10 | Venv path exists at SessionStart but package becomes unavailable mid-session | `dashboard-regen.py` and `skill-tracker.py` during a live session | The SessionStart probe passed, but the venv was corrupted or the package uninstalled during the session. Next `dashboard-regen.py` fire: `venv_python -m claude_prospector dashboard ...` exits non-zero; the existing `_regen_failed_page()` mechanism writes a failure HTML page — recoverable, user sees a failure notice rather than a crash. `skill-tracker.py` is unaffected: its `_get_allowlist()` ImportError fallback (`hooks/skill-tracker.py:107-119`) covers package-missing under harness Python, and the effect here is identical (package missing from the venv rather than from the harness). **No new code required**; these are the intended recovery surfaces for mid-session degradation. The next SessionStart will detect BROKEN state and emit a banner. |
+| F11 | Source fallback cannot be verified or installed | Skill step 5 | If GitHub access, `v<plugin-version>` resolution, tag/SHA verification, source build, dependency resolution, or installation fails, surface the error, wipe the partial venv, and exit without writing the flag. Never install from an unverified tag, branch, or moving ref. |
 
 ### Hook invariants
 
@@ -390,6 +405,15 @@ Adapted from WAYFINDER-SPEC § 6, with two prospector-specific additions (F9, F1
    (an absolute path) and omit the `cwd=` arg. No hook ever spawns Python
    without a VALID flag — this invariant binds equally to the version
    probe and the regen subprocess.
+8. **The default exact-version PyPI install always runs first.** A source
+   fallback is offered only after that attempt fails and runs only after
+   explicit user approval.
+9. **`CLAUDE_PROSPECTOR_PIP_SPEC` is authoritative.** Setup never offers or
+   attempts the source fallback when the override is set.
+10. **Every source fallback is pinned to a verified immutable SHA.** Setup
+    resolves `v<plugin-version>` from the public repository, verifies the
+    tag/SHA relationship, and installs that exact revision—never a branch or
+    moving ref.
 
 ---
 
@@ -455,6 +479,21 @@ End-to-end against real Python, real pip. Runs in CI on every PR.
 Test seam: `$CLAUDE_PROSPECTOR_PIP_SPEC=$GITHUB_WORKSPACE` installs from
 the checkout instead of PyPI — required because `claude-prospector`
 won't be on PyPI until the same PR's release tag fires.
+
+#### 9.3.1 Source-fallback coverage — `tests/integration/test_setup_pipeline_fallback.py`
+
+Focused tests exercise the D14 branches without making live network calls:
+
+- default PyPI failure or timeout offers the fallback only through an explicit
+  approval callback; missing or declined approval fails and cleans the venv;
+- set and explicitly empty `CLAUDE_PROSPECTOR_PIP_SPEC` values remain
+  authoritative and never invoke approval or tag resolution;
+- annotated and lightweight tags resolve to immutable 40-character SHAs,
+  while malformed or duplicate applicable refs fail closed;
+- missing, denied, or timed-out Git access and source-install launch, timeout,
+  or build failures preserve relevant diagnostics and clean the partial venv;
+- a successful fallback installs the `git+https` requirement pinned to the
+  resolved SHA, never the tag or a branch.
 
 ### 9.4 Skill/pipeline sync — `tests/test_skill_pipeline_sync.py`
 
@@ -556,9 +595,12 @@ skill behaviour changes. SemVer minor bump is appropriate.
   `Path(sys.executable).parent.parent.parent`. The dashboard regen
   subprocess is spawned with the absolute path recorded in the
   setup-state flag.
-- `claude-prospector` is now published to PyPI. The setup skill
-  installs from PyPI by default; the `CLAUDE_PROSPECTOR_PIP_SPEC` env
-  var allows installing from a local checkout for development.
+- `claude-prospector` is now published to PyPI. The setup skill always tries
+  the exact PyPI version first. If that fails, it may build from the public
+  repository's matching tag only after user approval and after resolving and
+  verifying the tag's immutable commit SHA. The
+  `CLAUDE_PROSPECTOR_PIP_SPEC` env var remains authoritative for development
+  and CI installs and disables the fallback.
 
 ### Migration from v0.6.0
 
@@ -605,8 +647,21 @@ Run `/setup-prospector` once. The skill will:
 
 1. Discover a Python 3.10+ interpreter on your system.
 2. Create a plugin-owned venv at `${CLAUDE_PLUGIN_DATA}/venv/`.
-3. Install `claude-prospector` from PyPI into that venv.
+3. Install the exact `claude-prospector` version from PyPI into that venv.
 4. Verify the install and record a setup-state flag.
+
+PyPI is always preferred. If the default exact-version install fails, the
+skill reports the error and offers to build from the public repository. It
+must receive explicit user approval before accessing GitHub. The fallback
+resolves and verifies the matching `v<plugin-version>` tag to an immutable
+commit SHA, then downloads, builds, and installs that exact revision with the
+venv's Python and pip. Git must be installed, GitHub must be reachable, and
+build/runtime dependencies must be available from the configured package index
+or local cache.
+
+`CLAUDE_PROSPECTOR_PIP_SPEC` remains authoritative: when it is set, setup uses
+that package spec and does not offer or attempt the GitHub fallback if the
+install fails.
 
 After setup completes, open a new session — the banner will be gone and
 the dashboard, skill-tracking, and usage-analysis features will work
@@ -647,7 +702,8 @@ The following are explicitly **not** in this spec:
   surface this spec deliberately leaves alone.
 - **A breaking v1.0.0 cutover.** D12: minor bump is sufficient.
 - **JS port of the hooks.** D8: rejected.
-- **Bundled wheel install.** D1: rejected.
+- **Bundled wheel install.** D1 originally rejected it; D14 supersedes D1's
+  PyPI-only restriction but retains the rejection of plugin-bundled wheels.
 - **Bumping `requires-python` to >= 3.11.** D10: rejected.
 - **macOS-specific Microsoft Store Python shim workarounds.** Same
   treatment as wayfinder: users hit by this take the F1 ask-user path.
@@ -659,6 +715,7 @@ The following are explicitly **not** in this spec:
 - `claude-wayfinder` spec: `I:/other/claude-wayfinder/docs/superpowers/specs/2026-05-17-setup-skill-architecture-design.md`
 - `glitchwerks/claude-prospector#107` (tracking)
 - `glitchwerks/claude-prospector#109` (PyPI release workflow — merged)
+- `glitchwerks/claude-prospector#306` (approval-gated, SHA-pinned source fallback)
 - `hooks/dashboard-regen.py:74-95` (three-tier `_base_dir()`)
 - `hooks/dashboard-regen.py:506-514` (version-check subprocess with `.parent.parent.parent` cwd)
 - `hooks/dashboard-regen.py:543-560` (dashboard regen subprocess with `.parent.parent.parent` cwd)

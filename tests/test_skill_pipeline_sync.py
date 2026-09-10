@@ -20,7 +20,7 @@ STEP_FUNCTION_MAP = {
     "Discover Python": "discover_python",
     "Wipe the existing venv": "wipe_venv",
     "Create the venv": "create_venv",
-    "Install claude-prospector from PyPI": "pip_install",
+    "Install claude-prospector (PyPI first)": "pip_install",
     "Verify import": "verify_import",
     "Write the setup-state flag": "write_flag",
     # Step 8 (tell user) is intentionally not mirrored in the pipeline module.

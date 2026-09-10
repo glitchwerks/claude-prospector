@@ -26,10 +26,33 @@ import subprocess
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
+
+
+GITHUB_REPOSITORY_URL = "https://github.com/glitchwerks/claude-prospector.git"
 
 
 class SetupError(Exception):
     """Raised when a setup pipeline step cannot complete."""
+
+
+def _validate_commit_sha(commit_sha: str) -> str:
+    """Return a valid immutable commit SHA or fail setup.
+
+    Args:
+        commit_sha: Candidate SHA resolved from the matching release tag.
+
+    Returns:
+        The validated 40-character hexadecimal commit SHA.
+
+    Raises:
+        SetupError: If the candidate is not a full commit SHA.
+    """
+    if re.fullmatch(r"[0-9a-fA-F]{40}", commit_sha) is None:
+        raise SetupError(
+            "Resolved Git reference is not a valid 40-character commit SHA."
+        )
+    return commit_sha
 
 
 def compute_plugin_data_dir(
@@ -172,8 +195,88 @@ def get_venv_python(venv_dir: Path) -> Path:
     return venv_dir / "bin" / "python"
 
 
-def pip_install(venv_dir: Path, version: str) -> None:
-    """Step 5: Install claude-prospector from PyPI into the venv.
+def resolve_release_tag(
+    version: str,
+    *,
+    run: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+) -> str:
+    """Resolve a version-matching Git tag to an immutable commit SHA.
+
+    Queries both the direct and peeled refs. Annotated tags use the peeled
+    commit while lightweight tags use the direct ref.
+
+    Args:
+        version: Exact package version whose ``v<version>`` tag is required.
+        run: Optional command runner used by deterministic tests.
+
+    Returns:
+        Commit SHA referenced by the matching release tag.
+
+    Raises:
+        SetupError: If Git cannot resolve the requested release tag.
+    """
+    runner = run or subprocess.run
+    tag_ref = f"refs/tags/v{version}"
+    peeled_ref = f"{tag_ref}^{{}}"
+    args = [
+        "git",
+        "ls-remote",
+        GITHUB_REPOSITORY_URL,
+        tag_ref,
+        peeled_ref,
+    ]
+    try:
+        result = runner(
+            args,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise SetupError(
+            "git ls-remote timed out; check GitHub network access."
+        ) from exc
+    except FileNotFoundError as exc:
+        raise SetupError(
+            "Git is required for the approved GitHub source fallback."
+        ) from exc
+    except OSError as exc:
+        raise SetupError(f"git ls-remote could not start: {exc}") from exc
+    if result.returncode != 0:
+        raise SetupError(
+            f"git ls-remote failed (exit {result.returncode}):\n"
+            f"stdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+
+    resolved_refs: dict[str, list[str]] = {}
+    for line in result.stdout.splitlines():
+        parts = line.split(maxsplit=1)
+        if len(parts) == 2 and parts[1] in {tag_ref, peeled_ref}:
+            resolved_refs.setdefault(parts[1], []).append(parts[0])
+
+    peeled_values = resolved_refs.get(peeled_ref, [])
+    direct_values = resolved_refs.get(tag_ref, [])
+    applicable_ref = peeled_ref if peeled_values else tag_ref
+    applicable_values = peeled_values or direct_values
+    if len(applicable_values) > 1:
+        raise SetupError(
+            "git ls-remote returned duplicate applicable tag refs: "
+            f"{applicable_ref}."
+        )
+    if not applicable_values:
+        raise SetupError(f"Release tag v{version} was not found on GitHub.")
+    return _validate_commit_sha(applicable_values[0])
+
+
+def pip_install(
+    venv_dir: Path,
+    version: str,
+    *,
+    approve_fallback: Callable[[str], bool] | None = None,
+    tag_resolver: Callable[[str], str] | None = None,
+) -> None:
+    """Step 5: Install claude-prospector from PyPI first.
 
     Runs ensurepip first (defensive step for Windows runners where the
     venv pip may be absent), then installs with `python -m pip install`
@@ -186,6 +289,10 @@ def pip_install(venv_dir: Path, version: str) -> None:
     Args:
         venv_dir: Root path of the venv created by create_venv().
         version: Exact package version string (e.g. "0.7.0").
+        approve_fallback: Callback that receives the PyPI failure diagnostics
+            and returns whether the user explicitly approved GitHub access.
+        tag_resolver: Optional deterministic seam for resolving the matching
+            release tag to an immutable commit SHA.
 
     Raises:
         SetupError: If pip exits nonzero. Partial venv is wiped first.
@@ -203,9 +310,11 @@ def pip_install(venv_dir: Path, version: str) -> None:
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass  # Best-effort; pip install below will surface any real failure
 
-    pip_spec = os.environ.get(
-        "CLAUDE_PROSPECTOR_PIP_SPEC",
-        f"claude-prospector=={version}",
+    pip_spec_override = os.environ.get("CLAUDE_PROSPECTOR_PIP_SPEC")
+    pip_spec = (
+        pip_spec_override
+        if pip_spec_override is not None
+        else f"claude-prospector=={version}"
     )
     # shlex.split handles both plain specs and path/editable forms (-e /path).
     # Use posix=False on Windows so backslash path separators are preserved.
@@ -219,14 +328,73 @@ def pip_install(venv_dir: Path, version: str) -> None:
             args, capture_output=True, text=True, check=False, timeout=180
         )
     except subprocess.TimeoutExpired as exc:
+        if pip_spec_override is not None:
+            shutil.rmtree(venv_dir, ignore_errors=True)
+            raise SetupError(
+                f"pip install {pip_spec!r} timed out after {exc.timeout}s; "
+                "check package-index network access."
+            ) from exc
+        diagnostics = (
+            f"PyPI install timed out after {exc.timeout}s; check "
+            "package-index network access."
+        )
+    except OSError as exc:
         shutil.rmtree(venv_dir, ignore_errors=True)
         raise SetupError(
-            f"pip install timed out after {exc.timeout}s — check network"
+            f"pip install could not start for {pip_spec!r}: {exc}"
+        ) from exc
+    else:
+        if result.returncode == 0:
+            return
+        diagnostics = (
+            f"pip install {pip_spec!r} failed (exit {result.returncode}):\n"
+            f"stdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+
+    if pip_spec_override is not None:
+        shutil.rmtree(venv_dir, ignore_errors=True)
+        raise SetupError(diagnostics)
+    if approve_fallback is None:
+        shutil.rmtree(venv_dir, ignore_errors=True)
+        raise SetupError(
+            f"{diagnostics}\nGitHub fallback requires explicit user approval."
+        )
+    if not approve_fallback(diagnostics):
+        shutil.rmtree(venv_dir, ignore_errors=True)
+        raise SetupError(f"{diagnostics}\nGitHub fallback was declined.")
+
+    resolver = tag_resolver or resolve_release_tag
+    try:
+        commit_sha = _validate_commit_sha(resolver(version))
+    except SetupError as exc:
+        shutil.rmtree(venv_dir, ignore_errors=True)
+        raise SetupError(f"{diagnostics}\nGitHub fallback failed: {exc}") from exc
+    source_spec = f"git+{GITHUB_REPOSITORY_URL}@{commit_sha}"
+    args = [str(venv_python), "-m", "pip", "install", source_spec]
+    try:
+        result = subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=180,
+        )
+    except subprocess.TimeoutExpired as exc:
+        shutil.rmtree(venv_dir, ignore_errors=True)
+        raise SetupError(
+            f"{diagnostics}\nGitHub source install timed out after "
+            f"{exc.timeout}s; check GitHub and package-index network access."
+        ) from exc
+    except OSError as exc:
+        shutil.rmtree(venv_dir, ignore_errors=True)
+        raise SetupError(
+            f"{diagnostics}\nGitHub source install could not start: {exc}"
         ) from exc
     if result.returncode != 0:
         shutil.rmtree(venv_dir, ignore_errors=True)
         raise SetupError(
-            f"pip install {pip_spec!r} failed (exit {result.returncode}):\n"
+            f"{diagnostics}\nGitHub source install {source_spec!r} "
+            f"failed (exit {result.returncode}):\n"
             f"stdout: {result.stdout}\nstderr: {result.stderr}"
         )
 

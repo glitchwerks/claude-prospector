@@ -82,14 +82,14 @@ is handled correctly by this unconditional removal.
 Where `<python_cmd>` is the interpreter found in Step 2. If this fails, surface
 the stderr to the user and do NOT proceed to Step 5.
 
-## Step 5: Install claude-prospector from PyPI
+## Step 5: Install claude-prospector (PyPI first)
 
 First, ensure pip is available in the new venv:
 ```
 <venv_python> -m ensurepip --upgrade
 ```
 
-Then install:
+Then install the exact plugin version from the configured package index:
 ```
 <venv_python> -m pip install claude-prospector==<version>
 ```
@@ -98,10 +98,50 @@ Where `<version>` is the current plugin version (read from `pyproject.toml`
 `[project].version`, falling back to `.claude-plugin/plugin.json` `version`).
 
 If `$CLAUDE_PROSPECTOR_PIP_SPEC` is set, use its value as the entire package
-spec instead of `claude-prospector==<version>` (test/dev override only).
+spec instead of `claude-prospector==<version>` (test/dev override only). The
+override is authoritative: if that install fails, surface stderr verbatim,
+wipe the partial venv, and do NOT offer another install source or proceed to
+Step 6.
 
-If pip fails, surface the stderr verbatim, wipe the partial venv, and do NOT
-proceed to Step 6.
+If the default exact-version install succeeds, proceed to Step 6. If it fails,
+preserve and surface stderr verbatim, but do not wipe the venv yet. Ask the
+user:
+
+> "The preferred package-index install for claude-prospector v`<version>`
+> failed. May I download the matching `v<version>` tag from the public
+> `glitchwerks/claude-prospector` GitHub repository, resolve it to an immutable
+> commit SHA, and build it into the plugin venv?"
+
+This prompt is mandatory. Prior permission to run setup, a request not to
+interrupt, or general network access is not approval for the GitHub fallback.
+
+If the user declines, wipe the partial venv and do NOT proceed to Step 6. Only
+after explicit approval, resolve the version-matching tag:
+
+```
+git ls-remote https://github.com/glitchwerks/claude-prospector.git \
+  "refs/tags/v<version>" "refs/tags/v<version>^{}"
+```
+
+If a peeled `refs/tags/v<version>^{}` line is present, require exactly one such
+line and use its 40-character hexadecimal commit SHA; ignore the direct tag-
+object SHA. Otherwise, require exactly one direct `refs/tags/v<version>` line
+and use its 40-character hexadecimal SHA as the lightweight tag's commit. A
+missing, duplicate, or malformed applicable result is a failure. Never install
+from the tag name, `main`, or another moving ref.
+
+Install from the immutable commit SHA so pip clones the public repository and
+builds the package into the new venv:
+
+```
+<venv_python> -m pip install \
+  "git+https://github.com/glitchwerks/claude-prospector.git@<commit_sha>"
+```
+
+If Git is unavailable, tag resolution fails, or the source install fails,
+surface the actionable error (including stderr), wipe the partial venv, and do
+NOT proceed to Step 6. This fallback still requires the configured package
+index or local cache to supply any missing build and runtime dependencies.
 
 ## Step 6: Verify import
 

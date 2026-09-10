@@ -36,8 +36,20 @@ Run `/setup-prospector` once. The skill will:
 
 1. Discover a Python 3.10+ interpreter on your system.
 2. Create a plugin-owned venv at `${CLAUDE_PLUGIN_DATA}/venv/`.
-3. Install `claude-prospector` from PyPI into that venv.
+3. Install the plugin's exact `claude-prospector` version from PyPI into that venv.
 4. Verify the install and record a setup-state flag.
+
+PyPI is always the preferred source. If that default exact-version install
+fails, `/setup-prospector` reports the failure and offers a source-build
+fallback; it does not use the fallback unless you explicitly approve it. The
+fallback resolves the matching `v<plugin-version>` tag in the [public
+repository](https://github.com/glitchwerks/claude-prospector) to an immutable
+commit SHA, verifies the tag/SHA match, then downloads, builds, and installs
+that exact revision with the venv's Python and pip. This requires Git and
+GitHub access, and build/runtime dependencies must still be available from your
+configured package index or local cache. If
+`CLAUDE_PROSPECTOR_PIP_SPEC` is set, that override remains authoritative and a
+failed install does not trigger or offer the fallback.
 
 After setup completes, open a new session — the banner will be gone and all features will work normally.
 
@@ -190,7 +202,7 @@ directory name.
 | `CLAUDE_PROSPECTOR_DASHBOARD` | `dashboard.html` path | Overrides the default `<base_dir>/dashboard.html`; the `dashboard` subcommand's `--output` flag overrides a single run without setting this |
 | `CLAUDE_PROSPECTOR_HOOK_LOG` | `hook.log` path | Overrides the default `<base_dir>/hook.log` |
 | `CLAUDE_PROSPECTOR_SKILL_TRACKING_DIR` | `skill-tracking/` directory path | Overrides the default `<base_dir>/skill-tracking/` |
-| `CLAUDE_PROSPECTOR_PIP_SPEC` | The pip spec used by `/setup-prospector` | Overrides the default `claude-prospector==<version>` — used in CI and dev to install from TestPyPI or a local checkout |
+| `CLAUDE_PROSPECTOR_PIP_SPEC` | The pip spec used by `/setup-prospector` | Authoritative override for CI and development installs from TestPyPI or a local checkout; setup does not offer or attempt the GitHub fallback when this is set |
 
 ## Troubleshooting
 
