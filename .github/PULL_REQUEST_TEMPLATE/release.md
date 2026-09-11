@@ -5,7 +5,7 @@
 ## Pre-release checklist
 
 - [ ] All implementing PRs for this release are merged to `main`
-- [ ] CI is green on the latest `main` commit (lint, test, wheel-smoke)
+- [ ] CI is green on the latest `main` commit (lint, test, skill-smoke)
 - [ ] `CHANGELOG.md` has a `## [X.Y.Z] - <date>` section ready
 - [ ] `pyproject.toml` `version` = `X.Y.Z`
 - [ ] `.claude-plugin/plugin.json` `version` = `X.Y.Z`
@@ -27,7 +27,7 @@ Closes #
 
 - [ ] Tag the merge commit: `git tag -a vX.Y.Z <merge-sha> -m "vX.Y.Z"`
 - [ ] Push the tag: `git push origin vX.Y.Z`
-- [ ] Wait for release workflow (build + wheel-smoke + publish-pypi all green)
+- [ ] Wait for release workflow (build + wheel-smoke + publish-pypi + github-release all green)
 - [ ] Dereference the tag to commit SHA: `git rev-parse 'vX.Y.Z^{commit}'`
 - [ ] Open marketplace PR on `glitchwerks/plugins` — bump `sha` + `version`
 - [ ] Merge marketplace PR

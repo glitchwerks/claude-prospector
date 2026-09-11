@@ -9,7 +9,7 @@ The **Quick reference card** at the end is the section to keep open during a rel
 ## Pre-release checklist
 
 - [ ] All implementing PRs for this release are merged to `main`
-- [ ] CI is green on the latest `main` commit (lint, test, wheel-smoke)
+- [ ] CI is green on the latest `main` commit (lint, test, skill-smoke)
 - [ ] `CHANGELOG.md` has a draft `## [X.Y.Z] - <date>` section ready
 - [ ] `pyproject.toml` `version` = target version
 - [ ] `.claude-plugin/plugin.json` `version` = target version
@@ -45,7 +45,7 @@ Branch from `main`. Bump `pyproject.toml` `version`, `.claude-plugin/plugin.json
 
 **2. Wait for CI and merge**
 
-CI must be green on all three jobs: lint, test (Ubuntu + Windows), wheel-smoke. Merge to `main` (squash merge).
+CI must be green on all five jobs: lint, test (Ubuntu + Windows), and skill-smoke (Ubuntu + Windows). Merge to `main` (squash merge). `wheel-smoke` runs only after the release tag is pushed and gates publication in step 5.
 
 **3. Tag the merge commit**
 
@@ -250,7 +250,7 @@ Pre-flight
   [ ] pyproject.toml + plugin.json versions bumped
 
 1.  Open release PR (version bumps + CHANGELOG entry + Closes #N)
-2.  CI green (lint + test + wheel-smoke) → merge to main
+2.  CI green (lint + test + skill-smoke) → merge to main
 3.  git -C <repo> pull origin main
     git -C <repo> rev-parse HEAD           # note merge SHA
     git -C <repo> tag -a vX.Y.Z <sha> -m "vX.Y.Z"

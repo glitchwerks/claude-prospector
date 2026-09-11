@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0] - 2026-09-11
+
+### Added
+
+- **Approval-gated GitHub source fallback for `/setup-prospector`** (issue #306,
+  PR #307). Setup continues to prefer the exact package-index version. When that
+  install fails, explicit user approval can authorize resolving the matching
+  release tag to an immutable commit SHA and building that revision in the
+  plugin-owned virtual environment. `CLAUDE_PROSPECTOR_PIP_SPEC` remains
+  authoritative and never triggers the fallback.
+
 ## [0.14.0] - 2026-09-06
 
 ### Added
