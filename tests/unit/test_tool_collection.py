@@ -40,7 +40,9 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
+from claude_prospector.aggregator import AggregateResult, attach_session_mcp_activity
 from claude_prospector.models import SessionRecord
 from claude_prospector.tool_collection import (
     _matches_agent,
@@ -233,6 +235,18 @@ def _session_record(
         messages=[],
         subagent_types=[],
     )
+
+
+def _mcp_session_summary(session_id: str) -> dict:
+    """Build a session summary with MCP collection defaults."""
+    return {
+        "session_id": session_id,
+        "mcp_collection": {
+            "calls": "not_collected",
+            "result_sizes": "not_collected",
+        },
+        "mcp_activity": None,
+    }
 
 
 class TestCollectToolUses:
@@ -1548,3 +1562,67 @@ class TestCollectPerSessionResultSizes:
 
         _, tool_uses, _availabilities = per_session[0]
         assert tool_uses[0].result_chars is None
+
+
+class TestUnreadableTranscriptCollection:
+    """Unreadable selected transcripts stay distinct from successful empties."""
+
+    def test_open_failure_marks_calls_unavailable_without_size_tracking(
+        self, tmp_path: Path
+    ) -> None:
+        """An open failure makes calls unavailable rather than collected-empty."""
+        jsonl = tmp_path / "projects" / "demo-proj" / "s1.jsonl"
+        jsonl.parent.mkdir(parents=True)
+        jsonl.write_text("{}", encoding="utf-8")
+
+        with patch("builtins.open", side_effect=OSError("access denied")):
+            per_session, skipped = collect_per_session(
+                [_session_record("s1")], tmp_path
+            )
+
+        result = AggregateResult(sessions=[_mcp_session_summary("s1")])
+        attach_session_mcp_activity(
+            result,
+            per_session,
+            track_mcp_call_sizes=False,
+        )
+
+        assert skipped == 1
+        assert per_session == []
+        assert result.sessions[0]["mcp_collection"] == {
+            "calls": "unavailable",
+            "result_sizes": "not_collected",
+            "warning": "transcript_unavailable",
+        }
+        assert result.sessions[0]["mcp_activity"] is None
+
+    def test_open_failure_marks_calls_and_sizes_unavailable(
+        self, tmp_path: Path
+    ) -> None:
+        """Size tracking does not turn an unreadable transcript into success."""
+        jsonl = tmp_path / "projects" / "demo-proj" / "s1.jsonl"
+        jsonl.parent.mkdir(parents=True)
+        jsonl.write_text("{}", encoding="utf-8")
+
+        with patch("builtins.open", side_effect=OSError("access denied")):
+            per_session, skipped = collect_per_session(
+                [_session_record("s1")],
+                tmp_path,
+                track_mcp_call_sizes=True,
+            )
+
+        result = AggregateResult(sessions=[_mcp_session_summary("s1")])
+        attach_session_mcp_activity(
+            result,
+            per_session,
+            track_mcp_call_sizes=True,
+        )
+
+        assert skipped == 1
+        assert per_session == []
+        assert result.sessions[0]["mcp_collection"] == {
+            "calls": "unavailable",
+            "result_sizes": "unavailable",
+            "warning": "transcript_unavailable",
+        }
+        assert result.sessions[0]["mcp_activity"] is None
