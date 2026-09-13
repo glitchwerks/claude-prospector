@@ -1605,3 +1605,33 @@ class TestSessionActivityParsing:
             ("entrypoint", "cli"),
             ("claude_code_version", "2.1.220"),
         }
+
+    def test_metadata_on_non_assistant_entry_is_observed(self, tmp_path: Path) -> None:
+        """Timestamped metadata survives when no assistant response exists.
+
+        This catches the bug where metadata extraction was gated behind an
+        assistant response's message, usage, and model fields.
+        """
+        path = _write_session(
+            tmp_path,
+            [
+                {
+                    "type": "system",
+                    "timestamp": "2026-09-13T10:00:00Z",
+                    "gitBranch": "metadata-only",
+                    "entrypoint": "cli",
+                    "version": "2.1.220",
+                    "message": {"content": "excluded"},
+                },
+                _assistant_entry("msg-1", "high", timestamp="2026-09-13T10:01:00Z"),
+            ],
+        )
+
+        session = _parse_session(path, "project")
+
+        assert session is not None
+        assert {(item.name, item.value) for item in session.metadata_observations} == {
+            ("git_branch", "metadata-only"),
+            ("entrypoint", "cli"),
+            ("claude_code_version", "2.1.220"),
+        }

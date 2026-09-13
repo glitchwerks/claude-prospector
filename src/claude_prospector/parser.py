@@ -460,6 +460,27 @@ def _parse_jsonl_records(
             except json.JSONDecodeError:
                 continue
 
+            timestamp_raw = entry.get("timestamp")
+            timestamp: datetime | None = None
+            if isinstance(timestamp_raw, str):
+                try:
+                    timestamp = _parse_timestamp(timestamp_raw)
+                except ValueError:
+                    pass
+
+            if timestamp is not None:
+                for field_name, normalized_name in _SESSION_METADATA_FIELDS.items():
+                    value = entry.get(field_name)
+                    if isinstance(value, str) and value:
+                        metadata_observations.append(
+                            SessionMetadataObservation(
+                                name=normalized_name,
+                                value=value,
+                                timestamp=timestamp,
+                                agent_path=agent_path,
+                            )
+                        )
+
             if (
                 collect_commands
                 and entry.get("type") == "user"
@@ -486,12 +507,7 @@ def _parse_jsonl_records(
                 continue
 
             content = msg.get("content", [])
-            timestamp_raw = entry.get("timestamp")
-            if not isinstance(timestamp_raw, str):
-                continue
-            try:
-                timestamp = _parse_timestamp(timestamp_raw)
-            except ValueError:
+            if timestamp is None:
                 continue
 
             message_id = msg.get("id")
@@ -516,18 +532,6 @@ def _parse_jsonl_records(
                     skill_identities.add(identity)
                     skill_invocations.append(record)
             skill = skill_records[0][1].skill if skill_records else None
-
-            for field_name, normalized_name in _SESSION_METADATA_FIELDS.items():
-                value = entry.get(field_name)
-                if isinstance(value, str) and value:
-                    metadata_observations.append(
-                        SessionMetadataObservation(
-                            name=normalized_name,
-                            value=value,
-                            timestamp=timestamp,
-                            agent_path=agent_path,
-                        )
-                    )
 
             candidate_effort = _parse_effort(entry.get("effort"))
 
