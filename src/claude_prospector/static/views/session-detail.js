@@ -100,6 +100,7 @@
       hasTimeline: domain !== null,
       activePaths: new Set(allPaths),
       expanded: new Set(),
+      focusedPath: treeNodes[0]?.path,
     };
     let disposed = false;
     let listeners = [];
@@ -133,10 +134,13 @@
     /** Recompute every scoped region together while keeping identity fixed. */
     function render(focusKey) {
       if (disposed) return;
+      if (focusKey?.startsWith('agent:')) state.focusedPath = decodeURIComponent(focusKey.slice(6));
       removeListeners();
       CP.destroyChartsByPrefix('session-');
       const scoped = A.scopeSession(source, state.activePaths, state.scope, state.range);
       const overviewScope = A.scopeSession(source, state.activePaths, 'all', state.range);
+      const timedResponses = overviewScope.responses.filter(row => Number.isFinite(Date.parse(row.timestamp)));
+      const untimedCount = overviewScope.responses.length - timedResponses.length;
       const total = A.sumTokens(scoped.responses).total_tokens;
       const controls = new Map();
       const header = element('header');
@@ -170,8 +174,14 @@
         overview.dataset.end = String(domain.end);
       }
       overview.append(element('p', 'muted', state.hasTimeline
-        ? `${overviewScope.responses.length} responses across the whole session`
+        ? `${timedResponses.length} responses across the whole session`
         : 'Timeline unavailable: no valid timestamps recorded.'));
+      if (untimedCount) {
+        const missingTime = element('p', 'session-empty',
+          `${untimedCount} active response${untimedCount === 1 ? ' has' : 's have'} no recorded time. Included in All; excluded from By time period and timelines.`);
+        missingTime.dataset.sessionMissingTime = String(untimedCount);
+        overview.append(missingTime);
+      }
       if (allPaths.length && !state.activePaths.size) {
         overview.append(element('p', 'session-empty', 'No agents selected'));
       }
@@ -181,6 +191,16 @@
       const tree = element('ul', 'session-tree');
       tree.setAttribute('role', 'tree');
       tree.setAttribute('aria-label', 'Agents included in analytics');
+      tree.setAttribute('aria-multiselectable', 'true');
+      const agentControls = new Map();
+
+      /** Native checkbox focus is the tree's sole roving tab stop. */
+      function setTreeFocus(path) {
+        state.focusedPath = path;
+        for (const [candidate, checkbox] of agentControls) {
+          checkbox.tabIndex = candidate === path ? 0 : -1;
+        }
+      }
 
       /** Render implicit ancestors as subtree controls, not invented records. */
       function agentNode(node) {
@@ -194,12 +214,40 @@
         checkbox.type = 'checkbox';
         checkbox.checked = selection === 'checked';
         checkbox.indeterminate = selection === 'indeterminate';
+        checkbox.tabIndex = node.path === state.focusedPath ? 0 : -1;
         checkbox.dataset.agentPath = encodeURIComponent(node.path);
         checkbox.setAttribute('aria-label', node.path);
         controls.set(`agent:${checkbox.dataset.agentPath}`, checkbox);
-        listen(checkbox, 'change', () => {
-          state.activePaths = A.setSubtree(state.activePaths, node.path, checkbox.checked, allPaths);
+        agentControls.set(node.path, checkbox);
+        const toggleNode = enabled => {
+          state.activePaths = A.setSubtree(state.activePaths, node.path, enabled, allPaths);
           render(`agent:${checkbox.dataset.agentPath}`);
+        };
+        listen(checkbox, 'focus', () => setTreeFocus(node.path));
+        listen(checkbox, 'change', () => toggleNode(checkbox.checked));
+        listen(checkbox, 'keydown', event => {
+          const paths = [...agentControls.keys()];
+          const index = paths.indexOf(node.path);
+          let destination = node.path;
+          switch (event.key) {
+            case 'ArrowDown': destination = paths[Math.min(index + 1, paths.length - 1)]; break;
+            case 'ArrowUp': destination = paths[Math.max(0, index - 1)]; break;
+            case 'Home': destination = paths[0]; break;
+            case 'End': destination = paths[paths.length - 1]; break;
+            // All branches remain expanded: horizontal keys move to relatives.
+            case 'ArrowRight': destination = node.children[0]?.path || node.path; break;
+            case 'ArrowLeft': destination = node.path.split(CP.AGENT_PATH_SEP).slice(0, -1).join(CP.AGENT_PATH_SEP) || node.path; break;
+            case ' ':
+            case 'Enter':
+              // Suppress native Space activation and held-key repeat toggles.
+              event.preventDefault();
+              if (!event.repeat) toggleNode(selection !== 'checked');
+              return;
+            default: return;
+          }
+          event.preventDefault();
+          setTreeFocus(destination);
+          agentControls.get(destination).focus();
         });
         label.append(checkbox, element('span', undefined, node.label));
         item.append(label);

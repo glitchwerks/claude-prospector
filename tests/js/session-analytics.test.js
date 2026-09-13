@@ -84,6 +84,7 @@ class FakeElement extends FakeEventTarget {
   focus() {
     this.document.activeElement = this;
     this.document.focusCount += 1;
+    this.dispatchEvent({type: 'focus'});
   }
 }
 
@@ -332,6 +333,37 @@ test('legacy agent labels remain selectable without inventing missing times', ()
   assert.ok(sessionNodes(shell).some(node => node.textContent === 'Not recorded'));
 });
 
+test('mixed untimed response disclosure follows active agents in All and period', () => {
+  const fixture = plain(require('../fixtures/session-analytics/short-single-agent.json'));
+  fixture.agent_activity.push(
+    {...fixture.agent_activity[0], timestamp: null, total_tokens: 7},
+    {...fixture.agent_activity[0], agent: 'main→worker', agent_path: ['main', 'worker'], timestamp: null, total_tokens: 11},
+  );
+  const shell = bootShell([freezeDeep(fixture)]);
+  openSession(shell, 'short', 'basic');
+  const missingTime = () => sessionNode(shell, node => node.dataset.sessionMissingTime !== undefined).textContent;
+  assert.equal(scopedTotal(shell), 'All: 78 tokens across 5 responses');
+  assert.equal(missingTime(), '2 active responses have no recorded time. Included in All; excluded from By time period and timelines.');
+  assert.ok(sessionNodes(shell).some(node => node.textContent === '3 responses across the whole session'));
+
+  const period = sessionNode(shell, node => node.dataset.sessionScope === 'period');
+  period.checked = true;
+  period.dispatchEvent({type: 'change'});
+  assert.equal(scopedTotal(shell), 'By time period: 60 tokens across 3 responses');
+  assert.equal(missingTime(), '2 active responses have no recorded time. Included in All; excluded from By time period and timelines.');
+  toggleAgent(shell, 'main→worker', false);
+  assert.equal(scopedTotal(shell), 'By time period: 60 tokens across 3 responses');
+  assert.equal(missingTime(), '1 active response has no recorded time. Included in All; excluded from By time period and timelines.');
+  const all = sessionNode(shell, node => node.dataset.sessionScope === 'all');
+  all.checked = true;
+  all.dispatchEvent({type: 'change'});
+  assert.equal(scopedTotal(shell), 'All: 67 tokens across 4 responses');
+  assert.equal(missingTime(), '1 active response has no recorded time. Included in All; excluded from By time period and timelines.');
+  toggleAgent(shell, 'main', false);
+  assert.equal(scopedTotal(shell), 'All: 0 tokens across 0 responses');
+  assert.equal(sessionNodes(shell).filter(node => node.dataset.sessionMissingTime !== undefined).length, 0);
+});
+
 test('missing attribution and empty activity have explicit states', () => {
   const shell = bootShell([{session_id: 'missing', agent_activity: [{total_tokens: 8}]}]);
   openSession(shell, 'missing', 'basic');
@@ -340,6 +372,93 @@ test('missing attribution and empty activity have explicit states', () => {
   const empty = bootShell([{session_id: 'empty', agent_paths: [['main']], agent_activity: []}]);
   openSession(empty, 'empty', 'basic');
   assert.ok(sessionNodes(empty).some(node => node.textContent === 'No records in this scope.'));
+});
+
+function pressAgentKey(shell, path, key, extra = {}) {
+  const event = {type: 'keydown', key, defaultPrevented: false,
+    preventDefault() { this.defaultPrevented = true; }, ...extra};
+  agentControl(shell, path).dispatchEvent(event);
+  return event;
+}
+
+function treeTabStops(shell) {
+  return sessionNodes(shell).filter(node => node.dataset.agentPath && node.tabIndex === 0)
+    .map(node => decodeURIComponent(node.dataset.agentPath));
+}
+
+test('agent tree declares multiple selection and provides one roving checkbox tab stop', () => {
+  const shell = bootShell([require('../fixtures/session-analytics/deep-nested-agents.json')]);
+  openSession(shell, 'deep', 'basic');
+  const tree = sessionNode(shell, node => node.attributes.role === 'tree');
+  assert.equal(tree.attributes['aria-multiselectable'], 'true');
+  assert.deepEqual(treeTabStops(shell), ['main']);
+  const items = sessionNodes(shell).filter(node => node.attributes.role === 'treeitem');
+  assert.ok(items.every(node => node.tabIndex === undefined || node.tabIndex === -1));
+  assert.deepEqual(items.map(node => [node.attributes['aria-label'], node.attributes['aria-expanded']]), [
+    ['main', 'true'], ['main→left', 'true'], ['main→left→worker', undefined],
+    ['main→right', 'true'], ['main→right→worker', undefined],
+  ]);
+  agentControl(shell, 'main→right→worker').focus();
+  assert.deepEqual(treeTabStops(shell), ['main→right→worker']);
+  assert.equal(scopedTotal(shell), 'All: 5 tokens across 5 responses');
+  const period = sessionNode(shell, node => node.dataset.sessionScope === 'period');
+  period.checked = true;
+  period.dispatchEvent({type: 'change'});
+  assert.deepEqual(treeTabStops(shell), ['main→right→worker']);
+  assert.equal(shell.document.activeElement.dataset.sessionScope, 'period');
+});
+
+test('tree arrow and boundary keys follow visible full-path order without changing selection', () => {
+  const shell = bootShell([require('../fixtures/session-analytics/deep-nested-agents.json')]);
+  openSession(shell, 'deep', 'basic');
+  agentControl(shell, 'main').focus();
+  for (const [from, key, destination] of [
+    ['main', 'ArrowUp', 'main'],
+    ['main', 'ArrowLeft', 'main'],
+    ['main', 'ArrowDown', 'main→left'],
+    ['main→left', 'ArrowRight', 'main→left→worker'],
+    ['main→left→worker', 'ArrowRight', 'main→left→worker'],
+    ['main→left→worker', 'ArrowDown', 'main→right'],
+    ['main→right', 'ArrowRight', 'main→right→worker'],
+    ['main→right→worker', 'ArrowLeft', 'main→right'],
+    ['main→right', 'ArrowUp', 'main→left→worker'],
+    ['main→left→worker', 'Home', 'main'],
+    ['main', 'End', 'main→right→worker'],
+    ['main→right→worker', 'ArrowDown', 'main→right→worker'],
+  ]) {
+    const event = pressAgentKey(shell, from, key);
+    assert.equal(event.defaultPrevented, true, `${key} should not scroll the page`);
+    assert.equal(shell.document.activeElement, agentControl(shell, destination), `${from} ${key}`);
+    assert.deepEqual(treeTabStops(shell), [destination]);
+    assert.equal(scopedTotal(shell), 'All: 5 tokens across 5 responses');
+  }
+  assert.equal(pressAgentKey(shell, 'main→right→worker', 'Tab').defaultPrevented, false);
+});
+
+test('tree Space and Enter toggle subtrees once and retain the focused full path', () => {
+  const shell = bootShell([require('../fixtures/session-analytics/deep-nested-agents.json')]);
+  openSession(shell, 'deep', 'basic');
+  agentControl(shell, 'main→left').focus();
+  const oldControl = agentControl(shell, 'main→left');
+  assert.equal(pressAgentKey(shell, 'main→left', ' ').defaultPrevented, true);
+  assert.equal(scopedTotal(shell), 'All: 3 tokens across 3 responses');
+  assert.equal(agentControl(shell, 'main→left').checked, false);
+  assert.equal(agentControl(shell, 'main→left→worker').checked, false);
+  assert.equal(agentControl(shell, 'main→right→worker').checked, true);
+  assert.equal(agentControl(shell, 'main').indeterminate, true);
+  assert.equal(sessionNode(shell, node => node.attributes.role === 'treeitem' && node.attributes['aria-label'] === 'main').attributes['aria-checked'], 'mixed');
+  assert.equal(shell.document.activeElement, agentControl(shell, 'main→left'));
+  assert.deepEqual(treeTabStops(shell), ['main→left']);
+  assert.ok([...oldControl.listeners.values()].every(list => list.length === 0));
+  assert.equal(pressAgentKey(shell, 'main→left', ' ', {repeat: true}).defaultPrevented, true);
+  assert.equal(scopedTotal(shell), 'All: 3 tokens across 3 responses');
+  assert.equal(pressAgentKey(shell, 'main→left', 'Enter').defaultPrevented, true);
+  assert.equal(scopedTotal(shell), 'All: 5 tokens across 5 responses');
+  assert.equal(shell.document.activeElement, agentControl(shell, 'main→left'));
+  toggleAgent(shell, 'main→right→worker', false);
+  assert.equal(scopedTotal(shell), 'All: 4 tokens across 4 responses');
+  assert.deepEqual(treeTabStops(shell), ['main→right→worker']);
+  assert.equal(shell.document.activeElement, agentControl(shell, 'main→right→worker'));
 });
 
 test('cleanup removes stale listeners and destroys only session chart instances', () => {
