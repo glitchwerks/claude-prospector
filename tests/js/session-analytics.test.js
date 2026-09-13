@@ -2,7 +2,9 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 
 global.window = {};
 require(path.resolve(__dirname, '../../src/claude_prospector/static/cp-utils.js'));
@@ -27,6 +29,230 @@ function rangeForResponse(response) {
   const start = Date.parse(response.timestamp);
   return {start, end: start + 1};
 }
+
+class FakeEventTarget {
+  constructor() {
+    this.listeners = new Map();
+  }
+
+  addEventListener(type, listener) {
+    const listeners = this.listeners.get(type) || [];
+    listeners.push(listener);
+    this.listeners.set(type, listeners);
+  }
+
+  removeEventListener(type, listener) {
+    const listeners = this.listeners.get(type) || [];
+    this.listeners.set(type, listeners.filter(item => item !== listener));
+  }
+
+  dispatchEvent(event) {
+    event.target ||= this;
+    for (const listener of this.listeners.get(event.type) || []) listener(event);
+    return !event.defaultPrevented;
+  }
+}
+
+class FakeElement extends FakeEventTarget {
+  constructor(document, tagName = 'div') {
+    super();
+    this.document = document;
+    this.tagName = tagName;
+    this.children = [];
+    this.style = {};
+    this.dataset = {};
+    this.attributes = {};
+    this.className = '';
+    this.innerHTML = '';
+    this.textContent = '';
+    this.classList = { toggle() {} };
+  }
+
+  append(...children) {
+    this.children.push(...children);
+  }
+
+  replaceChildren(...children) {
+    this.children = children;
+    this.innerHTML = '';
+  }
+
+  setAttribute(name, value) {
+    this.attributes[name] = String(value);
+  }
+
+  focus() {
+    this.document.activeElement = this;
+  }
+}
+
+class FakeCustomEvent {
+  constructor(type, options = {}) {
+    this.type = type;
+    this.detail = options.detail;
+    this.bubbles = Boolean(options.bubbles);
+    this.defaultPrevented = false;
+  }
+
+  preventDefault() {
+    this.defaultPrevented = true;
+  }
+}
+
+function readShellScript() {
+  const template = fs.readFileSync(
+    path.resolve(__dirname, '../../src/claude_prospector/templates/dashboard.html'),
+    'utf8',
+  );
+  const scripts = [...template.matchAll(/<script>([\s\S]*?)<\/script>/g)];
+  return scripts.at(-1)[1];
+}
+
+function bootShell() {
+  const window = new FakeEventTarget();
+  const document = {
+    activeElement: null,
+    elements: {},
+    createElement(tagName) { return new FakeElement(this, tagName); },
+    getElementById(id) { return this.elements[id]; },
+    querySelectorAll(selector) {
+      return selector === '.view-toggle button' ? this.buttons : [];
+    },
+  };
+  const container = new FakeElement(document);
+  const sub = new FakeElement(document);
+  document.elements['view-container'] = container;
+  document.elements['shell-sub'] = sub;
+  document.buttons = ['basic', 'detail', 'advanced', 'mcp', 'agents', 'skills'].map(view => {
+    const button = new FakeElement(document, 'button');
+    button.dataset.view = view;
+    return button;
+  });
+
+  const entries = [{state: null, hash: ''}];
+  let index = 0;
+  const location = {
+    pathname: '/dashboard.html',
+    search: '',
+    get hash() { return entries[index].hash; },
+  };
+  const history = {
+    get state() { return entries[index].state == null ? null : plain(entries[index].state); },
+    pushState(state, _title, url) {
+      entries.splice(index + 1);
+      entries.push({state, hash: new URL(url, 'https://example.test').hash});
+      index += 1;
+    },
+    replaceState(state, _title, url) {
+      entries[index] = {state, hash: new URL(url, 'https://example.test').hash};
+    },
+    back() {
+      index -= 1;
+      window.dispatchEvent(new FakeCustomEvent('popstate'));
+      window.dispatchEvent(new FakeCustomEvent('hashchange'));
+    },
+  };
+  const renderCalls = [];
+  const cleanupCalls = [];
+  const renderView = view => (_root, state = {}) => {
+    renderCalls.push({view, state: {...state}});
+    return () => cleanupCalls.push(view);
+  };
+  window.DATA = {sessions: [{session_id: 'A'}, {session_id: 'B'}]};
+  window.location = location;
+  window.scrollTo = () => {};
+  const context = vm.createContext({
+    window,
+    document,
+    history,
+    CustomEvent: FakeCustomEvent,
+    URLSearchParams,
+    URL,
+    console,
+    CP: {applyChartDefaults() {}, sessionAnalytics: A},
+    renderEconomicsBasic: renderView('basic'),
+    renderLayoutBDiag: renderView('detail'),
+    renderEconomics: renderView('advanced'),
+    renderMcpUsage: renderView('mcp'),
+    renderAgents: renderView('agents'),
+    renderSkills: renderView('skills'),
+  });
+  vm.runInContext(
+    fs.readFileSync(path.resolve(__dirname, '../../src/claude_prospector/static/views/session-detail.js'), 'utf8'),
+    context,
+  );
+  context.renderSessionDetail = (...args) => {
+    const cleanup = window.renderSessionDetail(...args);
+    return () => {
+      cleanupCalls.push('session');
+      cleanup();
+    };
+  };
+  vm.runInContext(readShellScript(), context);
+
+  return {window, document, history, location, renderCalls, cleanupCalls, buttons: document.buttons};
+}
+
+function openSession(shell, sessionId, returnView, returnState) {
+  shell.window.dispatchEvent(new FakeCustomEvent('economy:open-session', {
+    detail: {sessionId, returnView, returnState},
+  }));
+}
+
+function plain(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+test('paired Back events retain the Breakdown return state once', () => {
+  const shell = bootShell();
+
+  openSession(shell, 'A', 'detail', {period: '24h', tab: 'sessions'});
+  assert.equal(shell.document.activeElement.textContent, 'Session A');
+  shell.history.back();
+
+  assert.equal(shell.location.hash, '');
+  assert.deepEqual(plain(shell.history.state), {
+    dashboardView: 'detail', returnState: {period: '24h', tab: 'sessions'},
+  });
+  assert.deepEqual(shell.renderCalls.at(-1), {
+    view: 'detail', state: {period: '24h', tab: 'sessions'},
+  });
+  assert.deepEqual(shell.cleanupCalls, ['basic', 'session']);
+});
+
+test('shell tab transition clears a stale session route before opening another session', () => {
+  const shell = bootShell();
+
+  openSession(shell, 'A', 'basic');
+  shell.buttons.find(button => button.dataset.view === 'detail')
+    .dispatchEvent(new FakeCustomEvent('click'));
+  assert.equal(shell.location.hash, '');
+  assert.deepEqual(plain(shell.history.state), {dashboardView: 'detail'});
+
+  openSession(shell, 'B', 'detail', {period: '24h', tab: 'sessions'});
+  shell.history.back();
+
+  assert.equal(shell.location.hash, '');
+  assert.deepEqual(plain(shell.history.state), {
+    dashboardView: 'detail', returnState: {period: '24h', tab: 'sessions'},
+  });
+  assert.deepEqual(shell.renderCalls.at(-1), {
+    view: 'detail', state: {period: '24h', tab: 'sessions'},
+  });
+  assert.deepEqual(shell.cleanupCalls, ['basic', 'session', 'detail', 'session']);
+});
+
+test('keyboard shell tab transition clears a stale session route', () => {
+  const shell = bootShell();
+
+  openSession(shell, 'A', 'basic');
+  shell.buttons.find(button => button.dataset.view === 'basic')
+    .dispatchEvent({type: 'keydown', key: 'ArrowRight', preventDefault() {}});
+
+  assert.equal(shell.location.hash, '');
+  assert.deepEqual(plain(shell.history.state), {dashboardView: 'detail'});
+  assert.deepEqual(shell.renderCalls.at(-1), {view: 'detail', state: {}});
+});
 
 test('parseRoute accepts one encoded session key only', () => {
   assert.deepEqual(

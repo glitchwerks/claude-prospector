@@ -383,11 +383,22 @@
 
   let _activeView = 'basic';
   let _activeCleanup = null;
-  let _sessionReturn = null;
+  let _lastRouteKey = null;
 
   function _cleanupActiveView() {
     if (_activeCleanup) _activeCleanup();
     _activeCleanup = null;
+  }
+
+  function _dashboardHistoryState(view, returnState) {
+    const state = { dashboardView: view };
+    if (view === 'detail' && returnState) state.returnState = returnState;
+    return state;
+  }
+
+  function _syncDashboardRoute(view, returnState) {
+    history.replaceState(_dashboardHistoryState(view, returnState), '',
+      window.location.pathname + window.location.search);
   }
 
   function _renderView(view, returnState) {
@@ -420,7 +431,7 @@
     _sub.innerHTML = _VIEW_SUBS[view] || '';
   }
 
-  function setView(view, returnState) {
+  function setView(view, returnState, syncRoute = true) {
     _activeView = view;
     _buttons.forEach(function(b) {
       const active = b.dataset.view === view;
@@ -429,6 +440,7 @@
       b.setAttribute('tabindex', active ? '0' : '-1');
     });
     _renderView(view, returnState);
+    if (syncRoute) _syncDashboardRoute(view, returnState);
   }
 
   function _renderSessionNotFound(sessionId) {
@@ -453,12 +465,15 @@
   }
 
   function _renderRoute() {
+    const routeState = history.state;
+    const routeKey = `${window.location.hash}\u0000${JSON.stringify(routeState)}`;
+    if (_lastRouteKey === routeKey) return;
+    _lastRouteKey = routeKey;
     const route = CP.sessionAnalytics.parseRoute(window.location.hash);
     if (route.kind === 'dashboard') {
-      const returnTarget = _sessionReturn;
-      _sessionReturn = null;
-      setView((returnTarget && returnTarget.returnView) || _activeView || 'basic',
-        returnTarget && returnTarget.returnState);
+      const dashboardState = routeState && !routeState.sessionRoute ? routeState : {};
+      const view = dashboardState.dashboardView || _activeView || 'basic';
+      setView(view, view === 'detail' ? dashboardState.returnState : undefined, false);
       return;
     }
     _cleanupActiveView();
@@ -466,12 +481,6 @@
     if (route.kind === 'not-found') {
       _renderSessionNotFound(route.sessionId);
       return;
-    }
-    if (history.state && history.state.sessionRoute) {
-      _sessionReturn = {
-        returnView: history.state.returnView || 'basic',
-        returnState: history.state.returnState,
-      };
     }
     const session = (window.DATA.sessions || []).find(
       item => String(item.session_id) === route.sessionId,
@@ -515,14 +524,10 @@
   window.addEventListener('economy:open-session', function(e) {
     const detail = e.detail || {};
     const sessionId = detail.sessionId == null ? '' : String(detail.sessionId);
-    _sessionReturn = {
-      returnView: detail.returnView || _activeView || 'basic',
-      returnState: detail.returnState,
-    };
+    const returnView = detail.returnView || _activeView || 'basic';
+    _syncDashboardRoute(returnView, detail.returnState);
     history.pushState({
       sessionRoute: true,
-      returnView: _sessionReturn.returnView,
-      returnState: _sessionReturn.returnState,
     }, '', `#session=${encodeURIComponent(sessionId)}`);
     _renderRoute();
   });
@@ -532,8 +537,8 @@
       history.back();
       return;
     }
-    history.replaceState(history.state, '', window.location.pathname + window.location.search);
-    setView('basic');
+    _syncDashboardRoute('basic');
+    setView('basic', undefined, false);
   });
 
   window.addEventListener('popstate', _renderRoute);
