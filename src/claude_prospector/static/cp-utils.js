@@ -104,7 +104,15 @@
   }
 
   function usesExactBars(responses, width) {
-    return responses.length <= Math.max(1, Math.floor(width / 12));
+    return responses.length <= Math.max(0, Math.floor(width / 12));
+  }
+
+  /** Normalize pointer and keyboard inputs to one millisecond half-open range. */
+  function normalizeRange(start, end, domain) {
+    const first = Number.isFinite(start) ? Math.round(start) : domain.start;
+    const last = Number.isFinite(end) ? Math.round(end) : domain.end;
+    const lower = Math.max(domain.start, Math.min(domain.end - 1, Math.min(first, last)));
+    return {start: lower, end: Math.max(lower + 1, Math.min(domain.end, Math.max(first, last)))};
   }
 
   function setSubtree(active, path, enabled, allPaths) {
@@ -164,8 +172,11 @@
       const bucket = buckets[index];
       for (const key of TOKEN_KEYS) bucket[key] += Number(response[key] || 0);
       const effort = response.effort_key || 'unknown';
-      bucket.by_effort[effort] = (bucket.by_effort[effort] || 0)
-        + Number(response.total_tokens || 0);
+      // Future keys are transcript data, including names like "__proto__".
+      if (!Object.hasOwn(bucket.by_effort, effort)) {
+        Object.defineProperty(bucket.by_effort, effort, {value: 0, writable: true, enumerable: true});
+      }
+      bucket.by_effort[effort] += Number(response.total_tokens || 0);
     }
     return buckets;
   }
@@ -180,6 +191,23 @@
       commands: scoped(session.command_activity),
       mcp: session.mcp_activity === null ? null : scoped(session.mcp_activity),
     };
+  }
+
+  /** Share cumulative boundaries so effort layers cannot overlap or leave gaps. */
+  function stackEffortBuckets(buckets) {
+    const observed = new Set(buckets.flatMap(bucket => Object.keys(bucket.by_effort || {})));
+    const known = ['low', 'medium', 'high', 'max', 'unknown'].filter(key => observed.delete(key));
+    const keys = known.concat([...observed].sort());
+    const baseline = new Array(buckets.length).fill(0);
+    return keys.map(key => {
+      const lower = baseline.slice();
+      const upper = buckets.map((bucket, index) => {
+        const efforts = bucket.by_effort || {};
+        baseline[index] += Object.hasOwn(efforts, key) ? Number(efforts[key]) : 0;
+        return baseline[index];
+      });
+      return {key, lower, upper};
+    });
   }
 
   function buildAgentTree(paths) {
@@ -252,6 +280,8 @@
     sumTokens,
     bucketResponses,
     usesExactBars,
+    normalizeRange,
+    stackEffortBuckets,
     buildAgentTree,
     setSubtree,
     selectionState,

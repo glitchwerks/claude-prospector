@@ -1,6 +1,9 @@
 (function () {
   const A = CP.sessionAnalytics;
   const MODES = {all: 'All', period: 'By time period'};
+  const TOKEN_FIELDS = ['input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_creation_tokens', 'total_tokens'];
+  const TOKEN_LABELS = ['Input', 'Output', 'Cache read', 'Cache creation', 'Total'];
+  const EFFORT_COLORS = {low: '#3fb950', medium: '#58a6ff', high: '#d2a8ff', max: '#ffa657', unknown: '#8b949e'};
   const STYLE = `
     .session-detail.session-page { max-width: none; background: transparent; border: 0; padding: 0; }
     .session-page { overflow-wrap: anywhere; }
@@ -26,7 +29,31 @@
     .session-page input:disabled + span { color: #8b949e; }
     .session-page .session-total { font-size: 16px; color: #f0f6fc; font-variant-numeric: tabular-nums; }
     .session-page .session-empty { color: #8b949e; margin: 12px 0; }
+    .session-page .session-chart { display: block; width: 100%; height: 160px; overflow: visible; }
+    .session-page .session-axis { display: flex; justify-content: space-between; gap: 18px; color: #8b949e; font-size: 11px; }
+    .session-page .session-legend { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 12px 0; font-size: 12px; }
+    .session-page .session-swatch { display: inline-block; width: 14px; height: 10px; margin-right: 6px; border: 1px solid #c9d1d9; }
+    .session-page .session-ranges { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 18px 0; }
+    .session-page .session-ranges input { display: block; width: 100%; margin-top: 8px; }
+    .session-page .session-ranges output { display: block; color: #8b949e; font-size: 11px; }
+    .session-page .session-brush { cursor: crosshair; touch-action: none; }
+    .session-page .session-table-wrap { max-width: 100%; overflow-x: auto; margin: 12px 0; }
+    .session-page table { border-collapse: collapse; width: 100%; font-size: 12px; font-variant-numeric: tabular-nums; }
+    .session-page caption { text-align: left; color: #8b949e; padding: 8px 0; }
+    .session-page th, .session-page td { text-align: right; padding: 7px 10px; border-bottom: 1px solid #30363d; }
+    .session-page th:first-child, .session-page td:first-child { text-align: left; }
+    .session-page summary { cursor: pointer; padding: 6px 0; }
+    .session-page summary:focus-visible { outline: 2px solid #58a6ff; outline-offset: 3px; }
+    .session-page .session-bars { display: flex; align-items: stretch; height: 160px; width: 100%; }
+    .session-page .session-bar { flex: 1 1 0; min-width: 12px; border: 0; border-radius: 0; padding: 0 1px; background: transparent; display: flex; align-items: flex-end; cursor: pointer; }
+    .session-page .session-bar-fill { display: block; width: 100%; min-height: 2px; border: 1px solid #c9d1d9; }
+    .session-page .session-readout { min-height: 3em; color: #c9d1d9; font-size: 12px; }
+    .session-page .session-track { padding: 10px 0; border-bottom: 1px solid #21262d; }
+    .session-page .session-track label { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+    .session-page .session-track svg { width: 100%; height: 40px; display: block; }
+    @media (prefers-reduced-motion: reduce) { .session-page *, .session-page *::before, .session-page *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
     @media (max-width: 720px) { .session-page .session-agents { grid-template-columns: 1fr; gap: 16px; } }
+    @media (max-width: 480px) { .session-page .session-ranges { grid-template-columns: 1fr; } .session-page .session-overview { padding: 12px; } }
   `;
 
   /** Create nodes without interpreting transcript content as HTML. */
@@ -77,6 +104,207 @@
     return node;
   }
 
+  /** Create genuine SVG nodes with text kept outside attribute interpolation. */
+  function svgElement(tag, attributes = {}) {
+    const node = document.createElementNS('http://www.w3.org/2000/svg', tag);
+    for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, value);
+    return node;
+  }
+
+  /** Unknown and future efforts remain explicit, including without color. */
+  function effortLabel(key) { return !key || key === 'unknown' ? 'Unknown' : key; }
+
+  function effortBackground(key) {
+    return Object.hasOwn(EFFORT_COLORS, key) && key !== 'unknown' ? EFFORT_COLORS[key]
+      : 'repeating-linear-gradient(135deg, #8b949e 0 3px, #30363d 3px 6px)';
+  }
+
+  /** Keep every recorded token component available in accessible exact values. */
+  function responseLabel(row) {
+    return `${row.timestamp}; model ${row.model_full || 'Unknown'} (${row.model || 'unknown'}); effort ${effortLabel(row.effort_key)}; path ${recordPath(row)}; input ${row.input_tokens || 0}; output ${row.output_tokens || 0}; cache read ${row.cache_read_tokens || 0}; cache creation ${row.cache_creation_tokens || 0}; total ${row.total_tokens || 0} tokens`;
+  }
+
+  /** Tables are the nonvisual counterpart of each chart, with exact numbers. */
+  function chartTable(key, caption, headers, rows) {
+    const disclosure = element('details', 'session-table-wrap');
+    disclosure.append(element('summary', undefined, caption));
+    const table = element('table');
+    table.dataset.chartTable = key;
+    table.append(element('caption', undefined, caption));
+    const head = element('thead');
+    const heading = element('tr');
+    for (const title of headers) {
+      const cell = element('th', undefined, title);
+      cell.setAttribute('scope', 'col');
+      heading.append(cell);
+    }
+    head.append(heading);
+    const body = element('tbody');
+    for (const values of rows) {
+      const row = element('tr');
+      values.forEach((value, index) => {
+        const cell = element(index ? 'td' : 'th', undefined, value);
+        if (!index) cell.setAttribute('scope', 'row');
+        row.append(cell);
+      });
+      body.append(row);
+    }
+    table.append(head, body);
+    disclosure.append(table);
+    return disclosure;
+  }
+
+  /** Install a stripe pattern for missing/future effort; IDs are chart-local. */
+  function effortPattern(svg, key) {
+    const defs = svgElement('defs');
+    const pattern = svgElement('pattern', {id: `session-${key}-unknown`, width: 6, height: 6, patternUnits: 'userSpaceOnUse'});
+    pattern.append(svgElement('rect', {width: 6, height: 6, fill: '#30363d'}),
+      svgElement('path', {d: 'M-1,1 L1,-1 M0,6 L6,0 M5,7 L7,5', stroke: '#8b949e', 'stroke-width': 2}));
+    defs.append(pattern);
+    svg.append(defs);
+    return effort => Object.hasOwn(EFFORT_COLORS, effort) && effort !== 'unknown'
+      ? EFFORT_COLORS[effort] : `url(#session-${key}-unknown)`;
+  }
+
+  /** Bucket rectangles share both time edges and cumulative y boundaries. */
+  function renderOverviewSvg(parent, responses, domain, key = 'overview') {
+    const svg = svgElement('svg', {viewBox: '0 0 1000 120', preserveAspectRatio: 'none', role: 'img',
+      'aria-label': `${key === 'overview' ? 'Whole-session' : 'Scoped'} tokens by effort; exact totals in the following table`});
+    svg.setAttribute('class', 'session-chart');
+    svg.dataset.sessionChart = key;
+    parent.append(svg);
+    const width = svg.getBoundingClientRect().width;
+    const buckets = A.bucketResponses(responses, {...domain, width});
+    const layers = A.stackEffortBuckets(buckets);
+    const maximum = Math.max(1, ...buckets.map(bucket => bucket.total_tokens));
+    const x = time => (time - domain.start) / (domain.end - domain.start) * 1000;
+    const y = tokens => 120 - tokens / maximum * 120;
+    const fill = effortPattern(svg, key);
+    for (const layer of layers) {
+      // Step over complete buckets, then return along the shared lower edge.
+      // No interpolation implies no invented token activity in empty buckets.
+      const upper = buckets.flatMap((bucket, index) => [`${x(bucket.start)},${y(layer.upper[index])}`, `${x(bucket.end)},${y(layer.upper[index])}`]);
+      const lower = buckets.flatMap((bucket, index) => [`${x(bucket.start)},${y(layer.lower[index])}`, `${x(bucket.end)},${y(layer.lower[index])}`]).reverse();
+      const band = svgElement('path', {d: `M${upper.concat(lower).join(' L')} Z`, fill: fill(layer.key)});
+      band.dataset.effortLayer = layer.key;
+      svg.append(band);
+    }
+    const axis = element('div', 'session-axis');
+    axis.append(element('span', undefined, new Date(domain.start).toISOString()),
+      element('span', undefined, `${new Date(domain.end).toISOString()} (exclusive)`));
+    parent.append(axis);
+    const legend = element('div', 'session-legend');
+    const rows = layers.map(layer => {
+      const matching = responses.filter(row => (row.effort_key || 'unknown') === layer.key && A.inRange(row, domain));
+      const total = A.sumTokens(matching);
+      const label = element('span');
+      const swatch = element('span', 'session-swatch');
+      swatch.style.background = effortBackground(layer.key);
+      swatch.setAttribute('aria-hidden', 'true');
+      label.append(swatch, element('span', undefined, `${effortLabel(layer.key)}: ${total.total_tokens.toLocaleString()} tokens`));
+      legend.append(label);
+      return [effortLabel(layer.key), matching.length, ...TOKEN_FIELDS.map(field => total[field])];
+    });
+    parent.append(legend, chartTable(key, 'Token totals by effort', ['Effort', 'Responses', ...TOKEN_LABELS], rows));
+    return svg;
+  }
+
+  /** Use equal-width response slots only when each has at least 12 CSS pixels. */
+  function renderScopedDetail(parent, responses, domain, listen, controls) {
+    const timed = responses.filter(row => domain && A.inRange(row, domain))
+      .slice().sort((left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp));
+    if (!timed.length) {
+      parent.append(element('p', 'session-empty', 'No timestamped responses in this scope.'));
+      return;
+    }
+    const chart = element('div', 'session-bars');
+    parent.append(chart);
+    if (A.usesExactBars(timed, chart.getBoundingClientRect().width)) {
+      chart.setAttribute('aria-label', 'Exact responses in timestamp order; equal-width slots');
+      const maximum = Math.max(1, ...timed.map(row => Number(row.total_tokens || 0)));
+      const readout = element('p', 'session-readout', 'Focus or hover a response for its exact values.');
+      readout.dataset.responseReadout = '';
+      for (const [index, row] of timed.entries()) {
+        const label = responseLabel(row);
+        const bar = element('button', 'session-bar');
+        bar.type = 'button';
+        bar.tabIndex = 0;
+        bar.dataset.responseBar = String(index);
+        bar.setAttribute('aria-label', label);
+        bar.title = label;
+        const fill = element('span', 'session-bar-fill');
+        fill.style.height = `${Number(row.total_tokens || 0) / maximum * 100}%`;
+        fill.style.background = effortBackground(row.effort_key);
+        fill.setAttribute('aria-hidden', 'true');
+        bar.append(fill);
+        listen(bar, 'focus', () => { readout.textContent = label; });
+        listen(bar, 'pointerenter', () => { readout.textContent = label; });
+        controls.set(`response:${index}`, bar);
+        chart.append(bar);
+      }
+      parent.append(element('p', 'muted', 'Exact responses in timestamp order; bar height shows total tokens.'), readout);
+    } else {
+      chart.style.display = 'none';
+      renderOverviewSvg(parent, timed, domain, 'detail');
+      parent.append(element('p', 'muted', 'Zoom further for per-response bars'));
+    }
+    parent.append(chartTable('detail', 'Exact response values', ['Timestamp', 'Full model', 'Model', 'Effort', 'Agent path', ...TOKEN_LABELS],
+      timed.map(row => [row.timestamp, row.model_full || 'Unknown', row.model || 'unknown', effortLabel(row.effort_key), recordPath(row), ...TOKEN_FIELDS.map(field => row[field] || 0)])));
+  }
+
+  /** Plot independent exact paths on a common clock, including empty rows. */
+  function renderAgentTracks(parent, paths, responses, domain, activePaths, allPaths, toggle, listen, controls) {
+    parent.append(element('p', 'muted', 'Model: circle = sonnet; diamond = opus; square = haiku; triangle = other. Fill shows effort; stripes = Unknown or future effort. Marker size shows tokens (3–10 px).'));
+    const timed = responses.filter(row => domain && A.inRange(row, domain));
+    const maximum = timed.reduce((largest, row) => Math.max(largest, Number(row.total_tokens || 0)), 1);
+    const rows = [];
+    paths.forEach((path, index) => {
+      const track = element('div', 'session-track');
+      track.dataset.agentTrack = path;
+      const label = element('label');
+      const checkbox = element('input');
+      checkbox.type = 'checkbox';
+      const selection = A.selectionState(activePaths, path, allPaths);
+      checkbox.checked = selection === 'checked';
+      checkbox.indeterminate = selection === 'indeterminate';
+      checkbox.dataset.trackToggle = path;
+      checkbox.setAttribute('aria-label', `Include ${path} and descendants`);
+      listen(checkbox, 'change', () => toggle(path, checkbox.checked));
+      controls.set(`track:${path}`, checkbox);
+      label.append(checkbox, element('span', undefined, `${path}${activePaths.has(path) ? '' : ' (inactive)'}`));
+      track.append(label);
+      parent.append(track);
+      const matching = timed.filter(row => recordPath(row) === path);
+      const totals = A.sumTokens(matching);
+      rows.push([path, activePaths.has(path) ? 'Active' : 'Inactive', matching.length, ...TOKEN_FIELDS.map(field => totals[field])]);
+      if (!domain) return;
+      const svg = svgElement('svg', {role: 'img', 'aria-label': `${path}: ${matching.length} timestamped responses, ${totals.total_tokens} tokens`});
+      track.append(svg);
+      const width = Math.max(24, svg.getBoundingClientRect().width);
+      svg.setAttribute('viewBox', `0 0 ${width} 40`);
+      const fill = effortPattern(svg, `track-${index}`);
+      svg.append(svgElement('line', {x1: 12, x2: width - 12, y1: 20, y2: 20, stroke: '#30363d'}));
+      for (const row of matching) {
+        const x = 12 + (Date.parse(row.timestamp) - domain.start) / (domain.end - domain.start) * (width - 24);
+        const size = 3 + 7 * Math.sqrt(Number(row.total_tokens || 0) / maximum);
+        const marker = svgElement('g', {transform: `translate(${x},20)`, role: 'img', 'aria-label': responseLabel(row)});
+        marker.dataset.trackMark = path;
+        const title = svgElement('title');
+        title.textContent = responseLabel(row);
+        const model = String(row.model || '').toLowerCase();
+        const shape = model.includes('sonnet') ? svgElement('circle', {r: size})
+          : model.includes('opus') ? svgElement('polygon', {points: `0,${-size} ${size},0 0,${size} ${-size},0`})
+            : model.includes('haiku') ? svgElement('rect', {x: -size, y: -size, width: size * 2, height: size * 2})
+              : svgElement('polygon', {points: `0,${-size} ${size},${size} ${-size},${size}`});
+        shape.setAttribute('fill', fill(row.effort_key));
+        shape.setAttribute('stroke', '#c9d1d9');
+        marker.append(title, shape);
+        svg.append(marker);
+      }
+    });
+    parent.append(chartTable('tracks', 'Timestamped response totals by agent path', ['Agent path', 'Selection', 'Responses', ...TOKEN_LABELS], rows));
+  }
+
   /** Render one session from an immutable source and disposable local state. */
   function renderSessionDetail(container, session, routeState) {
     const fields = ['agent_activity', 'skill_activity', 'command_activity', 'mcp_activity'];
@@ -104,6 +332,7 @@
     };
     let disposed = false;
     let listeners = [];
+    let focusedControl = null;
     // Keep the live region and its ancestors mounted while replacing controls
     // and projections around it, so updates are observable to screen readers.
     const page = element('section', 'session-detail session-page');
@@ -129,6 +358,76 @@
     function removeListeners() {
       listeners.forEach(remove => remove());
       listeners = [];
+    }
+
+    /** Commit every brush source through the same bounded interval contract. */
+    function setRange(start, end, focusKey) {
+      state.range = A.normalizeRange(start, end, domain);
+      render(focusKey);
+    }
+
+    /** Native range commits and pointer drags offer equivalent period selection. */
+    function renderBrush(parent, svg, controls) {
+      const x = time => (time - domain.start) / (domain.end - domain.start) * 1000;
+      const selection = svgElement('rect', {x: x(state.range.start), y: 0,
+        width: x(state.range.end) - x(state.range.start), height: 120,
+        fill: '#58a6ff', 'fill-opacity': 0.12, stroke: '#79c0ff', 'stroke-width': 2});
+      selection.setAttribute('aria-hidden', 'true');
+      const overlay = svgElement('rect', {x: 0, y: 0, width: 1000, height: 120, fill: 'transparent', class: 'session-brush'});
+      overlay.dataset.sessionBrush = '';
+      overlay.setAttribute('aria-hidden', 'true');
+      svg.append(selection, overlay);
+      let drag = null;
+      const timeAt = event => {
+        const bounds = svg.getBoundingClientRect();
+        const fraction = Math.max(0, Math.min(1, (event.clientX - bounds.left) / Math.max(1, bounds.width)));
+        return Math.round(domain.start + fraction * (domain.end - domain.start));
+      };
+      listen(overlay, 'pointerdown', event => {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        drag = {pointerId: event.pointerId, start: timeAt(event)};
+        overlay.setPointerCapture(event.pointerId);
+      });
+      listen(overlay, 'pointermove', event => {
+        if (!drag || event.pointerId !== drag.pointerId) return;
+        const preview = A.normalizeRange(drag.start, timeAt(event), domain);
+        selection.setAttribute('x', x(preview.start));
+        selection.setAttribute('width', x(preview.end) - x(preview.start));
+      });
+      listen(overlay, 'pointerup', event => {
+        if (!drag || event.pointerId !== drag.pointerId) return;
+        const start = drag.start;
+        drag = null;
+        overlay.releasePointerCapture(event.pointerId);
+        setRange(start, timeAt(event), 'range:start');
+      });
+      listen(overlay, 'pointercancel', event => {
+        if (!drag || event.pointerId !== drag.pointerId) return;
+        drag = null;
+        overlay.releasePointerCapture(event.pointerId);
+        selection.setAttribute('x', x(state.range.start));
+        selection.setAttribute('width', x(state.range.end) - x(state.range.start));
+      });
+      const ranges = element('div', 'session-ranges');
+      for (const [edge, title] of [['start', 'Period start'], ['end', 'Period end (exclusive)']]) {
+        const label = element('label', undefined, title);
+        const input = element('input');
+        input.type = 'range';
+        input.min = String(domain.start);
+        input.max = String(domain.end);
+        input.step = '1';
+        input.value = String(state.range[edge]);
+        input.dataset.sessionRange = edge;
+        input.setAttribute('aria-label', title);
+        input.setAttribute('aria-valuetext', new Date(state.range[edge]).toISOString());
+        controls.set(`range:${edge}`, input);
+        listen(input, 'change', () => setRange(edge === 'start' ? Number(input.value) : state.range.start,
+          edge === 'end' ? Number(input.value) : state.range.end, `range:${edge}`));
+        label.append(input, element('output', undefined, new Date(state.range[edge]).toISOString()));
+        ranges.append(label);
+      }
+      parent.append(ranges, element('p', 'muted', 'Drag the timeline or use the period sliders. The start is included; the end is excluded. Choose By time period to apply the range.'));
     }
 
     /** Recompute every scoped region together while keeping identity fixed. */
@@ -280,6 +579,15 @@
       tracks.append(element('p', 'muted', `${state.activePaths.size} active agent paths`));
       agentRegion.append(agents, tracks);
       beforeScope.replaceChildren(header, overview, agentRegion);
+      if (domain) {
+        const overviewSvg = renderOverviewSvg(overview, timedResponses, domain);
+        renderBrush(overview, overviewSvg, controls);
+      }
+      renderAgentTracks(tracks, allPaths, scoped.responses, state.scope === 'period' ? state.range : domain,
+        state.activePaths, allPaths, (path, enabled) => {
+          state.activePaths = A.setSubtree(state.activePaths, path, enabled, allPaths);
+          render(`track:${path}`);
+        }, listen, controls);
 
       const fieldset = element('fieldset');
       fieldset.setAttribute('aria-label', 'Session analytics scope');
@@ -315,14 +623,25 @@
         panel('breakdowns', 'Effort, models, and tokens'),
         panel('details', 'Session details'),
         panel('ledger', 'Event ledger'));
+      renderScopedDetail(detail, scoped.responses, state.scope === 'period' ? state.range : domain, listen, controls);
+      for (const [key, control] of controls) listen(control, 'focus', () => { focusedControl = key; });
       if (focusKey) controls.get(focusKey)?.focus();
       else heading.focus();
     }
 
     render();
+    let previousWidth = container.getBoundingClientRect().width;
+    const resizeObserver = window.ResizeObserver ? new window.ResizeObserver(entries => {
+      const width = entries[0]?.contentRect.width;
+      if (disposed || !Number.isFinite(width) || width === previousWidth) return;
+      previousWidth = width;
+      render(focusedControl || 'resize');
+    }) : null;
+    resizeObserver?.observe(container);
     return () => {
       if (disposed) return;
       disposed = true;
+      resizeObserver?.disconnect();
       removeListeners();
       CP.destroyChartsByPrefix('session-');
       container.replaceChildren();

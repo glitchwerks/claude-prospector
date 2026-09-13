@@ -81,6 +81,16 @@ class FakeElement extends FakeEventTarget {
     this.attributes[name] = String(value);
   }
 
+  getBoundingClientRect() {
+    return {left: 0, top: 0, width: this.document.chartWidth, height: 160};
+  }
+
+  setPointerCapture(pointerId) { this.capturedPointer = pointerId; }
+
+  releasePointerCapture(pointerId) {
+    if (this.capturedPointer === pointerId) this.capturedPointer = null;
+  }
+
   focus() {
     this.document.activeElement = this;
     this.document.focusCount += 1;
@@ -115,8 +125,14 @@ function bootShell(sessions = [{session_id: 'A'}, {session_id: 'B'}]) {
   const document = {
     activeElement: null,
     focusCount: 0,
+    chartWidth: 600,
     elements: {},
     createElement(tagName) { return new FakeElement(this, tagName); },
+    createElementNS(namespace, tagName) {
+      const node = new FakeElement(this, tagName);
+      node.namespaceURI = namespace;
+      return node;
+    },
     getElementById(id) { return this.elements[id]; },
     querySelectorAll(selector) {
       return selector === '.view-toggle button' ? this.buttons : [];
@@ -163,6 +179,12 @@ function bootShell(sessions = [{session_id: 'A'}, {session_id: 'B'}]) {
     return () => cleanupCalls.push(view);
   };
   window.DATA = {sessions};
+  const resizeObservers = [];
+  window.ResizeObserver = class {
+    constructor(callback) { this.callback = callback; this.disconnected = false; resizeObservers.push(this); }
+    observe(target) { this.target = target; }
+    disconnect() { this.disconnected = true; }
+  };
   window.location = location;
   window.scrollTo = () => {};
   const context = vm.createContext({
@@ -196,7 +218,7 @@ function bootShell(sessions = [{session_id: 'A'}, {session_id: 'B'}]) {
   vm.runInContext(readShellScript(), context);
 
   return {
-    window, document, history, location, renderCalls, cleanupCalls, metrics,
+    window, document, history, location, renderCalls, cleanupCalls, metrics, resizeObservers,
     buttons: document.buttons,
   };
 }
@@ -607,6 +629,268 @@ test('disabling a child makes ancestors indeterminate', () => {
 test('exact bars require twelve pixels per response', () => {
   assert.equal(A.usesExactBars(new Array(10).fill({}), 120), true);
   assert.equal(A.usesExactBars(new Array(11).fill({}), 120), false);
+});
+
+/** Change the real range control, as keyboard/native range commits do. */
+function moveRange(shell, edge, value) {
+  const input = sessionNode(shell, node => node.dataset.sessionRange === edge);
+  input.value = String(value);
+  input.dispatchEvent({type: 'change'});
+}
+
+function chooseScope(shell, mode) {
+  const input = sessionNode(shell, node => node.dataset.sessionScope === mode);
+  input.checked = true;
+  input.dispatchEvent({type: 'change'});
+}
+
+function exactBars(shell) {
+  return sessionNodes(shell).filter(node => node.dataset.responseBar !== undefined);
+}
+
+test('overview draws shared stepped stack boundaries and offers token totals by effort', () => {
+  const seed = require('../fixtures/session-analytics/short-single-agent.json');
+  const fixture = {...seed, start_time: new Date(0).toISOString(), end_time: new Date(1999).toISOString(),
+    agent_activity: [
+      {...seed.agent_activity[0], timestamp: new Date(0).toISOString(), total_tokens: 10},
+      {...seed.agent_activity[1], timestamp: new Date(0).toISOString(), total_tokens: 20},
+      {...seed.agent_activity[0], timestamp: new Date(1000).toISOString(), output_tokens: 4, total_tokens: 5},
+      {...seed.agent_activity[1], timestamp: new Date(1000).toISOString(), input_tokens: 1, output_tokens: 14, total_tokens: 15},
+    ]};
+  const shell = bootShell([freezeDeep(fixture)]);
+  openSession(shell, 'short', 'basic');
+  const svg = sessionNode(shell, node => node.dataset.sessionChart === 'overview');
+  assert.equal(svg.namespaceURI, 'http://www.w3.org/2000/svg');
+  assert.equal(svg.attributes.role, 'img');
+  const bands = svg.children.filter(node => node.dataset.effortLayer);
+  assert.deepEqual(bands.map(node => [node.dataset.effortLayer, node.attributes.d]), [
+    ['low', 'M0,80 L500,80 L500,100 L1000,100 L1000,120 L500,120 L500,120 L0,120 Z'],
+    ['high', 'M0,0 L500,0 L500,40 L1000,40 L1000,100 L500,100 L500,80 L0,80 Z'],
+  ]);
+  const table = sessionNode(shell, node => node.dataset.chartTable === 'overview');
+  const rows = table.children.find(node => node.tagName === 'tbody').children;
+  assert.deepEqual(rows.map(row => row.children.map(cell => cell.textContent)), [
+    ['low', '2', '2', '13', '0', '0', '15'], ['high', '2', '3', '32', '0', '0', '35'],
+  ]);
+});
+
+test('labeled keyboard brush controls change only period detail and retain overview domain', () => {
+  const session = freezeDeep(plain(require('../fixtures/session-analytics/short-single-agent.json')));
+  const shell = bootShell([session]);
+  openSession(shell, 'short', 'basic');
+  const initialDomain = {...sessionNode(shell, node => node.dataset.sessionPanel === 'overview').dataset};
+  const inputs = sessionNodes(shell).filter(node => node.dataset.sessionRange);
+  assert.deepEqual(inputs.map(node => [node.type, node.attributes['aria-label'], node.step]), [
+    ['range', 'Period start', '1'], ['range', 'Period end (exclusive)', '1'],
+  ]);
+  assert.equal(exactBars(shell).length, 3);
+  moveRange(shell, 'end', Date.parse('2026-09-13T10:01:00Z'));
+  assert.equal(exactBars(shell).length, 3);
+  assert.equal(scopedTotal(shell), 'All: 60 tokens across 3 responses');
+  chooseScope(shell, 'period');
+  assert.equal(scopedTotal(shell), 'By time period: 10 tokens across 1 response');
+  assert.equal(exactBars(shell).length, 1);
+  assert.deepEqual(sessionNode(shell, node => node.dataset.sessionPanel === 'overview').dataset, initialDomain);
+  moveRange(shell, 'start', Date.parse(session.end_time) + 5000);
+  assert.equal(sessionNode(shell, node => node.dataset.sessionRange === 'end').value, String(Date.parse(session.end_time) + 1));
+  assert.equal(shell.document.activeElement.dataset.sessionRange, 'start');
+});
+
+test('exact response bars expose every fact and exclude missing-time responses from charts', () => {
+  const fixture = plain(require('../fixtures/session-analytics/short-single-agent.json'));
+  fixture.agent_activity[0] = {...fixture.agent_activity[0], cache_read_tokens: 3, cache_creation_tokens: 4, total_tokens: 17};
+  fixture.agent_activity.push({...fixture.agent_activity[0], timestamp: null});
+  const shell = bootShell([freezeDeep(fixture)]);
+  openSession(shell, 'short', 'basic');
+  const bars = exactBars(shell);
+  assert.equal(bars.length, 3);
+  assert.ok(bars.every(bar => bar.tagName === 'button' && bar.type === 'button' && bar.tabIndex === 0));
+  assert.equal(bars[0].attributes['aria-label'], '2026-09-13T10:00:00Z; model claude-sonnet-5 (sonnet); effort low; path main; input 1; output 9; cache read 3; cache creation 4; total 17 tokens');
+  assert.ok(bars[2].attributes['aria-label'].includes('effort Unknown'));
+  bars[0].focus();
+  assert.equal(sessionNode(shell, node => node.dataset.responseReadout !== undefined).textContent, bars[0].attributes['aria-label']);
+  const table = sessionNode(shell, node => node.dataset.chartTable === 'detail');
+  assert.equal(table.children.find(node => node.tagName === 'tbody').children.length, 3);
+});
+
+test('dense detail switches to exact bars when the period narrows and follows actual CSS width', () => {
+  const seed = require('../fixtures/session-analytics/short-single-agent.json');
+  const fixture = {...seed, agent_activity: Array.from({length: 51}, (_, index) => ({
+    ...seed.agent_activity[0], timestamp: new Date(Date.parse(seed.start_time) + index * 1000).toISOString(),
+  }))};
+  const shell = bootShell([freezeDeep(fixture)]);
+  openSession(shell, 'short', 'basic');
+  assert.equal(exactBars(shell).length, 0);
+  assert.ok(sessionNode(shell, node => node.textContent === 'Zoom further for per-response bars'));
+  assert.ok(sessionNode(shell, node => node.dataset.sessionChart === 'detail'));
+  moveRange(shell, 'end', Date.parse(seed.start_time) + 2000);
+  chooseScope(shell, 'period');
+  assert.equal(exactBars(shell).length, 2);
+  shell.document.chartWidth = 23;
+  chooseScope(shell, 'period');
+  assert.equal(exactBars(shell).length, 0);
+  shell.document.chartWidth = 24;
+  chooseScope(shell, 'period');
+  assert.equal(exactBars(shell).length, 2);
+});
+
+test('container resize recomputes chart density and preserves control focus until cleanup', () => {
+  const shell = bootShell([require('../fixtures/session-analytics/short-single-agent.json')]);
+  openSession(shell, 'short', 'basic');
+  const observer = shell.resizeObservers.at(-1);
+  assert.ok(observer, 'Responsive charts must observe their container width');
+  agentControl(shell, 'main').focus();
+  shell.document.chartWidth = 35;
+  observer.callback([{contentRect: {width: 35}}]);
+  assert.equal(exactBars(shell).length, 0);
+  assert.equal(shell.document.activeElement, agentControl(shell, 'main'));
+  shell.document.chartWidth = 36;
+  observer.callback([{contentRect: {width: 36}}]);
+  assert.equal(exactBars(shell).length, 3);
+  shell.buttons.find(button => button.dataset.view === 'detail').dispatchEvent({type: 'click'});
+  assert.equal(observer.disconnected, true);
+  observer.callback([{contentRect: {width: 1200}}]);
+  assert.deepEqual(plain(shell.history.state), {dashboardView: 'detail'});
+});
+
+test('cancelled pointer drag leaves the committed half-open range unchanged', () => {
+  const fixture = require('../fixtures/session-analytics/short-single-agent.json');
+  const shell = bootShell([fixture]);
+  openSession(shell, 'short', 'basic');
+  const brush = sessionNode(shell, node => node.dataset.sessionBrush !== undefined);
+  const initial = sessionNodes(shell).filter(node => node.dataset.sessionRange).map(node => node.value);
+  brush.dispatchEvent({type: 'pointerdown', pointerId: 8, button: 0, clientX: 50, preventDefault() {}});
+  brush.dispatchEvent({type: 'pointermove', pointerId: 8, clientX: 200});
+  brush.dispatchEvent({type: 'pointercancel', pointerId: 8});
+  brush.dispatchEvent({type: 'pointerup', pointerId: 8, clientX: 200});
+  assert.deepEqual(sessionNodes(shell).filter(node => node.dataset.sessionRange).map(node => node.value), initial);
+  assert.equal(brush.capturedPointer, null);
+});
+
+test('pointer brush clamps reversed drags and releases old bindings on navigation', () => {
+  const fixture = require('../fixtures/session-analytics/short-single-agent.json');
+  const shell = bootShell([fixture]);
+  openSession(shell, 'short', 'basic');
+  const brush = sessionNode(shell, node => node.dataset.sessionBrush !== undefined);
+  brush.dispatchEvent({type: 'pointerdown', pointerId: 7, button: 0, clientX: 700, preventDefault() {}});
+  brush.dispatchEvent({type: 'pointermove', pointerId: 7, clientX: 300});
+  brush.dispatchEvent({type: 'pointerup', pointerId: 7, clientX: 300});
+  const start = sessionNode(shell, node => node.dataset.sessionRange === 'start');
+  assert.equal(start.value, String(Date.parse(fixture.start_time) + 60001));
+  assert.equal(scopedTotal(shell), 'All: 60 tokens across 3 responses');
+  chooseScope(shell, 'period');
+  assert.equal(scopedTotal(shell), 'By time period: 30 tokens across 1 response');
+  assert.ok([...brush.listeners.values()].every(list => list.length === 0));
+  const currentBrush = sessionNode(shell, node => node.dataset.sessionBrush !== undefined);
+  shell.buttons.find(button => button.dataset.view === 'detail').dispatchEvent({type: 'click'});
+  assert.ok([...currentBrush.listeners.values()].every(list => list.length === 0));
+});
+
+test('concurrent tracks retain exact paths, zero-response rows, and recursive selection', () => {
+  const fixture = plain(require('../fixtures/session-analytics/long-concurrent-agents.json'));
+  fixture.agent_paths.push(['main', 'empty']);
+  fixture.agent_activity[0].timestamp = fixture.agent_activity[1].timestamp;
+  const shell = bootShell([freezeDeep(fixture)]);
+  openSession(shell, 'long-concurrent', 'basic');
+  const tracks = () => sessionNodes(shell).filter(node => node.dataset.agentTrack !== undefined);
+  assert.deepEqual(tracks().map(node => node.dataset.agentTrack), ['main', 'main→worker', 'main→worker→explorer', 'main→empty']);
+  const marks = sessionNodes(shell).filter(node => node.dataset.trackMark !== undefined);
+  assert.equal(marks.length, 4);
+  assert.equal(marks[0].attributes.transform, marks[2].attributes.transform);
+  assert.notEqual(marks[0].children.find(node => ['circle', 'rect', 'polygon'].includes(node.tagName)).tagName,
+    marks[2].children.find(node => ['circle', 'rect', 'polygon'].includes(node.tagName)).tagName);
+  const toggle = sessionNode(shell, node => node.dataset.trackToggle === 'main→worker');
+  toggle.checked = false;
+  toggle.dispatchEvent({type: 'change'});
+  assert.equal(tracks().length, 4);
+  assert.equal(agentControl(shell, 'main→worker→explorer').checked, false);
+  assert.equal(agentControl(shell, 'main').indeterminate, true);
+  assert.equal(scopedTotal(shell), 'All: 500 tokens across 2 responses');
+  assert.equal(shell.document.activeElement.dataset.trackToggle, 'main→worker');
+  const table = sessionNode(shell, node => node.dataset.chartTable === 'tracks');
+  assert.equal(table.children.find(node => node.tagName === 'tbody').children.length, 4);
+});
+
+test('untimed responses do not influence the magnitude scale of timestamped tracks', () => {
+  const seed = require('../fixtures/session-analytics/short-single-agent.json');
+  const fixture = {...seed, agent_activity: [seed.agent_activity[0],
+    {...seed.agent_activity[0], timestamp: null, total_tokens: 1000000}]};
+  const shell = bootShell([freezeDeep(fixture)]);
+  openSession(shell, 'short', 'basic');
+  const marker = sessionNode(shell, node => node.dataset.trackMark === 'main');
+  assert.equal(marker.children.find(node => node.tagName === 'circle').attributes.r, '10');
+});
+
+test('a response cannot become an exact bar below twelve CSS pixels', () => {
+  assert.equal(A.usesExactBars([{}], 11), false);
+  assert.equal(A.usesExactBars([{}], 0), false);
+});
+
+test('effort stacks reuse cumulative boundaries in stable known and future order', () => {
+  assert.equal(typeof A.stackEffortBuckets, 'function', 'Stacking must be available to the renderer');
+  const buckets = freezeDeep([
+    {by_effort: {zeta: 7, unknown: 5, high: 3, low: 1, alpha: 6, max: 4, medium: 2}},
+    {by_effort: {high: 9, low: 4}},
+    {by_effort: {}},
+  ]);
+  assert.deepEqual(A.stackEffortBuckets(buckets), [
+    {key: 'low', lower: [0, 0, 0], upper: [1, 4, 0]},
+    {key: 'medium', lower: [1, 4, 0], upper: [3, 4, 0]},
+    {key: 'high', lower: [3, 4, 0], upper: [6, 13, 0]},
+    {key: 'max', lower: [6, 13, 0], upper: [10, 13, 0]},
+    {key: 'unknown', lower: [10, 13, 0], upper: [15, 13, 0]},
+    {key: 'alpha', lower: [15, 13, 0], upper: [21, 13, 0]},
+    {key: 'zeta', lower: [21, 13, 0], upper: [28, 13, 0]},
+  ]);
+  assert.deepEqual(A.stackEffortBuckets([]), []);
+});
+
+test('bucket boundaries assign exact starts, exclude final ends, and retain cache components', () => {
+  const response = (time, effort, tokens) => ({timestamp: new Date(time).toISOString(),
+    effort_key: effort, input_tokens: tokens, output_tokens: tokens * 2,
+    cache_read_tokens: tokens * 3, cache_creation_tokens: tokens * 4, total_tokens: tokens * 10});
+  const buckets = A.bucketResponses([
+    response(1233, 'low', 100), response(1234, 'low', 1), response(2233, 'high', 2),
+    response(2234, 'high', 3), response(3234, null, 4), response(3734, 'max', 100),
+    {...response(1234, 'max', 100), timestamp: null},
+  ], {start: 1234, end: 3734, width: 18});
+  assert.deepEqual(buckets, [
+    {start: 1234, end: 2234, by_effort: {low: 10, high: 20}, input_tokens: 3, output_tokens: 6, cache_read_tokens: 9, cache_creation_tokens: 12, total_tokens: 30},
+    {start: 2234, end: 3234, by_effort: {high: 30}, input_tokens: 3, output_tokens: 6, cache_read_tokens: 9, cache_creation_tokens: 12, total_tokens: 30},
+    {start: 3234, end: 3734, by_effort: {unknown: 40}, input_tokens: 4, output_tokens: 8, cache_read_tokens: 12, cache_creation_tokens: 16, total_tokens: 40},
+  ]);
+});
+
+test('adaptive buckets cross the one-second ladder and use a bounded fallback duration', () => {
+  const bounds = options => A.bucketResponses([], options).map(({start, end}) => [start, end]);
+  assert.deepEqual(bounds({start: 0, end: 2000, width: 12}), [[0, 1000], [1000, 2000]]);
+  assert.deepEqual(bounds({start: 0, end: 2001, width: 12}), [[0, 2001]]);
+  assert.deepEqual(bounds({start: 10, end: 172800013, width: 12}), [[10, 86400012], [86400012, 172800013]]);
+});
+
+test('future effort names that match object properties retain their exact bucket totals', () => {
+  const buckets = A.bucketResponses([
+    {timestamp: new Date(0).toISOString(), effort_key: '__proto__', total_tokens: 10},
+    {timestamp: new Date(0).toISOString(), effort_key: 'constructor', total_tokens: 20},
+  ], {start: 0, end: 2000, width: 12});
+  assert.deepEqual(Object.entries(buckets[0].by_effort), [['__proto__', 10], ['constructor', 20]]);
+  assert.deepEqual(A.stackEffortBuckets(buckets), [
+    {key: '__proto__', lower: [0, 0], upper: [10, 0]}, {key: 'constructor', lower: [10, 0], upper: [30, 0]},
+  ]);
+  const seed = require('../fixtures/session-analytics/short-single-agent.json');
+  const shell = bootShell([{...seed, agent_activity: [{...seed.agent_activity[0], effort_key: 'constructor'}]}]);
+  openSession(shell, 'short', 'basic');
+  const layer = sessionNode(shell, node => node.dataset.effortLayer === 'constructor');
+  assert.equal(layer.attributes.fill, 'url(#session-overview-unknown)');
+});
+
+test('brush normalization sorts, clamps, and keeps a nonempty half-open interval', () => {
+  assert.equal(typeof A.normalizeRange, 'function', 'Brush changes need one interval normalizer');
+  for (const [start, end, expected] of [
+    [80, 20, {start: 20, end: 80}], [-9, 999, {start: 10, end: 100}],
+    [100, 100, {start: 99, end: 100}], [-5, -2, {start: 10, end: 11}],
+    [50.4, 60.7, {start: 50, end: 61}], [NaN, Infinity, {start: 10, end: 100}],
+  ]) assert.deepEqual(A.normalizeRange(start, end, {start: 10, end: 100}), expected);
 });
 
 test('a dense long session stays continuous until the selected range narrows', () => {

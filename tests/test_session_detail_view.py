@@ -77,6 +77,13 @@ def test_session_controls_ship_in_rendered_dashboard(tmp_path: Path) -> None:
         "setAttribute('role', 'tree')",
         "indeterminate",
         "No agents selected",
+        "renderOverviewSvg",
+        "renderScopedDetail",
+        "renderAgentTracks",
+        "Period end (exclusive)",
+        "Zoom further for per-response bars",
+        "Exact response values",
+        "prefers-reduced-motion",
     ):
         assert hook in source
 
