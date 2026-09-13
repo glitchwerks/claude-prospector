@@ -498,6 +498,92 @@ def test_session_mcp_projection_respects_cli_date_window(
     assert "never retain" not in json.dumps(session)
 
 
+@pytest.mark.parametrize("output_format", ["json", "html"])
+@pytest.mark.parametrize(
+    "bounds",
+    [
+        [],
+        ["--from", "2026-09-13"],
+        ["--to", "2026-09-14"],
+        ["--from", "2026-09-13", "--to", "2026-09-14"],
+    ],
+    ids=["unbounded", "start-only", "end-only", "half-open"],
+)
+def test_session_mcp_projection_omits_naive_tool_clock_only_when_bounded(
+    tmp_path: Path, output_format: str, bounds: list[str]
+) -> None:
+    """A tool-only clock without an offset cannot prove window inclusion.
+
+    Args:
+        tmp_path: Isolated corpus and output directory.
+        output_format: JSON stdout or an HTML dashboard artifact.
+        bounds: CLI arguments defining the represented date window.
+    """
+    data_dir = tmp_path / "data"
+    project = data_dir / "projects" / "naive-tool-clock"
+    project.mkdir(parents=True)
+    entries = [
+        {
+            "type": "assistant",
+            "timestamp": "2026-09-13T10:00:00Z",
+            "message": {
+                "id": "timed-response",
+                "model": "claude-sonnet-5",
+                "content": [{"type": "text", "text": "Measured response"}],
+                "usage": {"input_tokens": 1, "output_tokens": 2},
+            },
+        },
+        {
+            "type": "assistant",
+            "timestamp": "2026-09-13T10:01:00",
+            "message": {
+                "id": "tool-only-fragment",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "naive-call",
+                        "name": "mcp__github__get_issue",
+                        "input": {},
+                    }
+                ],
+            },
+        },
+    ]
+    (project / "naive-clock.jsonl").write_text(
+        "\n".join(json.dumps(entry) for entry in entries), encoding="utf-8"
+    )
+    output = tmp_path / "dashboard.html"
+    result = _run_cli(
+        "dashboard",
+        "--data-dir",
+        str(data_dir),
+        "--format",
+        output_format,
+        "--output",
+        str(output),
+        "--no-open",
+        "--track-mcp-calls",
+        *bounds,
+    )
+    assert result.returncode == 0, result.stderr
+    payload = (
+        json.loads(result.stdout)
+        if output_format == "json"
+        else _extract_window_data(output.read_text(encoding="utf-8"))
+    )
+    assert payload["total_sessions"] == 1
+    session = payload["sessions"][0]
+    assert session["message_count"] == 1
+    assert session["mcp_collection"]["calls"] == "collected"
+    if bounds:
+        assert session["mcp_activity"] == []
+    else:
+        assert [row["method"] for row in session["mcp_activity"]] == ["get_issue"]
+        assert session["mcp_activity"][0]["timestamp"] == "2026-09-13T10:01:00"
+    # Filtering the session projection must not mutate the shared global input.
+    assert payload["by_mcp_usage"]["by_server"]["github"]["total_calls"] == 1
+
+
 def test_session_mcp_projection_uses_resolved_rolling_window(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

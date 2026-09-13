@@ -676,9 +676,9 @@ def attach_session_mcp_activity(
         from_date: Inclusive lower timestamp bound for session activity.
         to_date: Exclusive upper timestamp bound for session activity.
 
-    Untimed calls are retained only with no date bounds. A bounded projection
-    cannot prove their inclusion. The shared collected records remain intact
-    for global tool-usage accounting.
+    Calls without a timestamp or UTC offset are retained only with no date
+    bounds. A bounded projection cannot prove their inclusion. The shared
+    collected records remain intact for global tool-usage accounting.
     """
     collected = {session_id: records for session_id, records, _ in per_session}
     for summary in result.sessions:
@@ -702,6 +702,7 @@ def attach_session_mcp_activity(
                 record
                 for record in records
                 if record.timestamp is not None
+                and record.timestamp.utcoffset() is not None
                 and _in_window(record.timestamp, from_date, to_date)
             ]
         summary["mcp_activity"] = _session_mcp_records(records)
