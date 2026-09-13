@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.0] - 2026-09-13
+
+### Added
+
+- **Deep per-session effort and activity analytics** (issue #310, PR #313).
+  Session rows now open a hash-routed drill-down with an adaptive effort-level
+  timeline, exact response-level bars for smaller periods, All/By time period
+  scope controls, recursive agent-tree filtering, and deterministic model,
+  effort, agent, skill, command, MCP, and token-ledger details. Root and
+  sub-agent work is included by default and can be isolated with tri-state
+  track controls while preserving explicit unknown-versus-zero semantics.
+
+### Fixed
+
+- **Windows setup-state probe failure test no longer times out** (issue #311,
+  PR #312). The regression fixture now uses a real virtual environment plus a
+  failing `PYTHONPATH` shadow module, keeping the import failure deterministic
+  without relying on a slow copied interpreter.
+
 ## [0.15.0] - 2026-09-11
 
 ### Added
