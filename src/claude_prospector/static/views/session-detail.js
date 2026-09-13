@@ -22,7 +22,7 @@
     .session-page .session-tree { padding-left: 0; }
     .session-page .session-tree label { display: flex; align-items: baseline; gap: 8px; padding: 5px 0; cursor: pointer; }
     .session-page input { accent-color: #58a6ff; }
-    .session-page input:focus-visible, .session-page button:focus-visible { outline: 2px solid #58a6ff; outline-offset: 3px; }
+    .session-page input:focus-visible, .session-page button:focus-visible, .session-page h3:focus-visible { outline: 2px solid #58a6ff; outline-offset: 3px; }
     .session-page fieldset { border: 0; margin-bottom: 12px; }
     .session-page legend { color: #f0f6fc; font-weight: 600; margin-bottom: 10px; }
     .session-page fieldset label { display: inline-flex; align-items: center; gap: 8px; margin: 0 18px 8px 0; cursor: pointer; }
@@ -127,7 +127,9 @@
   /** Tables are the nonvisual counterpart of each chart, with exact numbers. */
   function chartTable(key, caption, headers, rows) {
     const disclosure = element('details', 'session-table-wrap');
-    disclosure.append(element('summary', undefined, caption));
+    const summary = element('summary', undefined, caption);
+    summary.dataset.chartSummary = `table:${key}:${caption}`;
+    disclosure.append(summary);
     const table = element('table');
     table.dataset.chartTable = key;
     table.append(element('caption', undefined, caption));
@@ -332,7 +334,7 @@
     };
     let disposed = false;
     let listeners = [];
-    let focusedControl = null;
+    let renderedControls = new Map();
     // Keep the live region and its ancestors mounted while replacing controls
     // and projections around it, so updates are observable to screen readers.
     const page = element('section', 'session-detail session-page');
@@ -624,9 +626,19 @@
         panel('details', 'Session details'),
         panel('ledger', 'Event ledger'));
       renderScopedDetail(detail, scoped.responses, state.scope === 'period' ? state.range : domain, listen, controls);
-      for (const [key, control] of controls) listen(control, 'focus', () => { focusedControl = key; });
-      if (focusKey) controls.get(focusKey)?.focus();
-      else heading.focus();
+      const detailHeading = detail.children[0];
+      detailHeading.tabIndex = -1;
+      controls.set('region:detail', detailHeading);
+      for (const summary of page.querySelectorAll('summary')) {
+        if (summary.dataset.chartSummary) controls.set(summary.dataset.chartSummary, summary);
+      }
+      renderedControls = controls;
+      if (focusKey) {
+        // Density changes can remove an exact bar; keep focus in its region.
+        const destination = controls.get(focusKey)
+          || (focusKey.startsWith('response:') ? detailHeading : null);
+        destination?.focus();
+      } else heading.focus();
     }
 
     render();
@@ -635,7 +647,9 @@
       const width = entries[0]?.contentRect.width;
       if (disposed || !Number.isFinite(width) || width === previousWidth) return;
       previousWidth = width;
-      render(focusedControl || 'resize');
+      // Read the live focus owner, never a key remembered from an earlier focus.
+      const focused = [...renderedControls].find(([, control]) => control === document.activeElement);
+      render(focused ? focused[0] : 'resize');
     }) : null;
     resizeObserver?.observe(container);
     return () => {

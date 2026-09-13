@@ -81,6 +81,12 @@ class FakeElement extends FakeEventTarget {
     this.attributes[name] = String(value);
   }
 
+  querySelectorAll(tagName) {
+    return this.children.flatMap(child => [
+      ...(child.tagName === tagName ? [child] : []), ...child.querySelectorAll(tagName),
+    ]);
+  }
+
   getBoundingClientRect() {
     return {left: 0, top: 0, width: this.document.chartWidth, height: 160};
   }
@@ -751,6 +757,59 @@ test('container resize recomputes chart density and preserves control focus unti
   assert.equal(observer.disconnected, true);
   observer.callback([{contentRect: {width: 1200}}]);
   assert.deepEqual(plain(shell.history.state), {dashboardView: 'detail'});
+});
+
+test('resize from exact bars to dense detail moves response focus to a mounted detail heading', () => {
+  const shell = bootShell([require('../fixtures/session-analytics/short-single-agent.json')]);
+  openSession(shell, 'short', 'basic');
+  const oldBar = exactBars(shell)[1];
+  oldBar.focus();
+  shell.document.chartWidth = 35;
+  shell.resizeObservers.at(-1).callback([{contentRect: {width: 35}}]);
+  assert.equal(exactBars(shell).length, 0);
+  const focused = shell.document.activeElement;
+  assert.ok(sessionNodes(shell).includes(focused), 'Resize must not leave focus on a detached response');
+  assert.equal(focused.tagName, 'h3');
+  assert.equal(focused.textContent, 'Responses in scope');
+  assert.equal(focused.tabIndex, -1);
+  shell.document.chartWidth = 36;
+  shell.resizeObservers.at(-1).callback([{contentRect: {width: 36}}]);
+  assert.equal(exactBars(shell).length, 3);
+  assert.equal(shell.document.activeElement.textContent, 'Responses in scope');
+  assert.ok(sessionNodes(shell).includes(shell.document.activeElement));
+});
+
+test('resize restores the focused table summary instead of an earlier agent control', () => {
+  const shell = bootShell([require('../fixtures/session-analytics/short-single-agent.json')]);
+  openSession(shell, 'short', 'basic');
+  agentControl(shell, 'main').focus();
+  const oldSummary = sessionNode(shell, node => node.tagName === 'summary' && node.textContent === 'Exact response values');
+  const disclosure = sessionNode(shell, node => node.tagName === 'details' && node.children.includes(oldSummary));
+  disclosure.open = true;
+  oldSummary.focus();
+  shell.document.chartWidth = 35;
+  shell.resizeObservers.at(-1).callback([{contentRect: {width: 35}}]);
+  const focused = shell.document.activeElement;
+  assert.equal(focused.tagName, 'summary');
+  assert.equal(focused.textContent, 'Exact response values');
+  assert.notEqual(focused, oldSummary);
+  assert.ok(sessionNodes(shell).includes(focused));
+  shell.document.chartWidth = 36;
+  shell.resizeObservers.at(-1).callback([{contentRect: {width: 36}}]);
+  assert.equal(shell.document.activeElement.textContent, 'Exact response values');
+  assert.ok(sessionNodes(shell).includes(shell.document.activeElement));
+});
+
+test('resize does not steal external focus using a stale session control key', () => {
+  const shell = bootShell([require('../fixtures/session-analytics/short-single-agent.json')]);
+  openSession(shell, 'short', 'basic');
+  agentControl(shell, 'main').focus();
+  const outside = shell.buttons.find(button => button.dataset.view === 'detail');
+  outside.focus();
+  shell.document.chartWidth = 35;
+  shell.resizeObservers.at(-1).callback([{contentRect: {width: 35}}]);
+  assert.ok(shell.document.activeElement === outside, 'A resize must not steal focus from outside the session');
+  assert.equal(exactBars(shell).length, 0);
 });
 
 test('cancelled pointer drag leaves the committed half-open range unchanged', () => {
