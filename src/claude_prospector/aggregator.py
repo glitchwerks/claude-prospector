@@ -11,9 +11,12 @@ from claude_prospector.constants import AGENT_PATH_SEPARATOR as _AGENT_PATH_SEPA
 from claude_prospector.mcp_names import normalize_mcp_tool_name
 from claude_prospector.models import (
     AgentAvailability,
+    CommandInvocationRecord,
     MessageRecord,
     SessionRecord,
+    SessionMetadataObservation,
     SkillPassedEvent,
+    SkillInvocationRecord,
     SkillInvokedEvent,
     ToolUseRecord,
 )
@@ -89,11 +92,126 @@ def _agent_activity(msg: MessageRecord) -> dict:
     return {
         "timestamp": msg.timestamp.isoformat(),
         "agent": _path_key(msg),
+        "agent_path": list(msg.agent_path),
         "model": msg.model_short,
+        "model_full": msg.model,
+        "effort": msg.effort,
+        "effort_key": _effort_key(msg.effort),
+        "input_tokens": msg.input_tokens,
+        "output_tokens": msg.output_tokens,
         "total_tokens": msg.total_tokens,
         "cache_creation_tokens": msg.cache_creation_tokens,
         "cache_read_tokens": msg.cache_read_tokens,
     }
+
+
+def _effort_key(effort: str | None) -> str:
+    """Return the stable grouping key for an optional effort label.
+
+    Args:
+        effort: Transcript effort label, if the response recorded one.
+
+    Returns:
+        The case-folded label, or ``"unknown"`` when unavailable.
+    """
+    return effort.casefold() if effort else "unknown"
+
+
+def _in_window(
+    timestamp: datetime,
+    from_date: datetime | None,
+    to_date: datetime | None,
+) -> bool:
+    """Return whether a timestamp is inside the selected aggregate window.
+
+    Args:
+        timestamp: Timestamp to evaluate.
+        from_date: Inclusive lower timestamp bound.
+        to_date: Exclusive upper timestamp bound.
+
+    Returns:
+        ``True`` when the timestamp is within both supplied bounds.
+    """
+    return not (
+        (from_date is not None and timestamp < from_date)
+        or (to_date is not None and timestamp >= to_date)
+    )
+
+
+def _skill_activity(event: SkillInvocationRecord) -> dict:
+    """Project a privacy-safe Skill invocation into session activity.
+
+    Args:
+        event: Recorded Skill invocation.
+
+    Returns:
+        A JSON-serializable Skill activity record.
+    """
+    return {
+        "timestamp": event.timestamp.isoformat(),
+        "agent": AGENT_PATH_SEPARATOR.join(event.agent_path),
+        "agent_path": list(event.agent_path),
+        "skill": event.skill,
+    }
+
+
+def _command_activity(
+    event: CommandInvocationRecord,
+    agent_path: tuple[str, ...],
+) -> dict:
+    """Project a root-attributed command invocation into session activity.
+
+    Args:
+        event: Recorded command invocation.
+        agent_path: Root agent path to attribute to the command.
+
+    Returns:
+        A JSON-serializable command activity record.
+    """
+    return {
+        "timestamp": event.timestamp.isoformat(),
+        "agent": AGENT_PATH_SEPARATOR.join(agent_path),
+        "agent_path": list(agent_path),
+        "name": event.name,
+    }
+
+
+def _session_fact_values(
+    observations: list[SessionMetadataObservation],
+) -> list[dict]:
+    """Group deterministic metadata values without selecting a preferred one.
+
+    Args:
+        observations: Privacy-safe metadata observations for one session.
+
+    Returns:
+        Metadata value rows ordered by first sighting, name, and value.
+    """
+    grouped: dict[tuple[str, str], dict] = {}
+    for observation in observations:
+        key = (observation.name, observation.value)
+        row = grouped.setdefault(
+            key,
+            {
+                "name": observation.name,
+                "value": observation.value,
+                "first_seen": observation.timestamp,
+                "agent_paths": set(),
+            },
+        )
+        row["first_seen"] = min(row["first_seen"], observation.timestamp)
+        row["agent_paths"].add(observation.agent_path)
+    return [
+        {
+            **row,
+            "first_seen": row["first_seen"].isoformat(),
+            "agent_paths": [list(path) for path in sorted(row["agent_paths"])],
+        }
+        for row in sorted(
+            grouped.values(),
+            key=lambda item: (item["first_seen"], item["name"], item["value"]),
+        )
+    ]
 
 
 def _compute_command_usage(
@@ -196,6 +314,44 @@ def aggregate(
             session_ids_seen.add(session.session_id)
             project_sessions[session.project].add(session.session_id)
 
+            indexed_messages = list(enumerate(session_messages))
+            ordered_messages = [
+                message
+                for _, message in sorted(
+                    indexed_messages,
+                    key=lambda item: (item[1].timestamp, item[0]),
+                )
+            ]
+            activity_start = min(message.timestamp for message in session_messages)
+            activity_end = max(message.timestamp for message in session_messages)
+            effort_tokens: dict[str, int] = defaultdict(int)
+            for message in session_messages:
+                effort_tokens[_effort_key(message.effort)] += message.total_tokens
+            session_skill_events = [
+                event
+                for event in session.skill_invocations
+                if _in_window(event.timestamp, from_date, to_date)
+            ]
+            session_skill_events = [
+                event
+                for _, event in sorted(
+                    enumerate(session_skill_events),
+                    key=lambda item: (item[1].timestamp, item[0]),
+                )
+            ]
+            session_command_events = [
+                event
+                for event in session.commands
+                if _in_window(event.timestamp, from_date, to_date)
+            ]
+            session_command_events = [
+                event
+                for _, event in sorted(
+                    enumerate(session_command_events),
+                    key=lambda item: (item[1].timestamp, item[0]),
+                )
+            ]
+
             model_tokens: dict[str, int] = defaultdict(int)
             for m in session_messages:
                 model_tokens[m.model_short] += m.total_tokens
@@ -260,7 +416,9 @@ def aggregate(
                     "agents": agents_in_session,
                     "agent_tokens": session_agent_tokens,
                     "agent_stats": session_agent_stats,
-                    "agent_activity": [_agent_activity(m) for m in session_messages],
+                    "agent_activity": [
+                        _agent_activity(message) for message in ordered_messages
+                    ],
                     "total_tokens": sum(m.total_tokens for m in session_messages),
                     "input_tokens": sum(m.input_tokens for m in session_messages),
                     "output_tokens": sum(m.output_tokens for m in session_messages),
@@ -273,6 +431,30 @@ def aggregate(
                     "model_split": dict(model_tokens),
                     "duration_minutes": session.duration_minutes,
                     "message_count": len(session_messages),
+                    "end_time": activity_end.isoformat(),
+                    "duration_seconds": int(
+                        (activity_end - activity_start).total_seconds()
+                    ),
+                    "agent_paths": [
+                        list(path) for path in sorted(set(session.agent_paths))
+                    ],
+                    "effort_split": dict(effort_tokens),
+                    "skill_activity": [
+                        _skill_activity(event) for event in session_skill_events
+                    ],
+                    "command_activity": [
+                        _command_activity(event, (session.root_agent,))
+                        for event in session_command_events
+                    ],
+                    "session_facts": {
+                        "metadata": _session_fact_values(session.metadata_observations),
+                        "effort_conflicts": session.effort_conflicts,
+                    },
+                    "mcp_collection": {
+                        "calls": "not_collected",
+                        "result_sizes": "not_collected",
+                    },
+                    "mcp_activity": None,
                 }
             )
 
