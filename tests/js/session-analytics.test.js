@@ -800,6 +800,30 @@ test('resize restores the focused table summary instead of an earlier agent cont
   assert.ok(sessionNodes(shell).includes(shell.document.activeElement));
 });
 
+test('resize from dense detail to exact bars moves disappearing effort-summary focus to its detail heading', () => {
+  const shell = bootShell([require('../fixtures/session-analytics/short-single-agent.json')]);
+  shell.document.chartWidth = 35;
+  openSession(shell, 'short', 'basic');
+  assert.equal(exactBars(shell).length, 0);
+  const detail = sessionNode(shell, node => node.dataset.sessionPanel === 'detail');
+  const oldSummary = detail.querySelectorAll('summary').find(node => node.textContent === 'Token totals by effort');
+  assert.ok(oldSummary, 'Dense detail must expose its effort totals summary');
+  oldSummary.focus();
+  shell.document.chartWidth = 36;
+  shell.resizeObservers.at(-1).callback([{contentRect: {width: 36}}]);
+  assert.equal(exactBars(shell).length, 3);
+  assert.ok(!sessionNodes(shell).includes(oldSummary), 'The dense-only summary should disappear');
+  const focused = shell.document.activeElement;
+  assert.ok(sessionNodes(shell).includes(focused), 'Resize must not leave focus on a detached detail summary');
+  assert.equal(focused.tagName, 'h3');
+  assert.equal(focused.textContent, 'Responses in scope');
+  assert.equal(focused.tabIndex, -1);
+  shell.document.chartWidth = 35;
+  shell.resizeObservers.at(-1).callback([{contentRect: {width: 35}}]);
+  assert.equal(shell.document.activeElement.textContent, 'Responses in scope');
+  assert.ok(sessionNodes(shell).includes(shell.document.activeElement));
+});
+
 test('resize does not steal external focus using a stale session control key', () => {
   const shell = bootShell([require('../fixtures/session-analytics/short-single-agent.json')]);
   openSession(shell, 'short', 'basic');

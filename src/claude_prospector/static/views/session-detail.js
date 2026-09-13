@@ -634,9 +634,10 @@
       }
       renderedControls = controls;
       if (focusKey) {
-        // Density changes can remove an exact bar; keep focus in its region.
+        // Either density mode can remove detail controls; keep focus in that region.
+        const belongsToDetail = focusKey.startsWith('response:') || focusKey.startsWith('table:detail:');
         const destination = controls.get(focusKey)
-          || (focusKey.startsWith('response:') ? detailHeading : null);
+          || (belongsToDetail ? detailHeading : null);
         destination?.focus();
       } else heading.focus();
     }
