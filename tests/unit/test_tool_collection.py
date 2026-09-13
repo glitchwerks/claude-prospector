@@ -391,6 +391,58 @@ class TestCollectToolUses:
         assert record.agent_path == ("general-purpose", "code-writer")
         assert record.agent_type == "code-writer"
 
+    def test_collect_unit_records_assistant_timestamp(self, tmp_path: Path) -> None:
+        """A tool-use record retains its assistant-entry timestamp."""
+        jsonl = tmp_path / "s.jsonl"
+        _write_jsonl(
+            jsonl,
+            [
+                _tool_use_line(
+                    "s",
+                    "msg_1",
+                    "toolu_a",
+                    "mcp__github__get_issue",
+                    "u1",
+                    "2026-09-13T11:00:00Z",
+                )
+            ],
+        )
+
+        records, _ = collect_unit(_unit(jsonl), track_mcp_call_sizes=False)
+
+        assert records[0].timestamp == datetime(2026, 9, 13, 11, tzinfo=timezone.utc)
+        assert records[0].result_chars is None
+
+    def test_collect_unit_keeps_calls_with_missing_or_invalid_timestamps(
+        self, tmp_path: Path
+    ) -> None:
+        """Timestamp parse failures do not discard otherwise valid tool calls."""
+        jsonl = tmp_path / "s.jsonl"
+        missing_timestamp = _tool_use_line(
+            "s",
+            "msg_1",
+            "toolu_missing",
+            "Read",
+            "u1",
+            "2026-09-13T11:00:00Z",
+        )
+        missing_timestamp.pop("timestamp")
+        invalid_timestamp = _tool_use_line(
+            "s",
+            "msg_2",
+            "toolu_invalid",
+            "Grep",
+            "u2",
+            "2026-09-13T11:00:00Z",
+        )
+        invalid_timestamp["timestamp"] = "not-a-timestamp"
+        _write_jsonl(jsonl, [missing_timestamp, invalid_timestamp])
+
+        records, _ = collect_unit(_unit(jsonl))
+
+        assert [record.tool_name for record in records] == ["Read", "Grep"]
+        assert [record.timestamp for record in records] == [None, None]
+
 
 class TestCollectToolUsesResultSizes:
     """result_chars tracking (issue #262, D-1=M4, D-4=isolated+secondary-flag).

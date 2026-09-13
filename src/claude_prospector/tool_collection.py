@@ -24,6 +24,7 @@ import fnmatch
 import json
 from collections.abc import Iterator
 from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -154,6 +155,25 @@ def _iter_tool_result_sizes(
         yield tool_use_id, _tool_result_content_length(block.get("content"))
 
 
+def _optional_timestamp(entry: dict[str, Any]) -> datetime | None:
+    """Parse an assistant-entry timestamp without rejecting its tool calls.
+
+    Args:
+        entry: Raw JSONL entry containing an optional timestamp string.
+
+    Returns:
+        A parsed datetime, or ``None`` when the timestamp is missing,
+        non-string, or malformed.
+    """
+    raw = entry.get("timestamp")
+    if not isinstance(raw, str):
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
 def collect_unit(
     unit: AgentTranscript,
     *,
@@ -225,6 +245,7 @@ def collect_unit(
             content = message.get("content", [])
             if not isinstance(content, list):
                 continue
+            timestamp = _optional_timestamp(entry)
             for block in content:
                 if not isinstance(block, dict) or block.get("type") != "tool_use":
                     continue
@@ -239,6 +260,7 @@ def collect_unit(
                         tool_use_id=tool_use_id,
                         agent_type=unit.agent_type,
                         agent_path=unit.agent_path,
+                        timestamp=timestamp,
                     )
                 )
         elif entry_type == "attachment":

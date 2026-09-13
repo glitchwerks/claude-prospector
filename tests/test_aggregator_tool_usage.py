@@ -26,9 +26,14 @@ Covers:
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from itertools import count
 
-from claude_prospector.aggregator import compute_tool_usage
+from claude_prospector.aggregator import (
+    AggregateResult,
+    attach_session_mcp_activity,
+    compute_tool_usage,
+)
 from claude_prospector.models import AgentAvailability, ToolUseRecord
 
 _tool_use_id_counter = count(1)
@@ -137,6 +142,37 @@ def _use_excluded(
     )
 
 
+def _session_summary(session_id: str) -> dict:
+    """Build the MCP defaults emitted by the session aggregation path."""
+    return {
+        "session_id": session_id,
+        "mcp_collection": {
+            "calls": "not_collected",
+            "result_sizes": "not_collected",
+        },
+        "mcp_activity": None,
+    }
+
+
+def _mcp_record(
+    tool_name: str,
+    *,
+    timestamp: datetime | None = datetime(2026, 9, 13, 11, tzinfo=timezone.utc),
+    result_chars: int | None = None,
+    result_excluded: bool = False,
+) -> ToolUseRecord:
+    """Build one timestamped MCP record for per-session activity tests."""
+    return ToolUseRecord(
+        tool_name=tool_name,
+        tool_use_id="tool-call",
+        agent_type="main",
+        agent_path=("main",),
+        timestamp=timestamp,
+        result_chars=result_chars,
+        result_excluded=result_excluded,
+    )
+
+
 def _avail(
     servers: dict[str, frozenset[str]],
     path: tuple[str, ...] = ("general-purpose",),
@@ -170,6 +206,108 @@ class TestByTool:
         )
 
         assert result["by_tool"] == {"Read": 2, "mcp__azure__storage": 1}
+
+
+class TestSessionMcpActivity:
+    """Session-scoped, privacy-safe MCP activity attachment."""
+
+    def test_distinguishes_collected_empty_and_unavailable_sessions(self) -> None:
+        """Selected transcript states map to collected, empty, and unavailable."""
+        result = AggregateResult(
+            sessions=[
+                _session_summary("ok"),
+                _session_summary("empty"),
+                _session_summary("missing"),
+            ]
+        )
+
+        attach_session_mcp_activity(
+            result,
+            [
+                ("ok", [_mcp_record("mcp__github__get_issue")], []),
+                ("empty", [], []),
+            ],
+            track_mcp_call_sizes=False,
+        )
+
+        assert result.sessions[0]["mcp_collection"] == {
+            "calls": "collected",
+            "result_sizes": "not_collected",
+        }
+        assert result.sessions[0]["mcp_activity"] == [
+            {
+                "timestamp": "2026-09-13T11:00:00+00:00",
+                "agent": "main",
+                "agent_path": ["main"],
+                "server": "github",
+                "method": "get_issue",
+                "call_count": 1,
+                "result_chars": None,
+                "result_excluded": False,
+            }
+        ]
+        assert result.sessions[1]["mcp_activity"] == []
+        assert result.sessions[2]["mcp_collection"] == {
+            "calls": "unavailable",
+            "result_sizes": "not_collected",
+            "warning": "transcript_unavailable",
+        }
+        assert result.sessions[2]["mcp_activity"] is None
+
+    def test_keeps_result_size_state_independent_from_call_state(self) -> None:
+        """Size fields are available only when their separate opt-in is on."""
+        result = AggregateResult(sessions=[_session_summary("ok")])
+
+        attach_session_mcp_activity(
+            result,
+            [
+                (
+                    "ok",
+                    [
+                        _mcp_record(
+                            "mcp__github__get_issue",
+                            result_chars=42,
+                        )
+                    ],
+                    [],
+                )
+            ],
+            track_mcp_call_sizes=True,
+        )
+
+        assert result.sessions[0]["mcp_collection"]["calls"] == "collected"
+        assert result.sessions[0]["mcp_collection"]["result_sizes"] == "collected"
+        assert result.sessions[0]["mcp_activity"][0]["result_chars"] == 42
+
+    def test_excludes_builtins_and_malformed_names_from_activity(self) -> None:
+        """Only normalizable MCP names become activity rows or server data."""
+        records = [
+            _mcp_record("Read"),
+            _mcp_record("mcp__broken"),
+            _mcp_record("mcp__github__get_issue"),
+        ]
+        result = AggregateResult(sessions=[_session_summary("ok")])
+
+        attach_session_mcp_activity(
+            result,
+            [("ok", records, [])],
+            track_mcp_call_sizes=False,
+        )
+        global_usage = compute_tool_usage([("ok", records, [])])
+
+        assert result.sessions[0]["mcp_activity"] == [
+            {
+                "timestamp": "2026-09-13T11:00:00+00:00",
+                "agent": "main",
+                "agent_path": ["main"],
+                "server": "github",
+                "method": "get_issue",
+                "call_count": 1,
+                "result_chars": None,
+                "result_excluded": False,
+            }
+        ]
+        assert global_usage["warnings"]["malformed_mcp_names"] == 1
 
 
 class TestByServer:

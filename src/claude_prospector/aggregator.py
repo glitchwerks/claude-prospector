@@ -614,6 +614,83 @@ def _token_stats(total_chars: int, measured_calls: int) -> dict[str, float | Non
     return {"total": total_tokens, "mean_result_tokens_per_call": mean}
 
 
+def _session_mcp_records(records: list[ToolUseRecord]) -> list[dict]:
+    """Return privacy-safe, chronologically ordered MCP activity rows.
+
+    Args:
+        records: Collected tool-use records for one session.
+
+    Returns:
+        One row for each normalizable MCP call. Rows expose only normalized
+        server and method names, agent attribution, timestamp, call count,
+        and optional result-size proxy fields.
+    """
+    activity: list[dict] = []
+    for record in records:
+        normalized = normalize_mcp_tool_name(record.tool_name)
+        if normalized is None:
+            continue
+        server, _, method = normalized.partition(".")
+        activity.append(
+            {
+                "timestamp": record.timestamp.isoformat() if record.timestamp else None,
+                "agent": AGENT_PATH_SEPARATOR.join(record.agent_path),
+                "agent_path": list(record.agent_path),
+                "server": server,
+                "method": method,
+                "call_count": 1,
+                "result_chars": record.result_chars,
+                "result_excluded": record.result_excluded,
+            }
+        )
+    return sorted(
+        activity,
+        key=lambda row: (
+            row["timestamp"] is None,
+            row["timestamp"] or "",
+            row["agent"],
+            row["server"],
+            row["method"],
+        ),
+    )
+
+
+def attach_session_mcp_activity(
+    result: AggregateResult,
+    per_session: list[tuple[str, list[ToolUseRecord], list[AgentAvailability]]],
+    *,
+    track_mcp_call_sizes: bool,
+) -> None:
+    """Attach opt-in MCP collection state and activity to session summaries.
+
+    Args:
+        result: Aggregate result whose session summaries receive MCP fields.
+        per_session: Successfully collected session records from the single
+            transcript collection pass. Selected session IDs absent from this
+            list have an unavailable transcript.
+        track_mcp_call_sizes: Whether result-size collection was separately
+            enabled for the shared transcript pass.
+    """
+    collected = {session_id: records for session_id, records, _ in per_session}
+    for summary in result.sessions:
+        records = collected.get(summary["session_id"])
+        if records is None:
+            summary["mcp_collection"] = {
+                "calls": "unavailable",
+                "result_sizes": "unavailable"
+                if track_mcp_call_sizes
+                else "not_collected",
+                "warning": "transcript_unavailable",
+            }
+            summary["mcp_activity"] = None
+            continue
+        summary["mcp_collection"] = {
+            "calls": "collected",
+            "result_sizes": "collected" if track_mcp_call_sizes else "not_collected",
+        }
+        summary["mcp_activity"] = _session_mcp_records(records)
+
+
 def compute_tool_usage(
     per_session: list[tuple[str, list[ToolUseRecord], list[AgentAvailability]]],
     compact: bool = False,

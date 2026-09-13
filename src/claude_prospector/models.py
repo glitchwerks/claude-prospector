@@ -218,6 +218,9 @@ class ToolUseRecord:
             transcript omitted it.
         agent_type: Sanitized leaf agent name that issued the call.
         agent_path: Full root-to-leaf ancestry tuple for that agent.
+        timestamp: Assistant-entry timestamp for this call, or ``None`` when
+            the transcript omits it or it cannot be parsed. A missing
+            timestamp never suppresses collection of an otherwise valid call.
         result_chars: Character length of this call's ``tool_result``
             payload (issue #262, D-1=M4), or ``None`` when unknown --
             either because size tracking was not opted into (the
@@ -238,6 +241,7 @@ class ToolUseRecord:
     tool_use_id: str
     agent_type: str
     agent_path: tuple[str, ...]
+    timestamp: datetime | None = None
     result_chars: int | None = None
     result_excluded: bool = False
 

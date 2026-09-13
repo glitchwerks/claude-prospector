@@ -254,6 +254,43 @@ def test_t6_json_payload_gates_by_mcp_usage_on_the_flag() -> None:
     )
 
 
+def test_track_mcp_calls_attaches_session_activity_to_json_payload() -> None:
+    """The existing call opt-in exposes normalized activity per session."""
+    result = _run_cli(
+        "dashboard",
+        "--data-dir",
+        str(_FIXTURE_DIR),
+        "--format",
+        "json",
+        "--track-mcp-calls",
+    )
+
+    assert result.returncode == 0, result.stderr
+    sessions = json.loads(result.stdout)["sessions"]
+    activity = sessions[0]["mcp_activity"]
+
+    assert sessions[0]["mcp_collection"] == {
+        "calls": "collected",
+        "result_sizes": "not_collected",
+    }
+    assert activity is not None
+    assert all(
+        set(row)
+        == {
+            "timestamp",
+            "agent",
+            "agent_path",
+            "server",
+            "method",
+            "call_count",
+            "result_chars",
+            "result_excluded",
+        }
+        for row in activity
+    )
+    assert all(row["call_count"] == 1 for row in activity)
+
+
 # ---------------------------------------------------------------------------
 # T8 -- renderer always carries by_mcp_usage in window.DATA
 # ---------------------------------------------------------------------------
