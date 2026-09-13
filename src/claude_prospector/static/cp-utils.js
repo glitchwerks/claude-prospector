@@ -88,6 +88,162 @@
     return date.toLocaleDateString('en-CA');
   }
 
+  // ── Session analytics (pure helpers shared by dashboard views) ───────────
+  const BUCKET_MS = [
+    1000, 5000, 15000, 30000, 60000, 300000, 900000,
+    1800000, 3600000, 10800000, 21600000, 43200000, 86400000,
+  ];
+  const TOKEN_KEYS = [
+    'input_tokens', 'output_tokens', 'cache_read_tokens',
+    'cache_creation_tokens', 'total_tokens',
+  ];
+
+  function inRange(item, range) {
+    const timestamp = Date.parse(item.timestamp);
+    return Number.isFinite(timestamp) && timestamp >= range.start && timestamp < range.end;
+  }
+
+  function usesExactBars(responses, width) {
+    return responses.length <= Math.max(1, Math.floor(width / 12));
+  }
+
+  function setSubtree(active, path, enabled, allPaths) {
+    const next = new Set(active);
+    const prefix = path + AGENT_PATH_SEP;
+    for (const candidate of allPaths) {
+      if (candidate === path || candidate.startsWith(prefix)) {
+        if (enabled) next.add(candidate);
+        else next.delete(candidate);
+      }
+    }
+    return next;
+  }
+
+  function selectionState(active, path, allPaths) {
+    const prefix = path + AGENT_PATH_SEP;
+    const members = allPaths.filter(candidate => candidate === path || candidate.startsWith(prefix));
+    const selected = members.filter(candidate => active.has(candidate)).length;
+    if (selected === 0) return 'unchecked';
+    if (selected === members.length) return 'checked';
+    return 'indeterminate';
+  }
+
+  function sumTokens(responses) {
+    return responses.reduce((totals, response) => {
+      for (const key of TOKEN_KEYS) totals[key] += Number(response[key] || 0);
+      return totals;
+    }, {
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_read_tokens: 0,
+      cache_creation_tokens: 0,
+      total_tokens: 0,
+    });
+  }
+
+  function bucketResponses(responses, { start, end, width }) {
+    const span = Math.max(1, end - start);
+    const maxBuckets = Math.max(1, Math.floor(width / 6));
+    const duration = BUCKET_MS.find(value => Math.ceil(span / value) <= maxBuckets)
+      || Math.ceil(span / maxBuckets);
+    const bucketCount = Math.max(1, Math.ceil(span / duration));
+    const buckets = Array.from({ length: bucketCount }, (_, index) => ({
+      start: start + index * duration,
+      end: Math.min(end, start + (index + 1) * duration),
+      by_effort: {},
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_read_tokens: 0,
+      cache_creation_tokens: 0,
+      total_tokens: 0,
+    }));
+    for (const response of responses) {
+      const timestamp = Date.parse(response.timestamp);
+      if (!Number.isFinite(timestamp) || timestamp < start || timestamp >= end) continue;
+      const index = Math.min(bucketCount - 1, Math.floor((timestamp - start) / duration));
+      const bucket = buckets[index];
+      for (const key of TOKEN_KEYS) bucket[key] += Number(response[key] || 0);
+      const effort = response.effort_key || 'unknown';
+      bucket.by_effort[effort] = (bucket.by_effort[effort] || 0)
+        + Number(response.total_tokens || 0);
+    }
+    return buckets;
+  }
+
+  function scopeSession(session, activePaths, mode, range) {
+    const active = row => activePaths.has(String(row.agent || ''));
+    const scoped = rows => (rows || []).filter(row => active(row)
+      && (mode !== 'period' || inRange(row, range)));
+    return {
+      responses: scoped(session.agent_activity),
+      skills: scoped(session.skill_activity),
+      commands: scoped(session.command_activity),
+      mcp: session.mcp_activity === null ? null : scoped(session.mcp_activity),
+    };
+  }
+
+  function buildAgentTree(paths) {
+    const nodes = new Map();
+    for (const path of [...paths].sort((left, right) =>
+      left.split(AGENT_PATH_SEP).length - right.split(AGENT_PATH_SEP).length
+        || left.localeCompare(right))) {
+      const parts = path.split(AGENT_PATH_SEP);
+      const node = nodes.get(path) || { path, label: parts.at(-1), children: [] };
+      nodes.set(path, node);
+      if (parts.length > 1) {
+        const parentPath = parts.slice(0, -1).join(AGENT_PATH_SEP);
+        const parent = nodes.get(parentPath) || {
+          path: parentPath,
+          label: parts.at(-2),
+          children: [],
+        };
+        nodes.set(parentPath, parent);
+        if (!parent.children.some(child => child.path === path)) parent.children.push(node);
+      }
+    }
+    for (const node of nodes.values()) {
+      node.children.sort((left, right) => left.path.localeCompare(right.path));
+    }
+    return [...nodes.values()]
+      .filter(node => !node.path.includes(AGENT_PATH_SEP))
+      .sort((left, right) => left.path.localeCompare(right.path));
+  }
+
+  function mergeLedger(scoped) {
+    const kindOrder = { response: 0, skill: 1, command: 2, mcp: 3 };
+    const tagged = [];
+    for (const [field, kind] of [
+      ['responses', 'response'], ['skills', 'skill'],
+      ['commands', 'command'], ['mcp', 'mcp'],
+    ]) {
+      for (const [ordinal, event] of (scoped[field] || []).entries()) {
+        tagged.push({ ...event, kind, source_ordinal: ordinal });
+      }
+    }
+    return tagged.sort((left, right) => {
+      const leftTime = Date.parse(left.timestamp);
+      const rightTime = Date.parse(right.timestamp);
+      const leftMissing = !Number.isFinite(leftTime);
+      const rightMissing = !Number.isFinite(rightTime);
+      return Number(leftMissing) - Number(rightMissing)
+        || (leftMissing ? 0 : leftTime - rightTime)
+        || kindOrder[left.kind] - kindOrder[right.kind]
+        || left.source_ordinal - right.source_ordinal;
+    });
+  }
+
+  const sessionAnalytics = {
+    inRange,
+    scopeSession,
+    sumTokens,
+    bucketResponses,
+    usesExactBars,
+    buildAgentTree,
+    setSubtree,
+    selectionState,
+    mergeLedger,
+  };
+
   // ── Model helpers ────────────────────────────────────────────────────────
   function modelColor(model) {
     if (!model) return PALETTE.unknown;
@@ -393,6 +549,7 @@
     fmtTokens, fmtTokensFull, fmtPct, fmtDuration, fmtRelTime, fmtDay,
     esc, agentLeaf, matchesNameFilter,
     localDateKey,
+    sessionAnalytics,
     modelColor,
     windowCutoff, filterSessions, reAggregate, reAggregateAgents,
     computeBuckets, forecastHit,

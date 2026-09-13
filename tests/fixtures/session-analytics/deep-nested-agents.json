@@ -1,0 +1,23 @@
+{
+  "session_id": "deep",
+  "project": "project",
+  "project_path": "/project",
+  "start_time": "2026-09-13T10:00:00Z",
+  "end_time": "2026-09-13T10:00:04Z",
+  "duration_seconds": 4,
+  "root_agent": "main",
+  "agent_paths": [["main"],["main","left"],["main","left","worker"],["main","right"],["main","right","worker"]],
+  "total_tokens": 5,
+  "agent_activity": [
+    {"timestamp":"2026-09-13T10:00:00Z","agent":"main","agent_path":["main"],"model":"sonnet","model_full":"claude-sonnet-5","effort":"high","effort_key":"high","input_tokens":0,"output_tokens":1,"cache_read_tokens":0,"cache_creation_tokens":0,"total_tokens":1},
+    {"timestamp":"2026-09-13T10:00:01Z","agent":"main→left","agent_path":["main","left"],"model":"sonnet","model_full":"claude-sonnet-5","effort":"high","effort_key":"high","input_tokens":0,"output_tokens":1,"cache_read_tokens":0,"cache_creation_tokens":0,"total_tokens":1},
+    {"timestamp":"2026-09-13T10:00:02Z","agent":"main→left→worker","agent_path":["main","left","worker"],"model":"haiku","model_full":"claude-haiku-5","effort":"low","effort_key":"low","input_tokens":0,"output_tokens":1,"cache_read_tokens":0,"cache_creation_tokens":0,"total_tokens":1},
+    {"timestamp":"2026-09-13T10:00:03Z","agent":"main→right","agent_path":["main","right"],"model":"sonnet","model_full":"claude-sonnet-5","effort":"high","effort_key":"high","input_tokens":0,"output_tokens":1,"cache_read_tokens":0,"cache_creation_tokens":0,"total_tokens":1},
+    {"timestamp":"2026-09-13T10:00:04Z","agent":"main→right→worker","agent_path":["main","right","worker"],"model":"haiku","model_full":"claude-haiku-5","effort":"low","effort_key":"low","input_tokens":0,"output_tokens":1,"cache_read_tokens":0,"cache_creation_tokens":0,"total_tokens":1}
+  ],
+  "skill_activity": [],
+  "command_activity": [],
+  "session_facts": {"metadata": [], "effort_conflicts": 0},
+  "mcp_collection": {"calls":"collected","result_sizes":"not_collected"},
+  "mcp_activity": []
+}
