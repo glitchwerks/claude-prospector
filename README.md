@@ -86,6 +86,13 @@ The generated HTML dashboard includes:
   skills, adoption-gap highlighting, and per-target-agent disclosures
 - **Project breakdown** — tokens per project
 - **Session drill-down** — click a day to see individual sessions with agents, tokens, and model split
+- **Session analytics** — open a session row for a full recorded-effort timeline,
+  exact per-response token details, and independently filterable nested-agent tracks.
+  `All` keeps details scoped to the complete session represented in the dashboard;
+  `By time period` scopes them to the selected interval.
+  Effort, normalized/full-model, and token-component totals follow the same
+  agent and period selection. Incomplete token components say `Not recorded`.
+  The full timeline includes retained response, Skill, Command, and MCP times.
 
 ### `claude-audit` skill
 
@@ -308,6 +315,17 @@ the base call-count data as a byproduct. Computing the size estimate on top
 of that pass adds no further file reads or JSON parsing, since the
 `tool_result` blocks it reads are already inside the `user` transcript
 entries that pass parses and discards.
+
+MCP session detail follows the same opt-ins as the global MCP report. Without
+`--track-mcp-calls` (or the separate result-size flag), the session page says
+**Not collected**; it does not report zero calls. The page never stores prompts,
+tool arguments, or tool-result content. Result sizes remain estimates and appear
+only when `--track-mcp-call-sizes` is enabled.
+
+Session MCP activity follows the dashboard's `--from`, `--to`, or resolved
+`--window` bounds: start included, end excluded. Untimed calls appear only
+when no date filter is applied. The global MCP report continues to count all
+calls in each selected session.
 
 ### `session-summary` — deterministic session recap
 
@@ -809,8 +827,12 @@ If `uv sync` creates the venv with the wrong interpreter (e.g. you have a newer 
 ### Testing
 
 ```bash
-pytest   # 358 tests, typically finishes in under 5 seconds
+pytest
+node --test tests/js/session-analytics.test.js
 ```
+
+CI uses Node 22 for the client tests. Node is only needed for development;
+generated dashboard reports remain self-contained.
 
 ### Linting and formatting
 
@@ -826,8 +848,9 @@ GitHub Actions runs on every PR and push to `main`:
 
 - **lint** (Ubuntu): `ruff check .` + `ruff format --check .`
 - **test** (Ubuntu + Windows, Python 3.10): `pytest`
+- **client tests** (Ubuntu, Node 22): `node --test tests/js/session-analytics.test.js`
 
-Both jobs must be green before a PR can merge.
+All checks must be green before a PR can merge.
 
 ### Testing the plugin itself via `--plugin-dir`
 

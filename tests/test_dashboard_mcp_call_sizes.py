@@ -375,6 +375,26 @@ class TestBothFlagsTogether:
         assert "cost_attribution" in html
         assert "total_calls" in html
 
+    def test_size_opt_in_marks_session_result_sizes_collected(self) -> None:
+        """The size flag enables session result-size facts without call flag."""
+        result = _run_cli(
+            "dashboard",
+            "--data-dir",
+            str(_COST_FIXTURE_DIR),
+            "--format",
+            "json",
+            "--track-mcp-call-sizes",
+        )
+
+        assert result.returncode == 0, result.stderr
+        sessions = json.loads(result.stdout)["sessions"]
+
+        assert sessions[0]["mcp_collection"] == {
+            "calls": "collected",
+            "result_sizes": "collected",
+        }
+        assert any(row["result_chars"] == 40 for row in sessions[0]["mcp_activity"])
+
 
 class TestByMethodShapeUnchangedWithCostFields:
     """Regression guard: by_method's existing dict[str, int] shape must be

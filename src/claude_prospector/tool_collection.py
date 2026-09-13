@@ -24,6 +24,7 @@ import fnmatch
 import json
 from collections.abc import Iterator
 from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -45,14 +46,14 @@ def _iter_entries(jsonl_path: Path) -> Iterator[dict[str, Any]]:
         jsonl_path: Path to a transcript JSONL file.
 
     Yields:
-        One ``dict`` per parseable line, in file order. Unreadable files
-        yield nothing rather than raising.
+        One ``dict`` per parseable line, in file order.
+
+    Raises:
+        OSError: If the transcript cannot be opened or read. The caller that
+            owns per-session collection must retain this distinction from a
+            successfully read transcript with no tool calls.
     """
-    try:
-        handle = open(jsonl_path, encoding="utf-8")
-    except OSError:
-        return
-    with handle:
+    with open(jsonl_path, encoding="utf-8") as handle:
         for line in handle:
             line = line.strip()
             if not line:
@@ -154,6 +155,25 @@ def _iter_tool_result_sizes(
         yield tool_use_id, _tool_result_content_length(block.get("content"))
 
 
+def _optional_timestamp(entry: dict[str, Any]) -> datetime | None:
+    """Parse an assistant-entry timestamp without rejecting its tool calls.
+
+    Args:
+        entry: Raw JSONL entry containing an optional timestamp string.
+
+    Returns:
+        A parsed datetime, or ``None`` when the timestamp is missing,
+        non-string, or malformed.
+    """
+    raw = entry.get("timestamp")
+    if not isinstance(raw, str):
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
 def collect_unit(
     unit: AgentTranscript,
     *,
@@ -203,11 +223,15 @@ def collect_unit(
             no ``tool_result`` payload data.
 
     Returns:
-        A 2-tuple ``(tool_uses, availability)``. ``tool_uses`` is empty
-        when the file is missing or unreadable. ``availability`` is always
-        returned — even for a file with no ``attachment`` entry at all, in
+        A 2-tuple ``(tool_uses, availability)``. ``availability`` is
+        returned even for a file with no ``attachment`` entry at all, in
         which case its ``signal_present`` is False and callers must report
         availability as unknown rather than zero.
+
+    Raises:
+        OSError: If the transcript cannot be read. ``collect_per_session``
+            converts this to a skipped session so it remains distinguishable
+            from a successful empty collection.
     """
     records: list[ToolUseRecord] = []
     seen_ids: set[str] = set()
@@ -225,6 +249,7 @@ def collect_unit(
             content = message.get("content", [])
             if not isinstance(content, list):
                 continue
+            timestamp = _optional_timestamp(entry)
             for block in content:
                 if not isinstance(block, dict) or block.get("type") != "tool_use":
                     continue
@@ -239,6 +264,7 @@ def collect_unit(
                         tool_use_id=tool_use_id,
                         agent_type=unit.agent_type,
                         agent_path=unit.agent_path,
+                        timestamp=timestamp,
                     )
                 )
         elif entry_type == "attachment":
@@ -318,7 +344,10 @@ def collect_tool_uses(
         Records in file order. Empty when the file is missing or
         unreadable.
     """
-    tool_uses, _ = collect_unit(unit, track_mcp_call_sizes=track_mcp_call_sizes)
+    try:
+        tool_uses, _ = collect_unit(unit, track_mcp_call_sizes=track_mcp_call_sizes)
+    except OSError:
+        return []
     return tool_uses
 
 
@@ -335,7 +364,14 @@ def collect_availability(unit: AgentTranscript) -> AgentAvailability:
         delta entry appears at all, ``signal_present`` is False and
         callers must report availability as unknown rather than zero.
     """
-    _, availability = collect_unit(unit)
+    try:
+        _, availability = collect_unit(unit)
+    except OSError:
+        return AgentAvailability(
+            agent_path=unit.agent_path,
+            observed_sources=frozenset(),
+            server_sources={},
+        )
     return availability
 
 
@@ -358,6 +394,11 @@ def collect_session(
         A 2-tuple of ``(tool_uses, availabilities)``. ``availabilities``
         has one entry per agent transcript, so a caller can union them
         for a session-level view or filter to one agent.
+
+    Raises:
+        OSError: If any transcript in the session tree cannot be read.
+            ``collect_per_session`` converts the failure into a skipped
+            selected session.
     """
     transcripts, _ = walk_session(session_jsonl, root_agent)
     tool_uses: list[ToolUseRecord] = []

@@ -16,7 +16,13 @@ Covers:
 from __future__ import annotations
 
 import importlib.resources
+import json
+import re
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 
 from claude_prospector.aggregator import AggregateResult
 from claude_prospector.renderer import render
@@ -44,6 +50,102 @@ def _render_html(tmp_path: Path, result: AggregateResult | None = None) -> str:
     out = tmp_path / "dashboard.html"
     render(result, output_path=out, open_browser=False)
     return out.read_text(encoding="utf-8")
+
+
+def _exercise_shell_views(html: str, views: list[str]) -> dict:
+    """Execute the rendered shell's actual tab listeners in Node.
+
+    Chart-heavy renderers are replaced at their public boundary with
+    output writers so a wrong dispatch produces the wrong visible result.
+
+    Args:
+        html: The complete generated dashboard.
+        views: Tab names followed by optional unknown cross-view requests.
+
+    Returns:
+        Visible output, selected tab and reported errors after each action.
+    """
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is unavailable; CI runs client tests on Node 22")
+    scripts = re.findall(r"<script>(.*?)</script>", html, re.S)
+    tabs = re.findall(r'<button data-view="([^"]+)"', html)
+    script = r"""
+const vm = require('node:vm');
+const input = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
+const handlers = {};
+const errors = [];
+const container = {style: {}, innerHTML: '', className: ''};
+const sub = {innerHTML: ''};
+const buttons = input.tabs.map(view => ({
+  dataset: {view}, attributes: {}, listeners: {},
+  classList: {toggle() {}},
+  setAttribute(name, value) { this.attributes[name] = value; },
+  addEventListener(type, listener) { this.listeners[type] = listener; },
+}));
+const window = {
+  location: {hash: '', pathname: '/dashboard.html', search: ''},
+  addEventListener(type, handler) { handlers[type] = handler; },
+  scrollTo() {},
+};
+const context = vm.createContext({
+  window,
+  URLSearchParams,
+  document: {
+    getElementById(id) { return id === 'view-container' ? container : sub; },
+    querySelectorAll() { return buttons; },
+  },
+  history: {state: null, replaceState(state) { this.state = state; }},
+  console: {error(...args) { errors.push(args); }},
+});
+vm.runInContext(input.utilities, context);
+context.CP = window.CP;
+for (const [name, output] of Object.entries({
+  renderEconomicsBasic: 'overview', renderLayoutBDiag: 'breakdown',
+  renderEconomics: 'economics', renderMcpUsage: 'mcp usage',
+  renderAgents: 'agent lookup', renderSkills: 'skill adoption',
+})) {
+  context[name] = root => {
+    if (root !== container) throw new Error('Wrong view container');
+    root.innerHTML = output;
+  };
+}
+vm.runInContext(input.shell, context);
+const results = input.views.map(view => {
+  const button = buttons.find(item => item.dataset.view === view);
+  if (button) button.listeners.click();
+  else handlers['economy:switch-view']({detail: {view}});
+  return {
+    view, output: container.innerHTML,
+    selected: buttons.filter(item => item.attributes['aria-selected'] === 'true')
+      .map(item => item.dataset.view),
+  };
+});
+process.stdout.write(JSON.stringify({results, errors}));
+"""
+    completed = subprocess.run(
+        [node, "-e", script],
+        input=json.dumps(
+            {
+                "tabs": tabs,
+                "views": views,
+                "shell": scripts[-1],
+                "utilities": (
+                    importlib.resources.files("claude_prospector")
+                    / "static"
+                    / "cp-utils.js"
+                ).read_text(encoding="utf-8"),
+            }
+        ),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        cwd=_REPO_ROOT,
+        timeout=30,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    return json.loads(completed.stdout)
 
 
 # ---------------------------------------------------------------------------

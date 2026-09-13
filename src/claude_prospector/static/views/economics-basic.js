@@ -206,8 +206,13 @@
       padding: 10px 4px;
       border-bottom: 1px solid #21262d;
       font-size: 13px;
+      color: inherit;
+      text-decoration: none;
+      cursor: pointer;
     }
     .leb-style .sess-row:last-child { border-bottom: 0; }
+    .leb-style .sess-row:hover { background: #1c2128; }
+    .leb-style .sess-row:focus-visible { outline: 2px solid #58a6ff; outline-offset: 2px; }
     .leb-style .sess-row .when {
       color: #8b949e; font-size: 12px;
     }
@@ -461,13 +466,14 @@
       const extra = agents.length > 1 ? ` <span class="chain">+${agents.length - 1} more</span>` : '';
       const mins = Math.round(s.duration_minutes);
       const dur = mins >= 60 ? `${(mins / 60).toFixed(1)}h` : `${mins}m`;
+      const encodedSessionId = encodeURIComponent(String(s.session_id || ''));
       return `
-        <div class="sess-row">
+        <a class="sess-row" href="#session=${encodedSessionId}" data-session-id="${encodedSessionId}">
           <div class="when">${when}</div>
-          <div class="who">${leaf}${extra}</div>
+          <div class="who">${CP.esc(leaf)}${extra}</div>
           <div class="dur">${dur}</div>
           <div class="tok">${fmtBigTokens(s.total_tokens)}</div>
-        </div>`;
+        </a>`;
     }).join('');
 
     return `
@@ -525,5 +531,21 @@
         window.dispatchEvent(new CustomEvent('economy:switch-view', { detail: { view: 'advanced' } }));
       });
     });
+    const handleSessionOpen = event => {
+      const row = event.target.closest('a[data-session-id]');
+      if (!row || !root.contains(row)
+        || event.defaultPrevented || event.button !== 0
+        || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      event.preventDefault();
+      root.dispatchEvent(new CustomEvent('economy:open-session', {
+        bubbles: true,
+        detail: {
+          sessionId: decodeURIComponent(row.dataset.sessionId),
+          returnView: 'basic',
+        },
+      }));
+    };
+    root.addEventListener('click', handleSessionOpen);
+    return () => root.removeEventListener('click', handleSessionOpen);
   };
 })();

@@ -216,7 +216,10 @@ def run(args: argparse.Namespace) -> int:
         )
 
     if args.track_mcp_calls or args.track_mcp_call_sizes:
-        from claude_prospector.aggregator import compute_tool_usage
+        from claude_prospector.aggregator import (
+            attach_session_mcp_activity,
+            compute_tool_usage,
+        )
         from claude_prospector.tool_collection import collect_per_session
 
         in_window = {s["session_id"] for s in result.sessions}  # D-B(a)
@@ -228,6 +231,13 @@ def run(args: argparse.Namespace) -> int:
         # --track-mcp-calls to also be passed.
         per_session, skipped = collect_per_session(
             selected, args.data_dir, track_mcp_call_sizes=args.track_mcp_call_sizes
+        )
+        attach_session_mcp_activity(
+            result,
+            per_session,
+            track_mcp_call_sizes=args.track_mcp_call_sizes,
+            from_date=resolved_from,
+            to_date=resolved_to,
         )
         usage = compute_tool_usage(
             per_session, track_mcp_call_sizes=args.track_mcp_call_sizes

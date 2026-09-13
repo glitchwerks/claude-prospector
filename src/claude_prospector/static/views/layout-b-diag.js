@@ -363,8 +363,11 @@
       grid-template-columns: 100px 1.2fr 1.4fr 90px 100px 60px;
       gap: 10px; align-items: center; padding: 8px 0;
       border-bottom: 1px solid #1c2128; font-size: 12px;
+      color: inherit; text-decoration: none; cursor: pointer;
     }
     .lbd-style .session-row:last-child { border-bottom: none; }
+    .lbd-style .session-row:hover { background: #1c2128; }
+    .lbd-style .session-row:focus-visible { outline: 2px solid #58a6ff; outline-offset: 2px; }
     .lbd-style .session-row .time { color: #8b949e; }
     .lbd-style .session-row .proj { color: #ffa657; font-weight: 500; }
     .lbd-style .session-row .tok  { color: #c9d1d9; text-align: right; font-variant-numeric: tabular-nums; }
@@ -984,7 +987,7 @@
   }
 
   // ── Main render ───────────────────────────────────────────────────────
-  window.renderLayoutBDiag = function renderLayoutBDiag(root) {
+  window.renderLayoutBDiag = function renderLayoutBDiag(root, initialState = {}) {
     if (!document.getElementById('lbd-css')) {
       const style = document.createElement('style');
       style.id = 'lbd-css';
@@ -993,7 +996,28 @@
     }
     root.classList.add('lbd-style');
 
-    const state = { period: '7d', tab: 'burn' };
+    const validPeriods = new Set(['5h', '24h', '7d', '30d', 'all']);
+    const validTabs = new Set(['burn', 'sessions', 'movers', 'efficiency']);
+    const state = {
+      period: validPeriods.has(initialState.period) ? initialState.period : '7d',
+      tab: validTabs.has(initialState.tab) ? initialState.tab : 'burn',
+    };
+    const handleSessionOpen = event => {
+      const row = event.target.closest('a[data-session-id]');
+      if (!row || !root.contains(row)
+        || event.defaultPrevented || event.button !== 0
+        || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      event.preventDefault();
+      root.dispatchEvent(new CustomEvent('economy:open-session', {
+        bubbles: true,
+        detail: {
+          sessionId: decodeURIComponent(row.dataset.sessionId),
+          returnView: 'detail',
+          returnState: { period: state.period, tab: state.tab },
+        },
+      }));
+    };
+    root.addEventListener('click', handleSessionOpen);
 
     function compute() {
       // Phase 3: read window.DATA / window.LIMITS (aggregator payload)
@@ -1102,18 +1126,19 @@
             const splitTotal = Object.values(split).reduce((a,b) => a+b, 0) || 1;
             const parts = Object.entries(split).map(([m, t]) =>
               `<div style="width:${(t/splitTotal*100).toFixed(1)}%;background:${CP.modelColor(m)}"></div>`).join('');
-            const agents = (s.agents || []).map(a => `<span class="chip">${a}</span>`).join(' ');
+            const agents = (s.agents || []).map(a => `<span class="chip">${CP.esc(a)}</span>`).join(' ');
             const fp2 = s.project_path || '';
-            const ta2 = fp2 ? ` title="${fp2.replace(/"/g, '&quot;')}"` : '';
+            const ta2 = fp2 ? ` title="${CP.esc(fp2)}"` : '';
+            const encodedSessionId = encodeURIComponent(String(s.session_id || ''));
             return `
-              <div class="session-row">
+              <a class="session-row" href="#session=${encodedSessionId}" data-session-id="${encodedSessionId}">
                 <div class="time">${CP.fmtRelTime(s.start_time)}</div>
-                <div class="proj"${ta2}>${s.project}</div>
+                <div class="proj"${ta2}>${CP.esc(s.project || 'Unknown project')}</div>
                 <div>${agents}</div>
                 <div class="tok">${CP.fmtTokens(s.total_tokens)}</div>
                 <div><div class="mini-bar">${parts}</div></div>
                 <div class="dur">${CP.fmtDuration(s.duration_minutes)}</div>
-              </div>`;
+              </a>`;
           }).join('')}
         </div>`;
     }
@@ -1202,5 +1227,6 @@
     }
 
     render();
+    return () => root.removeEventListener('click', handleSessionOpen);
   };
 })();

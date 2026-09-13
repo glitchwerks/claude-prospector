@@ -31,8 +31,11 @@ import argparse
 import json
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
+
+import pytest
 
 from claude_prospector.aggregator import AggregateResult
 from claude_prospector.cli.dashboard import build_parser
@@ -254,6 +257,43 @@ def test_t6_json_payload_gates_by_mcp_usage_on_the_flag() -> None:
     )
 
 
+def test_track_mcp_calls_attaches_session_activity_to_json_payload() -> None:
+    """The existing call opt-in exposes normalized activity per session."""
+    result = _run_cli(
+        "dashboard",
+        "--data-dir",
+        str(_FIXTURE_DIR),
+        "--format",
+        "json",
+        "--track-mcp-calls",
+    )
+
+    assert result.returncode == 0, result.stderr
+    sessions = json.loads(result.stdout)["sessions"]
+    activity = sessions[0]["mcp_activity"]
+
+    assert sessions[0]["mcp_collection"] == {
+        "calls": "collected",
+        "result_sizes": "not_collected",
+    }
+    assert activity is not None
+    assert all(
+        set(row)
+        == {
+            "timestamp",
+            "agent",
+            "agent_path",
+            "server",
+            "method",
+            "call_count",
+            "result_chars",
+            "result_excluded",
+        }
+        for row in activity
+    )
+    assert all(row["call_count"] == 1 for row in activity)
+
+
 # ---------------------------------------------------------------------------
 # T8 -- renderer always carries by_mcp_usage in window.DATA
 # ---------------------------------------------------------------------------
@@ -349,6 +389,231 @@ def test_t10_session_scope_denominator_matches_total_sessions() -> None:
 # ---------------------------------------------------------------------------
 # T14 -- resolved time bounds (Phase 1 step 2b)
 # ---------------------------------------------------------------------------
+
+
+def _write_windowed_mcp_corpus(tmp_path: Path) -> Path:
+    """Write calls on both date boundaries plus an unprovable untimed call.
+
+    Args:
+        tmp_path: Isolated test directory.
+
+    Returns:
+        The data directory consumed by the real dashboard command.
+    """
+    data_dir = tmp_path / "data"
+    project = data_dir / "projects" / "windowed-project"
+    project.mkdir(parents=True)
+    entries = []
+    for method, timestamp in [
+        ("before", "2026-09-12T23:59:59.999999Z"),
+        ("start", "2026-09-13T00:00:00Z"),
+        ("inside", "2026-09-13T23:59:59.999999Z"),
+        ("end", "2026-09-14T00:00:00Z"),
+        ("untimed", None),
+    ]:
+        entries.append(
+            {
+                "type": "assistant",
+                "timestamp": timestamp,
+                "message": {
+                    "id": method,
+                    "model": "claude-sonnet-5",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": f"tool-{method}",
+                            "name": f"mcp__github__{method}",
+                            "input": {"private": "never retain"},
+                        }
+                    ],
+                    "usage": {"input_tokens": 1, "output_tokens": 2},
+                },
+            }
+        )
+    (project / "windowed.jsonl").write_text(
+        "\n".join(json.dumps(entry) for entry in entries), encoding="utf-8"
+    )
+    return data_dir
+
+
+@pytest.mark.parametrize("output_format", ["json", "html"])
+@pytest.mark.parametrize("flag", ["--track-mcp-calls", "--track-mcp-call-sizes"])
+@pytest.mark.parametrize(
+    ("bounds", "expected"),
+    [
+        ([], ["before", "start", "inside", "end", "untimed"]),
+        (["--from", "2026-09-13"], ["start", "inside", "end"]),
+        (["--to", "2026-09-14"], ["before", "start", "inside"]),
+        (["--from", "2026-09-13", "--to", "2026-09-14"], ["start", "inside"]),
+    ],
+    ids=["unbounded", "start-only", "end-only", "half-open"],
+)
+def test_session_mcp_projection_respects_cli_date_window(
+    tmp_path: Path,
+    output_format: str,
+    flag: str,
+    bounds: list[str],
+    expected: list[str],
+) -> None:
+    """Session MCP uses exact dates; global usage still counts the session.
+
+    Args:
+        tmp_path: Isolated corpus and output directory.
+        output_format: JSON stdout or an HTML dashboard artifact.
+        flag: Existing call-count or result-size collection opt-in.
+        bounds: CLI arguments defining the represented date window.
+        expected: Hand-derived method names retained in that window.
+    """
+    data_dir = _write_windowed_mcp_corpus(tmp_path)
+    output = tmp_path / "dashboard.html"
+    result = _run_cli(
+        "dashboard",
+        "--data-dir",
+        str(data_dir),
+        "--format",
+        output_format,
+        "--output",
+        str(output),
+        "--no-open",
+        flag,
+        *bounds,
+    )
+    assert result.returncode == 0, result.stderr
+    payload = (
+        json.loads(result.stdout)
+        if output_format == "json"
+        else _extract_window_data(output.read_text(encoding="utf-8"))
+    )
+    session = payload["sessions"][0]
+    assert [row["method"] for row in session["mcp_activity"]] == expected
+    assert session["mcp_collection"] == {
+        "calls": "collected",
+        "result_sizes": "collected" if flag.endswith("-sizes") else "not_collected",
+    }
+    # Global MCP accounting intentionally retains all selected-session calls.
+    assert payload["by_mcp_usage"]["by_server"]["github"]["total_calls"] == 5
+    assert session["message_count"] == len(
+        [name for name in expected if name != "untimed"]
+    )
+    assert "never retain" not in json.dumps(session)
+
+
+@pytest.mark.parametrize("output_format", ["json", "html"])
+@pytest.mark.parametrize(
+    "bounds",
+    [
+        [],
+        ["--from", "2026-09-13"],
+        ["--to", "2026-09-14"],
+        ["--from", "2026-09-13", "--to", "2026-09-14"],
+    ],
+    ids=["unbounded", "start-only", "end-only", "half-open"],
+)
+def test_session_mcp_projection_omits_naive_tool_clock_only_when_bounded(
+    tmp_path: Path, output_format: str, bounds: list[str]
+) -> None:
+    """A tool-only clock without an offset cannot prove window inclusion.
+
+    Args:
+        tmp_path: Isolated corpus and output directory.
+        output_format: JSON stdout or an HTML dashboard artifact.
+        bounds: CLI arguments defining the represented date window.
+    """
+    data_dir = tmp_path / "data"
+    project = data_dir / "projects" / "naive-tool-clock"
+    project.mkdir(parents=True)
+    entries = [
+        {
+            "type": "assistant",
+            "timestamp": "2026-09-13T10:00:00Z",
+            "message": {
+                "id": "timed-response",
+                "model": "claude-sonnet-5",
+                "content": [{"type": "text", "text": "Measured response"}],
+                "usage": {"input_tokens": 1, "output_tokens": 2},
+            },
+        },
+        {
+            "type": "assistant",
+            "timestamp": "2026-09-13T10:01:00",
+            "message": {
+                "id": "tool-only-fragment",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "naive-call",
+                        "name": "mcp__github__get_issue",
+                        "input": {},
+                    }
+                ],
+            },
+        },
+    ]
+    (project / "naive-clock.jsonl").write_text(
+        "\n".join(json.dumps(entry) for entry in entries), encoding="utf-8"
+    )
+    output = tmp_path / "dashboard.html"
+    result = _run_cli(
+        "dashboard",
+        "--data-dir",
+        str(data_dir),
+        "--format",
+        output_format,
+        "--output",
+        str(output),
+        "--no-open",
+        "--track-mcp-calls",
+        *bounds,
+    )
+    assert result.returncode == 0, result.stderr
+    payload = (
+        json.loads(result.stdout)
+        if output_format == "json"
+        else _extract_window_data(output.read_text(encoding="utf-8"))
+    )
+    assert payload["total_sessions"] == 1
+    session = payload["sessions"][0]
+    assert session["message_count"] == 1
+    assert session["mcp_collection"]["calls"] == "collected"
+    if bounds:
+        assert session["mcp_activity"] == []
+    else:
+        assert [row["method"] for row in session["mcp_activity"]] == ["get_issue"]
+        assert session["mcp_activity"][0]["timestamp"] == "2026-09-13T10:01:00"
+    # Filtering the session projection must not mutate the shared global input.
+    assert payload["by_mcp_usage"]["by_server"]["github"]["total_calls"] == 1
+
+
+def test_session_mcp_projection_uses_resolved_rolling_window(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A rolling window overrides raw arguments for session MCP as for tokens.
+
+    Args:
+        tmp_path: Isolated corpus and output directory.
+        capsys: Capture the real dashboard handler's JSON output.
+    """
+    from claude_prospector.cli.dashboard import run
+
+    args = _dashboard_args(
+        tmp_path / "dashboard.html",
+        _write_windowed_mcp_corpus(tmp_path),
+        track_mcp_calls=True,
+    )
+    args.output_format = "json"
+    args.window = 24
+    args.from_date = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    args.to_date = datetime(2020, 1, 2, tzinfo=timezone.utc)
+    with patch("claude_prospector.cli.dashboard.datetime") as clock:
+        clock.now.return_value = datetime(2026, 9, 14, tzinfo=timezone.utc)
+        assert run(args) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert [row["method"] for row in payload["sessions"][0]["mcp_activity"]] == [
+        "start",
+        "inside",
+        "end",
+    ]
+    assert payload["by_mcp_usage"]["by_server"]["github"]["total_calls"] == 5
 
 
 def test_t14_window_bounds_are_resolved_not_raw_args() -> None:

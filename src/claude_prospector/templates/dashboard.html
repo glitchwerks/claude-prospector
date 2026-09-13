@@ -129,6 +129,26 @@
     from { opacity: 0; transform: translateY(4px); }
     to   { opacity: 1; transform: none; }
   }
+  .session-detail {
+    max-width: 720px;
+    background: #161b22;
+    border: 1px solid #21262d;
+    border-radius: 12px;
+    padding: 20px 22px;
+  }
+  .session-detail h2 { color: #f0f6fc; font-size: 18px; margin-top: 16px; }
+  .session-detail button {
+    background: #21262d;
+    border: 1px solid #30363d;
+    border-radius: 7px;
+    color: #c9d1d9;
+    cursor: pointer;
+    font: inherit;
+    padding: 7px 12px;
+  }
+  .session-detail button:hover { color: #f0f6fc; }
+  .session-detail button:focus-visible,
+  .session-detail h2:focus-visible { outline: 2px solid #58a6ff; outline-offset: 2px; }
 
   /* Utility classes */
   .muted { color: #8b949e; }
@@ -296,6 +316,7 @@
 {# Phase 3 view renderers (inlined for offline use) #}
 <script>{{ economics_basic_js | safe }}</script>
 <script>{{ layout_b_diag_js | safe }}</script>
+<script>{{ session_detail_js | safe }}</script>
 <script>{{ economics_js | safe }}</script>
 <script>{{ mcp_usage_js | safe }}</script>
 <script>{{ agents_js | safe }}</script>
@@ -360,7 +381,29 @@
       "Whole-corpus skill invocation and adoption reporting — scoped by the dashboard CLI window.",
   };
 
-  function _renderView(view) {
+  let _activeView = 'basic';
+  let _activeCleanup = null;
+  let _lastRouteKey = null;
+
+  function _cleanupActiveView() {
+    if (_activeCleanup) _activeCleanup();
+    _activeCleanup = null;
+  }
+
+  function _dashboardHistoryState(view, returnState) {
+    const state = { dashboardView: view };
+    if (view === 'detail' && returnState) state.returnState = returnState;
+    return state;
+  }
+
+  function _syncDashboardRoute(view, returnState) {
+    _lastRouteKey = null;
+    history.replaceState(_dashboardHistoryState(view, returnState), '',
+      window.location.pathname + window.location.search);
+  }
+
+  function _renderView(view, returnState) {
+    _cleanupActiveView();
     // Reset animation for re-trigger
     _container.style.animation = 'none';
     _container.offsetHeight; // force reflow
@@ -369,10 +412,11 @@
     _container.className = '';
     _container.innerHTML = '';
 
+    let cleanup;
     if (view === 'basic') {
-      renderEconomicsBasic(_container);
+      cleanup = renderEconomicsBasic(_container);
     } else if (view === 'detail') {
-      renderLayoutBDiag(_container);
+      cleanup = renderLayoutBDiag(_container, returnState || {});
     } else if (view === 'mcp') {
       renderMcpUsage(_container);
     } else if (view === 'agents') {
@@ -384,17 +428,71 @@
     } else {
       console.error('Unknown view:', view);
     }
+    _activeCleanup = typeof cleanup === 'function' ? cleanup : null;
     _sub.innerHTML = _VIEW_SUBS[view] || '';
   }
 
-  function setView(view) {
+  function setView(view, returnState, syncRoute = true) {
+    _activeView = view;
     _buttons.forEach(function(b) {
       const active = b.dataset.view === view;
       b.classList.toggle('active', active);
       b.setAttribute('aria-selected', active ? 'true' : 'false');
       b.setAttribute('tabindex', active ? '0' : '-1');
     });
-    _renderView(view);
+    _renderView(view, returnState);
+    if (syncRoute) _syncDashboardRoute(view, returnState);
+  }
+
+  function _renderSessionNotFound(sessionId) {
+    const section = document.createElement('section');
+    section.className = 'session-detail';
+    section.setAttribute('role', 'status');
+    const heading = document.createElement('h2');
+    heading.tabIndex = -1;
+    heading.textContent = 'Session not found in this dashboard';
+    const message = document.createElement('p');
+    message.textContent = sessionId
+      ? `No in-scope session matches ${sessionId}.`
+      : 'The session identifier is empty.';
+    const back = document.createElement('button');
+    back.type = 'button';
+    back.textContent = 'Back to session list';
+    back.addEventListener('click', () =>
+      window.dispatchEvent(new CustomEvent('economy:close-session')));
+    section.append(heading, message, back);
+    _container.replaceChildren(section);
+    heading.focus();
+  }
+
+  function _renderRoute() {
+    const routeState = history.state;
+    const routeKey = `${window.location.hash}\u0000${JSON.stringify(routeState)}`;
+    if (_lastRouteKey === routeKey) return;
+    _lastRouteKey = routeKey;
+    const route = CP.sessionAnalytics.parseRoute(window.location.hash);
+    if (route.kind === 'dashboard') {
+      const dashboardState = routeState && !routeState.sessionRoute ? routeState : {};
+      const view = dashboardState.dashboardView || _activeView || 'basic';
+      setView(view, view === 'detail' ? dashboardState.returnState : undefined, false);
+      return;
+    }
+    _cleanupActiveView();
+    _container.replaceChildren();
+    if (route.kind === 'not-found') {
+      _renderSessionNotFound(route.sessionId);
+      return;
+    }
+    const session = (window.DATA.sessions || []).find(
+      item => String(item.session_id) === route.sessionId,
+    );
+    if (!session) {
+      _renderSessionNotFound(route.sessionId);
+      return;
+    }
+    _activeCleanup = renderSessionDetail(_container, session, {
+      close: () => window.dispatchEvent(new CustomEvent('economy:close-session')),
+    });
   }
 
   _buttons.forEach(function(b) {
@@ -424,7 +522,29 @@
     window.scrollTo({ top: 0, behavior: 'smooth' });
   });
 
-  setView('basic');
+  window.addEventListener('economy:open-session', function(e) {
+    const detail = e.detail || {};
+    const sessionId = detail.sessionId == null ? '' : String(detail.sessionId);
+    const returnView = detail.returnView || _activeView || 'basic';
+    _syncDashboardRoute(returnView, detail.returnState);
+    history.pushState({
+      sessionRoute: true,
+    }, '', `#session=${encodeURIComponent(sessionId)}`);
+    _renderRoute();
+  });
+
+  window.addEventListener('economy:close-session', function() {
+    if (history.state && history.state.sessionRoute) {
+      history.back();
+      return;
+    }
+    _syncDashboardRoute('basic');
+    setView('basic', undefined, false);
+  });
+
+  window.addEventListener('popstate', _renderRoute);
+  window.addEventListener('hashchange', _renderRoute);
+  _renderRoute();
 </script>
 
 </body>

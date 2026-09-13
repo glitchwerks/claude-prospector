@@ -1,17 +1,160 @@
 """End-to-end test: parse sample data -> aggregate -> render HTML."""
 
 import json
+import re
 from pathlib import Path
 
-from claude_prospector.aggregator import AggregateResult, aggregate
+import pytest
+
+from claude_prospector.aggregator import (
+    AggregateResult,
+    aggregate,
+    attach_session_mcp_activity,
+)
 from claude_prospector.parser import parse_sessions
 from claude_prospector.renderer import render
+from claude_prospector.tool_collection import collect_per_session
 
 # Helpers imported from conftest via pytest fixture injection; the
 # _assistant_line and _write_jsonl helpers are module-level functions
 # in conftest.py and not auto-imported — import them directly here
 # when used outside a fixture.
 from tests.conftest import _assistant_line, _write_jsonl
+
+
+def _write_nested_effort_corpus(tmp_path: Path) -> Path:
+    """Write a root response and nested worker with distinct exact usage.
+
+    Args:
+        tmp_path: Temporary root for the synthetic transcript corpus.
+
+    Returns:
+        The Claude data directory to parse.
+    """
+    data_dir = tmp_path / "claude-data"
+    project_dir = data_dir / "projects" / "project"
+    project_dir.mkdir(parents=True)
+    root_entry = {
+        "type": "assistant",
+        "timestamp": "2026-09-13T10:00:00Z",
+        "effort": "high",
+        "message": {
+            "id": "root-message",
+            "model": "claude-sonnet-5",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "root-mcp",
+                    "name": "mcp__github__get_issue",
+                    "input": {"secret": "private-tool-argument"},
+                }
+            ],
+            "usage": {
+                "input_tokens": 1,
+                "output_tokens": 2,
+                "cache_read_input_tokens": 3,
+                "cache_creation_input_tokens": 4,
+            },
+        },
+    }
+    (project_dir / "session-e2e.jsonl").write_text(
+        json.dumps(root_entry), encoding="utf-8"
+    )
+    child_dir = project_dir / "session-e2e" / "subagents"
+    child_dir.mkdir(parents=True)
+    (child_dir / "agent-child.meta.json").write_text(
+        json.dumps({"agentType": "worker"}), encoding="utf-8"
+    )
+    child_entry = {
+        "type": "assistant",
+        "timestamp": "2026-09-13T10:00:01Z",
+        "effort": "low",
+        "message": {
+            "id": "child-message",
+            "model": "claude-haiku-5",
+            "content": [{"type": "text", "text": "private-response-content"}],
+            "usage": {
+                "input_tokens": 5,
+                "output_tokens": 6,
+                "cache_read_input_tokens": 7,
+                "cache_creation_input_tokens": 8,
+            },
+        },
+    }
+    (child_dir / "agent-child.jsonl").write_text(
+        json.dumps(child_entry), encoding="utf-8"
+    )
+    return data_dir
+
+
+@pytest.mark.parametrize("collect_mcp", [False, True])
+def test_session_effort_analytics_survives_parse_to_render(
+    tmp_path: Path, collect_mcp: bool
+) -> None:
+    """Dropping nested responses, exact components or privacy gates fails.
+
+    Args:
+        tmp_path: Temporary corpus and output directory.
+        collect_mcp: Whether this synthetic corpus opts into MCP calls.
+    """
+    data_dir = _write_nested_effort_corpus(tmp_path)
+    sessions = parse_sessions(data_dir)
+    result = aggregate(sessions)
+    if collect_mcp:
+        per_session, _ = collect_per_session(sessions, data_dir)
+        attach_session_mcp_activity(result, per_session, track_mcp_call_sizes=False)
+    output = render(result, tmp_path / "dashboard.html", open_browser=False)
+    html = output.read_text(encoding="utf-8")
+    match = re.search(r"window\.DATA = (.*?);\s*const _limits_raw", html, re.S)
+    assert match is not None
+    embedded = json.loads(match.group(1))
+    assert embedded["total_tokens"] == 36
+    assert embedded["total_messages"] == 2
+    assert len(embedded["sessions"]) == 1
+    session = embedded["sessions"][0]
+    assert session == result.sessions[0]
+    rows = session["agent_activity"]
+    assert [row["agent_path"] for row in rows] == [
+        ["general-purpose"],
+        ["general-purpose", "worker"],
+    ]
+    assert [row["effort_key"] for row in rows] == ["high", "low"]
+    assert [row["model_full"] for row in rows] == ["claude-sonnet-5", "claude-haiku-5"]
+    assert [row["timestamp"] for row in rows] == [
+        "2026-09-13T10:00:00+00:00",
+        "2026-09-13T10:00:01+00:00",
+    ]
+    for key, expected in {
+        "input_tokens": [1, 5],
+        "output_tokens": [2, 6],
+        "cache_read_tokens": [3, 7],
+        "cache_creation_tokens": [4, 8],
+        "total_tokens": [10, 26],
+    }.items():
+        assert [row[key] for row in rows] == expected
+        assert session[key] == sum(expected)
+    assert session["effort_split"] == {"high": 10, "low": 26}
+    assert session["mcp_collection"] == {
+        "calls": "collected" if collect_mcp else "not_collected",
+        "result_sizes": "not_collected",
+    }
+    if collect_mcp:
+        assert session["mcp_activity"] == [
+            {
+                "timestamp": "2026-09-13T10:00:00+00:00",
+                "agent": "general-purpose",
+                "agent_path": ["general-purpose"],
+                "server": "github",
+                "method": "get_issue",
+                "call_count": 1,
+                "result_chars": None,
+                "result_excluded": False,
+            }
+        ]
+    else:
+        assert session["mcp_activity"] is None
+    assert "private-tool-argument" not in html
+    assert "private-response-content" not in html
 
 
 class TestEndToEnd:
