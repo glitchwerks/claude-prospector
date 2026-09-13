@@ -270,8 +270,8 @@ def test_same_timestamp_activity_keeps_original_ordinal_order() -> None:
             source.messages[0],
         ],
         commands=[
-            CommandInvocationRecord(name="/first", timestamp=start),
-            CommandInvocationRecord(name="/second", timestamp=start),
+            CommandInvocationRecord(name="/zebra", timestamp=start),
+            CommandInvocationRecord(name="/alpha", timestamp=start),
         ],
         skill_invocations=[
             SkillInvocationRecord(
@@ -300,6 +300,6 @@ def test_same_timestamp_activity_keeps_original_ordinal_order() -> None:
         "main-skill",
     ]
     assert [row["name"] for row in summary["command_activity"]] == [
-        "/first",
-        "/second",
+        "/zebra",
+        "/alpha",
     ]
