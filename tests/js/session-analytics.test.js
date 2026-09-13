@@ -514,6 +514,59 @@ test('legacy response details never invent missing timestamps or token component
   assert.doesNotMatch(detail, /undefined|null/);
 });
 
+test('Skills and Commands preserve omitted null and recorded-empty collection states on rerender', () => {
+  const seed = plain(require('../fixtures/session-analytics/short-single-agent.json'));
+  for (const state of ['omitted', 'null', 'empty']) {
+    const fixture = {...seed};
+    for (const field of ['skill_activity', 'command_activity']) {
+      if (state === 'omitted') delete fixture[field];
+      else fixture[field] = state === 'null' ? null : [];
+    }
+    const shell = bootShell([freezeDeep(fixture)]);
+    openSession(shell, 'short', 'basic');
+    for (const mode of ['all', 'period']) {
+      chooseScope(shell, mode);
+      for (const [name, label] of [['skills', 'Skills'], ['commands', 'Commands']]) {
+        const panel = activityPanel(shell, name);
+        assert.equal(panel.tagName, 'details');
+        assert.equal(panel.children[0].tagName, 'summary');
+        assert.equal(panel.children[0].textContent,
+          `${label} · ${state === 'empty' ? '0' : 'Not recorded'}`, `${state} ${name} in ${mode}`);
+        if (state === 'empty') assert.equal(activityRows(shell, name).length, 0);
+        else {
+          assert.equal(panel.querySelectorAll('p')[0].textContent, 'Not recorded');
+          assert.equal(panel.querySelectorAll('table').length, 0);
+        }
+      }
+    }
+  }
+});
+
+test('agent hierarchy marks incomplete components without losing recorded totals or zero', () => {
+  const seed = plain(require('../fixtures/session-analytics/short-single-agent.json'));
+  const event = {timestamp: seed.start_time, agent: 'main', total_tokens: 9};
+  const cases = [
+    {responses: [event], expected: ['main', 'Root', '1', 'Not recorded', 'Not recorded', 'Not recorded', 'Not recorded', '9']},
+    {responses: [seed.agent_activity[0], {...event, input_tokens: 0, output_tokens: null, cache_read_tokens: 0}],
+      expected: ['main', 'Root', '2', '1', 'Not recorded', '0', 'Not recorded', '19']},
+    {responses: [seed.agent_activity[0], {...event, total_tokens: null}],
+      expected: ['main', 'Root', '2', 'Not recorded', 'Not recorded', 'Not recorded', 'Not recorded', 'Not recorded']},
+  ];
+  for (const {responses, expected} of cases) {
+    const shell = bootShell([freezeDeep({...seed, agent_activity: responses})]);
+    openSession(shell, 'short', 'basic');
+    assert.deepEqual(activityRows(shell, 'agents')[0], expected);
+    const responseRows = activityRows(shell, 'responses');
+    const ledgerRows = activityRows(shell, 'ledger');
+    chooseScope(shell, 'period');
+    assert.deepEqual(activityRows(shell, 'agents')[0], expected);
+    assert.deepEqual(activityRows(shell, 'responses'), responseRows);
+    assert.deepEqual(activityRows(shell, 'ledger'), ledgerRows);
+    moveRange(shell, 'start', Date.parse(seed.start_time) + 1);
+    assert.deepEqual(activityRows(shell, 'agents')[0], ['main', 'Root', '0', '0', '0', '0', '0', '0']);
+  }
+});
+
 test('child changes preserve full-path independence and focused control', () => {
   const session = freezeDeep(plain(require('../fixtures/session-analytics/deep-nested-agents.json')));
   const shell = bootShell([session]);

@@ -398,7 +398,8 @@
       const responses = scoped.responses.filter(row => recordPath(row) === path);
       const tokens = A.sumTokens(responses);
       return [path, parts.slice(0, -1).join(CP.AGENT_PATH_SEP) || 'Root', responses.length,
-        ...TOKEN_FIELDS.map(field => tokens[field])];
+        ...TOKEN_FIELDS.map(field => responses.every(row => Number.isFinite(row[field]))
+          ? tokens[field] : 'Not recorded')];
     });
     const activityHeaders = ['Timestamp', 'Agent path'];
     const skillRows = scoped.skills.map(row => [activityTime(row.timestamp), recordPath(row), row.skill ?? 'Not recorded']);
@@ -418,8 +419,12 @@
     ledger.append(element('p', 'muted', 'Equal timestamps do not imply causality. Tie order: Response, Skill, Command, MCP, then source order. Missing times appear last in All and are excluded from By time period.'));
     parent.append(
       buildActivityPanel('agents', 'Agent hierarchy', ['Agent path', 'Parent path', 'Responses', ...TOKEN_LABELS], agentRows),
-      buildActivityPanel('skills', 'Skills', [...activityHeaders, 'Skill'], skillRows),
-      buildActivityPanel('commands', 'Commands', [...activityHeaders, 'Command'], commandRows),
+      Array.isArray(session.skill_activity)
+        ? buildActivityPanel('skills', 'Skills', [...activityHeaders, 'Skill'], skillRows)
+        : statusPanel('skills', 'Skills', 'Not recorded'),
+      Array.isArray(session.command_activity)
+        ? buildActivityPanel('commands', 'Commands', [...activityHeaders, 'Command'], commandRows)
+        : statusPanel('commands', 'Commands', 'Not recorded'),
       factsPanel(session), mcpPanel(scoped, mcpState),
       buildActivityPanel('responses', 'Responses', ['Timestamp', 'Full model', 'Normalized model', 'Effort', 'Agent path', ...TOKEN_LABELS], responseRows),
       ledger);
