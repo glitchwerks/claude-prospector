@@ -83,6 +83,7 @@ class FakeElement extends FakeEventTarget {
 
   focus() {
     this.document.activeElement = this;
+    this.document.focusCount += 1;
   }
 }
 
@@ -112,6 +113,7 @@ function bootShell() {
   const window = new FakeEventTarget();
   const document = {
     activeElement: null,
+    focusCount: 0,
     elements: {},
     createElement(tagName) { return new FakeElement(this, tagName); },
     getElementById(id) { return this.elements[id]; },
@@ -154,6 +156,7 @@ function bootShell() {
   };
   const renderCalls = [];
   const cleanupCalls = [];
+  const metrics = {sessionRenderCount: 0};
   const renderView = view => (_root, state = {}) => {
     renderCalls.push({view, state: {...state}});
     return () => cleanupCalls.push(view);
@@ -182,6 +185,7 @@ function bootShell() {
     context,
   );
   context.renderSessionDetail = (...args) => {
+    metrics.sessionRenderCount += 1;
     const cleanup = window.renderSessionDetail(...args);
     return () => {
       cleanupCalls.push('session');
@@ -190,7 +194,10 @@ function bootShell() {
   };
   vm.runInContext(readShellScript(), context);
 
-  return {window, document, history, location, renderCalls, cleanupCalls, buttons: document.buttons};
+  return {
+    window, document, history, location, renderCalls, cleanupCalls, metrics,
+    buttons: document.buttons,
+  };
 }
 
 function openSession(shell, sessionId, returnView, returnState) {
@@ -252,6 +259,22 @@ test('keyboard shell tab transition clears a stale session route', () => {
   assert.equal(shell.location.hash, '');
   assert.deepEqual(plain(shell.history.state), {dashboardView: 'detail'});
   assert.deepEqual(shell.renderCalls.at(-1), {view: 'detail', state: {}});
+});
+
+test('reopening the same session after a shell tab transition renders it again', () => {
+  const shell = bootShell();
+
+  openSession(shell, 'A', 'basic');
+  shell.buttons.find(button => button.dataset.view === 'detail')
+    .dispatchEvent(new FakeCustomEvent('click'));
+  openSession(shell, 'A', 'detail');
+
+  assert.equal(shell.location.hash, '#session=A');
+  assert.deepEqual(plain(shell.history.state), {sessionRoute: true});
+  assert.equal(shell.metrics.sessionRenderCount, 2);
+  assert.equal(shell.document.activeElement.textContent, 'Session A');
+  assert.equal(shell.document.focusCount, 2);
+  assert.deepEqual(shell.cleanupCalls, ['basic', 'session', 'detail']);
 });
 
 test('parseRoute accepts one encoded session key only', () => {

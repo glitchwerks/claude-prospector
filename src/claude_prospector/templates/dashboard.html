@@ -397,6 +397,7 @@
   }
 
   function _syncDashboardRoute(view, returnState) {
+    _lastRouteKey = null;
     history.replaceState(_dashboardHistoryState(view, returnState), '',
       window.location.pathname + window.location.search);
   }
