@@ -84,6 +84,10 @@ def test_session_controls_ship_in_rendered_dashboard(tmp_path: Path) -> None:
         "Zoom further for per-response bars",
         "Exact response values",
         "prefers-reduced-motion",
+        "Session-wide effort conflicts:",
+        "Equal timestamps do not imply causality",
+        "Time not recorded",
+        "Estimated result size",
     ):
         assert hook in source
 

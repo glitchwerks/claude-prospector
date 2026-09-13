@@ -43,6 +43,8 @@
     .session-page th, .session-page td { text-align: right; padding: 7px 10px; border-bottom: 1px solid #30363d; }
     .session-page th:first-child, .session-page td:first-child { text-align: left; }
     .session-page summary { cursor: pointer; padding: 6px 0; }
+    .session-page .session-panel { border-top: 1px solid #30363d; margin: 12px 0; padding-top: 8px; }
+    .session-page .session-panel td { white-space: pre-wrap; text-align: left; }
     .session-page summary:focus-visible { outline: 2px solid #58a6ff; outline-offset: 3px; }
     .session-page .session-bars { display: flex; align-items: stretch; height: 160px; width: 100%; }
     .session-page .session-bar { flex: 1 1 0; min-width: 12px; border: 0; border-radius: 0; padding: 0 1px; background: transparent; display: flex; align-items: flex-end; cursor: pointer; }
@@ -121,7 +123,7 @@
 
   /** Keep every recorded token component available in accessible exact values. */
   function responseLabel(row) {
-    return `${row.timestamp}; model ${row.model_full || 'Unknown'} (${row.model || 'unknown'}); effort ${effortLabel(row.effort_key)}; path ${recordPath(row)}; input ${row.input_tokens || 0}; output ${row.output_tokens || 0}; cache read ${row.cache_read_tokens || 0}; cache creation ${row.cache_creation_tokens || 0}; total ${row.total_tokens || 0} tokens`;
+    return `${activityTime(row.timestamp)}; model ${row.model_full || 'Unknown'} (${row.model || 'unknown'}); effort ${effortLabel(row.effort_key)}; path ${recordPath(row)}; input ${row.input_tokens ?? 'Not recorded'}; output ${row.output_tokens ?? 'Not recorded'}; cache read ${row.cache_read_tokens ?? 'Not recorded'}; cache creation ${row.cache_creation_tokens ?? 'Not recorded'}; total ${row.total_tokens ?? 'Not recorded'} tokens`;
   }
 
   /** Tables are the nonvisual counterpart of each chart, with exact numbers. */
@@ -307,13 +309,134 @@
     parent.append(chartTable('tracks', 'Timestamped response totals by agent path', ['Agent path', 'Selection', 'Responses', ...TOKEN_LABELS], rows));
   }
 
+  /** Preserve exact recorded timestamps, including timezone and precision. */
+  function activityTime(value) {
+    return Number.isFinite(Date.parse(value)) ? value : 'Time not recorded';
+  }
+
+  /** Reuse accessible tables and expose the complete count in native summaries. */
+  function buildActivityPanel(name, label, headers, rows, count = rows.length) {
+    const details = chartTable(name, label, headers, rows);
+    details.className = 'session-panel session-table-wrap';
+    details.dataset.sessionPanel = name;
+    details.children[0].textContent = `${label} · ${count}`;
+    return details;
+  }
+
+  /** Collection states remain distinct from observed empty activity. */
+  function statusPanel(name, label, status) {
+    const details = element('details', 'session-panel');
+    details.dataset.sessionPanel = name;
+    details.append(element('summary', 'session-panel-summary', `${label} · ${status}`),
+      element('p', 'session-panel-status', status));
+    return details;
+  }
+
+  /** Character counts are a size proxy, never tokens or raw tool results. */
+  function formatResultSize(call, mcpState) {
+    if (mcpState.result_sizes !== 'collected') return null;
+    if (call.result_excluded) return 'Excluded by collection limit';
+    if (Number.isFinite(call.result_chars)) return `Estimated result size: ${call.result_chars} characters`;
+    return 'Estimated result size: Unavailable';
+  }
+
+  /** Only the privacy-safe server/method pair identifies an MCP call. */
+  function mcpLabel(call) {
+    return `${call.server ?? 'Not recorded'}.${call.method ?? 'Not recorded'}`;
+  }
+
+  /** Gate all presentation on collection state, then retain every scoped call. */
+  function mcpPanel(scoped, mcpState) {
+    if (mcpState.calls === 'not_collected') return statusPanel('mcp', 'MCP', 'Not collected');
+    if (mcpState.calls !== 'collected') {
+      return statusPanel('mcp', 'MCP', mcpState.warning === 'transcript_unavailable'
+        ? 'Unavailable · Transcript unavailable' : 'Unavailable');
+    }
+    const calls = scoped.mcp || [];
+    if (!calls.length) return statusPanel('mcp', 'MCP', '0 calls');
+    const sizesCollected = mcpState.result_sizes === 'collected';
+    const headers = ['Timestamp', 'Agent path', 'Server.method'];
+    if (sizesCollected) headers.push('Estimated result size');
+    const rows = calls.map(call => {
+      const values = [activityTime(call.timestamp), recordPath(call), mcpLabel(call)];
+      if (sizesCollected) values.push(formatResultSize(call, mcpState));
+      return values;
+    });
+    const details = buildActivityPanel('mcp', 'MCP', headers, rows, `${calls.length} calls`);
+    const groups = new Map();
+    for (const call of calls) {
+      const key = mcpLabel(call);
+      groups.set(key, (groups.get(key) || 0) + 1);
+    }
+    const compact = element('ul');
+    for (const [key, count] of groups) compact.append(element('li', undefined, `${key} · ${count} calls`));
+    const summary = details.children[0];
+    const table = details.querySelectorAll('table')[0];
+    details.replaceChildren(summary, compact, table);
+    return details;
+  }
+
+  /** Render all recorded metadata without manufacturing scoped provenance. */
+  function factsPanel(session) {
+    const facts = session.session_facts;
+    const rows = (facts?.metadata || []).map(row => [row.name, row.value,
+      activityTime(row.first_seen), (row.agent_paths || []).map(pathKey).join('\n') || 'Not recorded']);
+    const details = buildActivityPanel('facts', 'Session facts',
+      ['Name', 'Value', 'First seen (session-wide)', 'Contributing agent paths'], rows);
+    const summary = details.children[0];
+    const table = details.querySelectorAll('table')[0];
+    details.replaceChildren(summary,
+      element('p', 'muted', 'Session-wide evidence: unaffected by agent selection and time period. First-seen times and contributing paths are recorded across the whole session.'),
+      element('p', undefined, `Session-wide effort conflicts: ${facts?.effort_conflicts ?? 'Not recorded'}`), table);
+    return details;
+  }
+
+  /** Keep every selected path and scoped activity row in expandable tables. */
+  function renderActivityPanels(parent, session, scoped, activePaths, mcpState) {
+    const agentRows = [...activePaths].sort().map(path => {
+      const parts = path.split(CP.AGENT_PATH_SEP);
+      const responses = scoped.responses.filter(row => recordPath(row) === path);
+      const tokens = A.sumTokens(responses);
+      return [path, parts.slice(0, -1).join(CP.AGENT_PATH_SEP) || 'Root', responses.length,
+        ...TOKEN_FIELDS.map(field => tokens[field])];
+    });
+    const activityHeaders = ['Timestamp', 'Agent path'];
+    const skillRows = scoped.skills.map(row => [activityTime(row.timestamp), recordPath(row), row.skill ?? 'Not recorded']);
+    const commandRows = scoped.commands.map(row => [activityTime(row.timestamp), recordPath(row), row.name ?? 'Not recorded']);
+    const responseRows = scoped.responses.map(row => [activityTime(row.timestamp), row.model_full || 'Unknown',
+      row.model || 'unknown', effortLabel(row.effort_key), recordPath(row),
+      ...TOKEN_FIELDS.map(field => row[field] ?? 'Not recorded')]);
+    const kinds = {response: 'Response', skill: 'Skill', command: 'Command', mcp: 'MCP'};
+    const ledgerRows = A.mergeLedger(scoped).map(row => {
+      const content = row.kind === 'response' ? responseLabel(row)
+        : row.kind === 'skill' ? row.skill ?? 'Not recorded'
+          : row.kind === 'command' ? row.name ?? 'Not recorded'
+            : [mcpLabel(row), formatResultSize(row, mcpState)].filter(value => value !== null).join('; ');
+      return [activityTime(row.timestamp), kinds[row.kind], recordPath(row), content];
+    });
+    const ledger = buildActivityPanel('ledger', 'Event ledger', ['Timestamp', 'Kind', 'Agent path', 'Detail'], ledgerRows);
+    ledger.append(element('p', 'muted', 'Equal timestamps do not imply causality. Tie order: Response, Skill, Command, MCP, then source order. Missing times appear last in All and are excluded from By time period.'));
+    parent.append(
+      buildActivityPanel('agents', 'Agent hierarchy', ['Agent path', 'Parent path', 'Responses', ...TOKEN_LABELS], agentRows),
+      buildActivityPanel('skills', 'Skills', [...activityHeaders, 'Skill'], skillRows),
+      buildActivityPanel('commands', 'Commands', [...activityHeaders, 'Command'], commandRows),
+      factsPanel(session), mcpPanel(scoped, mcpState),
+      buildActivityPanel('responses', 'Responses', ['Timestamp', 'Full model', 'Normalized model', 'Effort', 'Agent path', ...TOKEN_LABELS], responseRows),
+      ledger);
+  }
+
   /** Render one session from an immutable source and disposable local state. */
   function renderSessionDetail(container, session, routeState) {
     const fields = ['agent_activity', 'skill_activity', 'command_activity', 'mcp_activity'];
     // Older records may have a path array without a label. Copy only those rows
     // to satisfy the shared scoper's full-path label contract; never edit DATA.
     const source = {...session};
+    const mcpState = session.mcp_collection || {calls: 'not_collected', result_sizes: 'not_collected'};
     for (const field of fields) {
+      if (field === 'mcp_activity' && mcpState.calls !== 'collected') {
+        source[field] = null;
+        continue;
+      }
       source[field] = session[field] == null ? session[field]
         : session[field].map(row => recordPath(row) === row.agent
           ? row : {...row, agent: recordPath(row)});
@@ -436,6 +559,14 @@
     function render(focusKey) {
       if (disposed) return;
       if (focusKey?.startsWith('agent:')) state.focusedPath = decodeURIComponent(focusKey.slice(6));
+      // Read native state before replacement, even if its toggle event is queued.
+      for (const disclosure of afterScope.querySelectorAll('details')) {
+        const name = disclosure.dataset.sessionPanel;
+        if (name) {
+          if (disclosure.open) state.expanded.add(name);
+          else state.expanded.delete(name);
+        }
+      }
       removeListeners();
       CP.destroyChartsByPrefix('session-');
       const scoped = A.scopeSession(source, state.activePaths, state.scope, state.range);
@@ -621,10 +752,20 @@
         : !hasRecords ? 'No records in this scope.'
           : !scoped.responses.length ? 'No response records in this scope.' : '';
       if (emptyMessage) detail.append(element('p', 'session-empty', emptyMessage));
+      const details = panel('details', 'Session details');
+      renderActivityPanels(details, session, scoped, state.activePaths, mcpState);
+      for (const disclosure of details.querySelectorAll('details')) {
+        const name = disclosure.dataset.sessionPanel;
+        disclosure.open = state.expanded.has(name);
+        controls.set(`panel:${name}`, disclosure.children[0]);
+        listen(disclosure, 'toggle', () => {
+          if (disclosure.open) state.expanded.add(name);
+          else state.expanded.delete(name);
+        });
+      }
       afterScope.replaceChildren(detail,
         panel('breakdowns', 'Effort, models, and tokens'),
-        panel('details', 'Session details'),
-        panel('ledger', 'Event ledger'));
+        details);
       renderScopedDetail(detail, scoped.responses, state.scope === 'period' ? state.range : domain, listen, controls);
       const detailHeading = detail.children[0];
       detailHeading.tabIndex = -1;

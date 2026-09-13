@@ -292,7 +292,226 @@ test('session shell renders semantic scan-first regions with all paths active', 
   assert.equal(scopedTotal(shell), 'All: 5 tokens across 5 responses');
   assert.equal(sessionNode(shell, node => node.textContent === fixture.project).innerHTML, '');
   assert.deepEqual(sessionNodes(shell).filter(node => node.dataset.sessionPanel).map(node => node.dataset.sessionPanel),
-    ['identity', 'overview', 'agent-filter', 'tracks', 'scope', 'total', 'detail', 'breakdowns', 'details', 'ledger']);
+    ['identity', 'overview', 'agent-filter', 'tracks', 'scope', 'total', 'detail', 'breakdowns', 'details',
+      'agents', 'skills', 'commands', 'facts', 'mcp', 'responses', 'ledger']);
+});
+
+/** Read the native disclosure and its actual table cells. */
+function activityPanel(shell, name) {
+  return sessionNode(shell, node => node.dataset.sessionPanel === name);
+}
+
+function activityRows(shell, name) {
+  const body = activityPanel(shell, name).querySelectorAll('tbody')[0];
+  assert.ok(body, `Expected ${name} to expose its complete table`);
+  return body.children
+    .map(row => row.children.map(cell => cell.textContent));
+}
+
+function nodeText(node) {
+  return [node.textContent, ...node.children.map(nodeText)].join(' ');
+}
+
+test('native detail disclosures retain every response, skill, command, and agent path', () => {
+  const seed = plain(require('../fixtures/session-analytics/short-single-agent.json'));
+  const count = 151;
+  const session = {...seed,
+    agent_paths: [['main'], ...Array.from({length: count}, (_, index) => ['main', `agent-${index}`])],
+    session_facts: {metadata: Array.from({length: count}, (_, index) => ({name: 'version', value: `version-${index}`,
+      first_seen: seed.start_time, agent_paths: [['main']]})), effort_conflicts: 0},
+    mcp_collection: {calls: 'collected', result_sizes: 'not_collected'},
+    mcp_activity: Array.from({length: count}, (_, index) => ({timestamp: seed.start_time,
+      agent: 'main', server: 'server', method: `method-${index}`})),
+    agent_activity: Array.from({length: count}, (_, index) => ({...seed.agent_activity[0],
+      model_full: `full-model-${index}`, input_tokens: index, output_tokens: 2,
+      cache_read_tokens: 3, cache_creation_tokens: 4, total_tokens: index + 9})),
+    skill_activity: Array.from({length: count}, (_, index) => ({...seed.skill_activity[0], skill: `skill-${index}`})),
+    command_activity: Array.from({length: count}, (_, index) => ({...seed.command_activity[0], name: `/command-${index}`})),
+  };
+  const shell = bootShell([freezeDeep(session)]);
+  openSession(shell, 'short', 'basic');
+  for (const name of ['agents', 'skills', 'commands', 'facts', 'mcp', 'responses', 'ledger']) {
+    const panel = activityPanel(shell, name);
+    assert.equal(panel.tagName, 'details');
+    assert.equal(panel.children[0].tagName, 'summary');
+  }
+  for (const [name, label] of [['skills', 'Skills'], ['commands', 'Commands'], ['responses', 'Responses']]) {
+    assert.equal(activityRows(shell, name).length, count);
+    assert.equal(activityPanel(shell, name).children[0].textContent, `${label} · 151`);
+  }
+  const responsePanel = activityPanel(shell, 'responses');
+  assert.deepEqual(responsePanel.querySelectorAll('thead')[0].children[0].children.map(node => node.textContent),
+    ['Timestamp', 'Full model', 'Normalized model', 'Effort', 'Agent path', 'Input', 'Output', 'Cache read', 'Cache creation', 'Total']);
+  assert.deepEqual(activityRows(shell, 'responses').at(-1),
+    ['2026-09-13T10:00:00Z', 'full-model-150', 'sonnet', 'low', 'main', '150', '2', '3', '4', '159']);
+  assert.equal(activityRows(shell, 'skills').at(-1)[2], 'skill-150');
+  assert.equal(activityRows(shell, 'commands').at(-1)[2], '/command-150');
+  assert.equal(activityRows(shell, 'agents')[0][0], 'main');
+  assert.equal(activityRows(shell, 'agents').length, 152);
+  assert.equal(activityRows(shell, 'facts').length, 151);
+  assert.equal(activityRows(shell, 'facts').at(-1)[1], 'version-150');
+  assert.equal(activityRows(shell, 'mcp').length, 151);
+  assert.equal(activityRows(shell, 'mcp').at(-1)[2], 'server.method-150');
+  assert.equal(activityRows(shell, 'ledger').length, 604);
+});
+
+test('detail disclosures keep native open state and summary focus across scope and resize', () => {
+  const fixture = plain(require('../fixtures/session-analytics/short-single-agent.json'));
+  const shell = bootShell([fixture]);
+  openSession(shell, 'short', 'basic');
+  for (const name of ['agents', 'skills', 'commands', 'facts', 'mcp', 'responses', 'ledger']) {
+    const panel = activityPanel(shell, name);
+    panel.open = true;
+    panel.dispatchEvent({type: 'toggle'});
+  }
+  chooseScope(shell, 'period');
+  for (const name of ['agents', 'skills', 'commands', 'facts', 'mcp', 'responses', 'ledger']) {
+    assert.equal(activityPanel(shell, name).open, true, `${name} must remain expanded`);
+  }
+  const mcp = activityPanel(shell, 'mcp');
+  mcp.children[0].focus();
+  shell.document.chartWidth = 800;
+  shell.resizeObservers[0].callback([{contentRect: {width: 800}}]);
+  assert.equal(shell.document.activeElement, activityPanel(shell, 'mcp').children[0]);
+  activityPanel(shell, 'mcp').open = false;
+  activityPanel(shell, 'mcp').dispatchEvent({type: 'toggle'});
+  chooseScope(shell, 'all');
+  assert.equal(activityPanel(shell, 'mcp').open, false);
+  assert.equal(activityPanel(shell, 'responses').open, true);
+});
+
+test('detail activity panels share agent selection and period boundaries', () => {
+  const seed = plain(require('../fixtures/session-analytics/short-single-agent.json'));
+  const child = {agent: 'main→worker', agent_path: ['main', 'worker']};
+  const session = {...seed, agent_paths: [['main'], ['main', 'worker']],
+    agent_activity: [seed.agent_activity[0], {...seed.agent_activity[1], ...child}],
+    skill_activity: [seed.skill_activity[0], {...seed.skill_activity[0], ...child, skill: 'child-skill'}],
+    mcp_collection: {calls: 'collected', result_sizes: 'not_collected'},
+    mcp_activity: [{timestamp: seed.start_time, agent: 'main', server: 'server', method: 'root'},
+      {timestamp: seed.agent_activity[1].timestamp, ...child, server: 'server', method: 'child'},
+      {timestamp: null, ...child, server: 'server', method: 'untimed'}],
+  };
+  const shell = bootShell([freezeDeep(session)]);
+  openSession(shell, 'short', 'basic');
+  moveRange(shell, 'end', Date.parse(seed.agent_activity[1].timestamp));
+  assert.equal(activityRows(shell, 'mcp').length, 3, 'All ignores the narrower brush');
+  chooseScope(shell, 'period');
+  assert.equal(activityRows(shell, 'responses').length, 1);
+  assert.equal(activityRows(shell, 'skills').length, 0);
+  assert.equal(activityRows(shell, 'commands').length, 1);
+  assert.equal(activityRows(shell, 'mcp').length, 1);
+  assert.equal(activityRows(shell, 'ledger').length, 3);
+  chooseScope(shell, 'all');
+  toggleAgent(shell, child.agent, false);
+  assert.equal(activityRows(shell, 'responses').length, 1);
+  assert.equal(activityRows(shell, 'skills').length, 1);
+  assert.equal(activityRows(shell, 'mcp').length, 1);
+  assert.equal(activityRows(shell, 'ledger').length, 4);
+  toggleAgent(shell, 'main', false);
+  toggleAgent(shell, child.agent, true);
+  assert.equal(activityRows(shell, 'commands').length, 0, 'Root commands follow the root path');
+  assert.equal(activityRows(shell, 'mcp').length, 2);
+  assert.ok(activityRows(shell, 'ledger').some(row => row[0] === 'Time not recorded'));
+});
+
+test('session facts keep all conflicting values and explicitly session-wide provenance', () => {
+  const seed = plain(require('../fixtures/session-analytics/short-single-agent.json'));
+  seed.session_facts = {metadata: [
+    {name: 'gitBranch', value: 'main', first_seen: seed.start_time, agent_paths: [['main']]},
+    {name: 'gitBranch', value: '<img src=x onerror=alert(1)>', first_seen: seed.end_time,
+      agent_paths: [['main'], ['main', 'worker']]},
+    {name: 'version', value: '1.2.3', first_seen: seed.start_time, agent_paths: [['main']]},
+  ], effort_conflicts: 2};
+  const shell = bootShell([freezeDeep(seed)]);
+  openSession(shell, 'short', 'basic');
+  const expected = [
+    ['gitBranch', 'main', seed.start_time, 'main'],
+    ['gitBranch', '<img src=x onerror=alert(1)>', seed.end_time, 'main\nmain→worker'],
+    ['version', '1.2.3', seed.start_time, 'main'],
+  ];
+  assert.deepEqual(activityRows(shell, 'facts'), expected);
+  assert.match(nodeText(activityPanel(shell, 'facts')), /Session-wide effort conflicts: 2/);
+  assert.match(nodeText(activityPanel(shell, 'facts')), /unaffected by agent selection and time period/);
+  toggleAgent(shell, 'main', false);
+  chooseScope(shell, 'period');
+  assert.deepEqual(activityRows(shell, 'facts'), expected);
+  assert.ok(sessionNodes(shell).every(node => node.innerHTML === ''));
+  assert.ok(!sessionNodes(shell).some(node => node.tagName === 'img'));
+});
+
+test('MCP state copy gates activity and distinguishes uncollected unavailable and zero', () => {
+  const seed = plain(require('../fixtures/session-analytics/short-single-agent.json'));
+  for (const [state, copy] of [
+    [undefined, 'Not collected'],
+    [{calls: 'not_collected'}, 'Not collected'],
+    [{calls: 'unavailable'}, 'Unavailable'],
+    [{calls: 'unavailable', warning: 'transcript_unavailable'}, 'Unavailable · Transcript unavailable'],
+    [{calls: 'collected', result_sizes: 'not_collected'}, '0 calls'],
+  ]) {
+    const shell = bootShell([{...seed, mcp_collection: state, mcp_activity: []}]);
+    openSession(shell, 'short', 'basic');
+    assert.equal(activityPanel(shell, 'mcp').children[0].textContent, `MCP · ${copy}`);
+    assert.equal(activityPanel(shell, 'mcp').querySelectorAll('p')[0].textContent, copy);
+  }
+  const shell = bootShell([{...seed, mcp_collection: {calls: 'not_collected'},
+    mcp_activity: [{timestamp: seed.start_time, agent: 'main', server: 'stale', method: 'call'}]}]);
+  openSession(shell, 'short', 'basic');
+  assert.doesNotMatch(nodeText(activityPanel(shell, 'mcp')), /stale/);
+  assert.doesNotMatch(nodeText(activityPanel(shell, 'ledger')), /stale/);
+});
+
+test('MCP groups all calls while retaining measured zero excluded and missing sizes safely', () => {
+  const seed = plain(require('../fixtures/session-analytics/short-single-agent.json'));
+  const call = {timestamp: seed.start_time, agent: 'main', server: '<script>server</script>', method: 'method',
+    raw_tool_name: 'RAW_SECRET', tool_name: 'RAW_SECRET', content: 'CONTENT_SECRET'};
+  const session = {...seed, mcp_collection: {calls: 'collected', result_sizes: 'collected'},
+    mcp_activity: [{...call, result_chars: 0}, {...call, result_chars: 200, result_excluded: true}, {...call}]};
+  const shell = bootShell([freezeDeep(session)]);
+  openSession(shell, 'short', 'basic');
+  const panel = activityPanel(shell, 'mcp');
+  assert.equal(panel.children[0].textContent, 'MCP · 3 calls');
+  assert.match(nodeText(panel), /<script>server<\/script>\.method · 3 calls/);
+  assert.deepEqual(activityRows(shell, 'mcp').map(row => row.at(-1)),
+    ['Estimated result size: 0 characters', 'Excluded by collection limit', 'Estimated result size: Unavailable']);
+  assert.ok(sessionNodes(shell).every(node => node.innerHTML === ''));
+  assert.doesNotMatch(nodeText(shell.document.elements['view-container']), /RAW_SECRET|CONTENT_SECRET/);
+  const unmeasured = bootShell([{...session, mcp_collection: {calls: 'collected', result_sizes: 'not_collected'}}]);
+  openSession(unmeasured, 'short', 'basic');
+  assert.ok(activityRows(unmeasured, 'mcp').every(row => row.length === 3));
+  assert.doesNotMatch(nodeText(activityPanel(unmeasured, 'mcp')), /Estimated result size|Excluded/);
+});
+
+test('rendered ledger retains deterministic ties, full event detail, and missing time last', () => {
+  const seed = plain(require('../fixtures/session-analytics/short-single-agent.json'));
+  const event = {timestamp: seed.start_time, agent: 'main'};
+  const session = {...seed, agent_activity: [seed.agent_activity[0], {...seed.agent_activity[0], model_full: 'second-model'}],
+    skill_activity: [{...event, skill: 'first'}, {...event, skill: 'second'}],
+    command_activity: [{...event, name: '/command'}],
+    mcp_collection: {calls: 'collected', result_sizes: 'collected'},
+    mcp_activity: [{...event, server: 'server', method: 'method', result_chars: 0},
+      {...event, timestamp: null, server: 'server', method: 'last'}]};
+  const shell = bootShell([freezeDeep(session)]);
+  openSession(shell, 'short', 'basic');
+  const rows = activityRows(shell, 'ledger');
+  assert.deepEqual(rows.map(row => row[1]), ['Response', 'Response', 'Skill', 'Skill', 'Command', 'MCP', 'MCP']);
+  assert.match(rows[0][3], /claude-sonnet-5.*sonnet.*low.*input 1.*output 9.*cache read 0.*cache creation 0.*total 10/);
+  assert.match(rows[1][3], /second-model/);
+  assert.deepEqual(rows.slice(2, 5).map(row => row[3]), ['first', 'second', '/command']);
+  assert.equal(rows[5][3], 'server.method; Estimated result size: 0 characters');
+  assert.equal(rows[6][0], 'Time not recorded');
+  assert.match(nodeText(activityPanel(shell, 'ledger')), /Equal timestamps do not imply causality/);
+});
+
+test('legacy response details never invent missing timestamps or token components', () => {
+  const shell = bootShell([{session_id: 'legacy-detail', agent_activity: [{agent: 'main', total_tokens: 9}]}]);
+  openSession(shell, 'legacy-detail', 'basic');
+  assert.deepEqual(activityRows(shell, 'responses')[0],
+    ['Time not recorded', 'Unknown', 'unknown', 'Unknown', 'main',
+      'Not recorded', 'Not recorded', 'Not recorded', 'Not recorded', '9']);
+  const detail = activityRows(shell, 'ledger')[0][3];
+  assert.match(detail, /^Time not recorded;/);
+  assert.match(detail, /input Not recorded; output Not recorded; cache read Not recorded; cache creation Not recorded; total 9 tokens/);
+  assert.doesNotMatch(detail, /undefined|null/);
 });
 
 test('child changes preserve full-path independence and focused control', () => {
