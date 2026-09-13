@@ -14,6 +14,121 @@ from claude_prospector.parser import (
 )
 
 
+_USAGE = {
+    "input_tokens": 1,
+    "output_tokens": 2,
+    "cache_read_input_tokens": 3,
+    "cache_creation_input_tokens": 4,
+}
+
+
+def _assistant_entry(
+    message_id: str,
+    effort: object,
+    *,
+    timestamp: str,
+    content: list[dict] | None = None,
+    uuid: str | None = None,
+    git_branch: str | None = None,
+    entrypoint: str | None = None,
+    version: str | None = None,
+) -> dict:
+    """Build a minimal assistant entry for session-activity parser tests."""
+    entry = {
+        "type": "assistant",
+        "uuid": uuid or f"entry-{message_id}-{timestamp}",
+        "timestamp": timestamp,
+        "effort": effort,
+        "message": {
+            "id": message_id,
+            "model": "claude-sonnet-5",
+            "content": content or [{"type": "text", "text": "excluded"}],
+            "usage": dict(_USAGE),
+        },
+    }
+    if git_branch is not None:
+        entry["gitBranch"] = git_branch
+    if entrypoint is not None:
+        entry["entrypoint"] = entrypoint
+    if version is not None:
+        entry["version"] = version
+    return entry
+
+
+def _write_session(tmp_path: Path, entries: list[dict]) -> Path:
+    """Write JSONL entries to a parser session fixture."""
+    path = tmp_path / "session.jsonl"
+    path.write_text("\n".join(json.dumps(entry) for entry in entries), encoding="utf-8")
+    return path
+
+
+def _write_skill_fragment_session(tmp_path: Path) -> Path:
+    """Write duplicate fragments containing two distinct Skill calls."""
+    first = _assistant_entry(
+        "msg-skill",
+        "high",
+        timestamp="2026-09-13T10:00:00Z",
+        content=[
+            {
+                "type": "tool_use",
+                "id": "tool-python",
+                "name": "Skill",
+                "input": {"skill": "python", "args": "secret args"},
+            }
+        ],
+    )
+    duplicate = _assistant_entry(
+        "msg-skill",
+        "high",
+        timestamp="2026-09-13T10:00:01Z",
+        content=[
+            {
+                "type": "tool_use",
+                "id": "tool-python",
+                "name": "Skill",
+                "input": {"skill": "python", "args": "secret args"},
+            }
+        ],
+    )
+    second = _assistant_entry(
+        "msg-skill",
+        "high",
+        timestamp="2026-09-13T10:00:02Z",
+        content=[
+            {
+                "type": "tool_use",
+                "id": "tool-frontend",
+                "name": "Skill",
+                "input": {"skill": "frontend-design"},
+            }
+        ],
+    )
+    return _write_session(tmp_path, [first, duplicate, second])
+
+
+def _write_metadata_session(tmp_path: Path) -> Path:
+    """Write entries with distinct allowlisted metadata values."""
+    return _write_session(
+        tmp_path,
+        [
+            _assistant_entry(
+                "msg-1",
+                "high",
+                timestamp="2026-09-13T10:00:00Z",
+                git_branch="main",
+                entrypoint="cli",
+                version="2.1.220",
+            ),
+            _assistant_entry(
+                "msg-2",
+                "high",
+                timestamp="2026-09-13T10:01:00Z",
+                git_branch="codex/session-effort-analytics",
+            ),
+        ],
+    )
+
+
 class TestDecodeProjectHash:
     def test_windows_path_deep(self):
         assert decode_project_hash("C--Users-chris--claude") == "claude"
@@ -1348,3 +1463,145 @@ class TestDeriveProjectNameWorktreeRollup:
         slug = "C--repos-my-api--worktrees-fix-issue-229-rollup"
         result = derive_project_name(None, slug)
         assert result == "my-api"
+
+
+class TestSessionActivityParsing:
+    """Tests for privacy-safe session effort and activity extraction."""
+
+    def test_effort_is_trimmed_and_future_values_are_preserved(
+        self, tmp_path: Path
+    ) -> None:
+        """Effort values normalize strings without restricting future levels."""
+        path = _write_session(
+            tmp_path,
+            [
+                _assistant_entry("msg-1", " high ", timestamp="2026-09-13T10:00:00Z"),
+                _assistant_entry("msg-2", "xhigh", timestamp="2026-09-13T10:01:00Z"),
+                _assistant_entry("msg-3", 42, timestamp="2026-09-13T10:02:00Z"),
+                _assistant_entry("msg-4", "   ", timestamp="2026-09-13T10:03:00Z"),
+            ],
+        )
+
+        session = _parse_session(path, "project")
+
+        assert session is not None
+        assert [message.effort for message in session.messages] == [
+            "high",
+            "xhigh",
+            None,
+            None,
+        ]
+
+    def test_duplicate_fragments_fill_missing_effort_and_count_conflicts(
+        self, tmp_path: Path
+    ) -> None:
+        """Duplicate messages merge a later effort but record contradictions."""
+        path = _write_session(
+            tmp_path,
+            [
+                _assistant_entry("msg-1", None, timestamp="2026-09-13T10:00:00Z"),
+                _assistant_entry("msg-1", "high", timestamp="2026-09-13T10:00:01Z"),
+                _assistant_entry("msg-1", "low", timestamp="2026-09-13T10:00:02Z"),
+            ],
+        )
+
+        session = _parse_session(path, "project")
+
+        assert session is not None
+        assert len(session.messages) == 1
+        assert session.messages[0].effort == "high"
+        assert session.effort_conflicts == 1
+
+    def test_skill_blocks_are_complete_and_deduplicated_by_tool_use_id(
+        self, tmp_path: Path
+    ) -> None:
+        """Distinct Skill calls survive message fragments without arguments."""
+        session = _parse_session(_write_skill_fragment_session(tmp_path), "project")
+
+        assert session is not None
+        assert [event.skill for event in session.skill_invocations] == [
+            "python",
+            "frontend-design",
+        ]
+        assert all(event.agent_path == ("main",) for event in session.skill_invocations)
+        assert "secret args" not in repr(session.skill_invocations)
+        assert "excluded" not in repr(session.skill_invocations)
+
+    def test_skill_blocks_without_tool_message_or_entry_ids_use_entry_ordinal(
+        self, tmp_path: Path
+    ) -> None:
+        """Anonymous Skill blocks use transcript ordinals to avoid collisions."""
+        entries = [
+            _assistant_entry(
+                "",
+                "high",
+                uuid="",
+                timestamp=f"2026-09-13T10:00:0{second}Z",
+                content=[
+                    {
+                        "type": "tool_use",
+                        "name": "Skill",
+                        "input": {"skill": "python"},
+                    }
+                ],
+            )
+            for second in (0, 1)
+        ]
+        for entry in entries:
+            entry.pop("uuid", None)
+            entry["message"].pop("id", None)
+
+        session = _parse_session(_write_session(tmp_path, entries), "project")
+
+        assert session is not None
+        assert [event.skill for event in session.skill_invocations] == [
+            "python",
+            "python",
+        ]
+
+    def test_subagent_skill_invocation_retains_full_path(self, tmp_path: Path) -> None:
+        """Skill records retain the root-to-leaf path from the walker."""
+        root = _write_session(
+            tmp_path,
+            [_assistant_entry("root", "high", timestamp="2026-09-13T10:00:00Z")],
+        )
+        child_dir = tmp_path / root.stem / "subagents"
+        child_dir.mkdir(parents=True)
+        (child_dir / "agent-child.meta.json").write_text(
+            json.dumps({"agentType": "worker"}), encoding="utf-8"
+        )
+        child_entry = _assistant_entry(
+            "child",
+            "low",
+            timestamp="2026-09-13T10:00:01Z",
+            content=[
+                {
+                    "type": "tool_use",
+                    "id": "child-skill",
+                    "name": "Skill",
+                    "input": {"skill": "python"},
+                }
+            ],
+        )
+        (child_dir / "agent-child.jsonl").write_text(
+            json.dumps(child_entry), encoding="utf-8"
+        )
+
+        session = _parse_session(root, "project")
+
+        assert session is not None
+        assert session.skill_invocations[0].agent_path == ("general-purpose", "worker")
+
+    def test_metadata_observations_retain_distinct_recorded_values(
+        self, tmp_path: Path
+    ) -> None:
+        """Allowlisted metadata records each observed deterministic value."""
+        session = _parse_session(_write_metadata_session(tmp_path), "project")
+
+        assert session is not None
+        assert {(item.name, item.value) for item in session.metadata_observations} == {
+            ("git_branch", "main"),
+            ("git_branch", "codex/session-effort-analytics"),
+            ("entrypoint", "cli"),
+            ("claude_code_version", "2.1.220"),
+        }

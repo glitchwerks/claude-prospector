@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 from claude_prospector.models import (
     MessageRecord,
     SessionRecord,
+    SessionMetadataObservation,
+    SkillInvocationRecord,
     SkillPassedEvent,
     SkillInvokedEvent,
 )
@@ -328,6 +330,68 @@ class TestAgentPath:
         )
         assert record.agent_type == "x"
         assert record.agent_path == ()
+
+
+class TestSessionActivityRecords:
+    """Tests for privacy-safe transcript activity records.
+
+    These tests would fail if the parser-facing dataclasses dropped their
+    timestamp or agent attribution, or if their stable defaults changed.
+    """
+
+    _TIMESTAMP = datetime(2026, 9, 13, 10, 0, tzinfo=timezone.utc)
+
+    def test_activity_records_retain_only_analytics_fields(self) -> None:
+        """Skill and metadata observations retain their deterministic facts."""
+        skill = SkillInvocationRecord(
+            skill="python",
+            timestamp=self._TIMESTAMP,
+            agent_path=("general-purpose", "worker"),
+            tool_use_id="tool-python",
+        )
+        metadata = SessionMetadataObservation(
+            name="git_branch",
+            value="main",
+            timestamp=self._TIMESTAMP,
+            agent_path=("main",),
+        )
+
+        assert skill == SkillInvocationRecord(
+            skill="python",
+            timestamp=self._TIMESTAMP,
+            agent_path=("general-purpose", "worker"),
+            tool_use_id="tool-python",
+        )
+        assert metadata.name == "git_branch"
+        assert metadata.value == "main"
+
+    def test_message_and_session_activity_defaults_are_empty(self) -> None:
+        """Existing constructors get privacy-safe activity defaults."""
+        message = MessageRecord(
+            timestamp=self._TIMESTAMP,
+            model="claude-sonnet-5",
+            agent_type="main",
+            skill=None,
+            input_tokens=0,
+            output_tokens=0,
+            cache_read_tokens=0,
+            cache_creation_tokens=0,
+        )
+        session = SessionRecord(
+            session_id="activity-defaults",
+            project="project",
+            project_path="",
+            start_time=self._TIMESTAMP,
+            root_agent="main",
+            messages=[message],
+            subagent_types=[],
+        )
+
+        assert message.effort is None
+        assert session.skill_invocations == []
+        assert session.metadata_observations == []
+        assert session.agent_paths == []
+        assert session.effort_conflicts == 0
 
 
 class TestSkillPassedEvent:

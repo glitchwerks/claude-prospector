@@ -11,7 +11,9 @@ from pathlib import Path
 from claude_prospector.models import (
     CommandInvocationRecord,
     MessageRecord,
+    SessionMetadataObservation,
     SessionRecord,
+    SkillInvocationRecord,
 )
 from claude_prospector.transcript_walker import walk_session
 
@@ -316,16 +318,69 @@ def _parse_timestamp(ts_str: str) -> datetime:
     return datetime.fromisoformat(ts_str)
 
 
-def _extract_skill(content: list[dict]) -> str | None:
-    """Extract skill name from assistant message content blocks."""
-    for block in content:
-        if (
-            block.get("type") == "tool_use"
-            and block.get("name") == "Skill"
-            and isinstance(block.get("input"), dict)
-        ):
-            return block["input"].get("skill")
-    return None
+_SESSION_METADATA_FIELDS = {
+    "gitBranch": "git_branch",
+    "entrypoint": "entrypoint",
+    "version": "claude_code_version",
+}
+
+
+def _parse_effort(value: object) -> str | None:
+    """Normalize a transcript effort label without restricting future values."""
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
+def _extract_skill_invocations(
+    content: list[dict],
+    *,
+    timestamp: datetime,
+    agent_path: tuple[str, ...],
+    message_id: str | None,
+    entry_id: str | None,
+    entry_ordinal: int,
+    transcript_key: str,
+) -> list[tuple[tuple[object, ...], SkillInvocationRecord]]:
+    """Return every valid privacy-safe Skill block and its stable identity.
+
+    Tool-use IDs deduplicate repeated transcript fragments. Entries without an
+    ID use the transcript-local ordinal to keep distinct anonymous blocks from
+    colliding while retaining no arguments or message content.
+    """
+    found: list[tuple[tuple[object, ...], SkillInvocationRecord]] = []
+    for index, block in enumerate(content):
+        if block.get("type") != "tool_use" or block.get("name") != "Skill":
+            continue
+        payload = block.get("input")
+        skill = payload.get("skill") if isinstance(payload, dict) else None
+        if not isinstance(skill, str) or not skill.strip():
+            continue
+        tool_use_id = block.get("id") if isinstance(block.get("id"), str) else ""
+        identity = (
+            ("tool", transcript_key, tool_use_id)
+            if tool_use_id
+            else (
+                "fallback",
+                transcript_key,
+                message_id or entry_id or entry_ordinal,
+                index,
+                skill.strip(),
+            )
+        )
+        found.append(
+            (
+                identity,
+                SkillInvocationRecord(
+                    skill=skill.strip(),
+                    timestamp=timestamp,
+                    agent_path=agent_path,
+                    tool_use_id=tool_use_id,
+                ),
+            )
+        )
+    return found
 
 
 def _extract_manual_command(entry: dict) -> CommandInvocationRecord | None:
@@ -364,8 +419,14 @@ def _parse_jsonl_records(
     agent_path: tuple[str, ...] = (),
     *,
     collect_commands: bool = True,
-) -> tuple[list[MessageRecord], list[CommandInvocationRecord]]:
-    """Parse assistant messages and manual commands in one transcript pass.
+) -> tuple[
+    list[MessageRecord],
+    list[CommandInvocationRecord],
+    list[SkillInvocationRecord],
+    list[SessionMetadataObservation],
+    int,
+]:
+    """Parse privacy-safe transcript facts in one pass.
 
     Args:
         jsonl_path: Transcript JSONL file to parse.
@@ -375,15 +436,22 @@ def _parse_jsonl_records(
             enabled only for a session's root transcript.
 
     Returns:
-        Assistant message records and manual command records. Command records
-        retain only the command-name tag and timestamp.
+        Assistant messages, manual commands, Skill invocations, allowlisted
+        metadata observations, and duplicate-message effort conflict count.
+        Stored records never retain prompts, thinking, Skill arguments, tool
+        inputs, or tool-result content.
     """
     messages: list[MessageRecord] = []
     commands: list[CommandInvocationRecord] = []
+    skill_invocations: list[SkillInvocationRecord] = []
+    metadata_observations: list[SessionMetadataObservation] = []
     message_indexes: dict[str, int] = {}
     command_entry_ids: set[str] = set()
+    skill_identities: set[tuple[object, ...]] = set()
+    effort_conflicts = 0
+    transcript_key = str(jsonl_path.resolve())
     with open(jsonl_path, "r", encoding="utf-8") as f:
-        for line in f:
+        for entry_ordinal, line in enumerate(f):
             line = line.strip()
             if not line:
                 continue
@@ -410,25 +478,76 @@ def _parse_jsonl_records(
                 continue
 
             msg = entry.get("message", {})
+            if not isinstance(msg, dict):
+                continue
             usage = msg.get("usage")
             model = msg.get("model")
             if not usage or not model:
                 continue
 
             content = msg.get("content", [])
-            skill = _extract_skill(content) if isinstance(content, list) else None
+            timestamp_raw = entry.get("timestamp")
+            if not isinstance(timestamp_raw, str):
+                continue
+            try:
+                timestamp = _parse_timestamp(timestamp_raw)
+            except ValueError:
+                continue
+
             message_id = msg.get("id")
+            message_id = message_id if isinstance(message_id, str) else None
+            entry_id = entry.get("uuid")
+            entry_id = entry_id if isinstance(entry_id, str) else None
+            skill_records = (
+                _extract_skill_invocations(
+                    content,
+                    timestamp=timestamp,
+                    agent_path=agent_path,
+                    message_id=message_id,
+                    entry_id=entry_id,
+                    entry_ordinal=entry_ordinal,
+                    transcript_key=transcript_key,
+                )
+                if isinstance(content, list)
+                else []
+            )
+            for identity, record in skill_records:
+                if identity not in skill_identities:
+                    skill_identities.add(identity)
+                    skill_invocations.append(record)
+            skill = skill_records[0][1].skill if skill_records else None
+
+            for field_name, normalized_name in _SESSION_METADATA_FIELDS.items():
+                value = entry.get(field_name)
+                if isinstance(value, str) and value:
+                    metadata_observations.append(
+                        SessionMetadataObservation(
+                            name=normalized_name,
+                            value=value,
+                            timestamp=timestamp,
+                            agent_path=agent_path,
+                        )
+                    )
+
+            candidate_effort = _parse_effort(entry.get("effort"))
 
             if message_id is not None and message_id in message_indexes:
                 message_index = message_indexes[message_id]
                 existing = messages[message_index]
                 if existing.skill is None and skill is not None:
                     messages[message_index] = replace(existing, skill=skill)
+                    existing = messages[message_index]
+                if existing.effort is None and candidate_effort is not None:
+                    messages[message_index] = replace(existing, effort=candidate_effort)
+                elif (
+                    existing.effort is not None
+                    and candidate_effort is not None
+                    and existing.effort != candidate_effort
+                ):
+                    effort_conflicts += 1
                 # Fragment lines repeat the message's final usage snapshot;
                 # summing duplicate IDs would multiply every usage field.
                 continue
-
-            timestamp = _parse_timestamp(entry["timestamp"])
 
             messages.append(
                 MessageRecord(
@@ -441,11 +560,18 @@ def _parse_jsonl_records(
                     cache_read_tokens=usage.get("cache_read_input_tokens", 0),
                     cache_creation_tokens=usage.get("cache_creation_input_tokens", 0),
                     agent_path=agent_path,
+                    effort=candidate_effort,
                 )
             )
             if message_id is not None:
                 message_indexes[message_id] = len(messages) - 1
-    return messages, commands
+    return (
+        messages,
+        commands,
+        skill_invocations,
+        metadata_observations,
+        effort_conflicts,
+    )
 
 
 def _parse_jsonl_messages(
@@ -463,7 +589,7 @@ def _parse_jsonl_messages(
     Returns:
         Parsed assistant message records.
     """
-    messages, _ = _parse_jsonl_records(
+    messages, _, _, _, _ = _parse_jsonl_records(
         jsonl_path,
         agent_type,
         agent_path,
@@ -540,8 +666,17 @@ def _parse_session(
 
     messages: list[MessageRecord] = []
     commands: list[CommandInvocationRecord] = []
+    skill_invocations: list[SkillInvocationRecord] = []
+    metadata_observations: list[SessionMetadataObservation] = []
+    effort_conflicts = 0
     for unit in transcripts:
-        unit_messages, unit_commands = _parse_jsonl_records(
+        (
+            unit_messages,
+            unit_commands,
+            unit_skill_invocations,
+            unit_metadata_observations,
+            unit_effort_conflicts,
+        ) = _parse_jsonl_records(
             unit.jsonl_path,
             agent_type=unit.agent_type,
             agent_path=unit.agent_path,
@@ -549,6 +684,9 @@ def _parse_session(
         )
         messages.extend(unit_messages)
         commands.extend(unit_commands)
+        skill_invocations.extend(unit_skill_invocations)
+        metadata_observations.extend(unit_metadata_observations)
+        effort_conflicts += unit_effort_conflicts
 
     if not messages:
         start_time = datetime.now(timezone.utc)
@@ -564,6 +702,10 @@ def _parse_session(
         messages=messages,
         subagent_types=sorted(set(subagent_types)),
         commands=commands,
+        skill_invocations=skill_invocations,
+        metadata_observations=metadata_observations,
+        agent_paths=[unit.agent_path for unit in transcripts],
+        effort_conflicts=effort_conflicts,
     )
 
 

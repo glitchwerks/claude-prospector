@@ -25,6 +25,8 @@ class MessageRecord:
         output_tokens: Completion token count.
         cache_read_tokens: Tokens served from the prompt cache.
         cache_creation_tokens: Tokens written to the prompt cache.
+        effort: Normalized effort label recorded by the transcript, or ``None``
+            when unavailable. Future non-empty string values are retained.
     """
 
     timestamp: datetime
@@ -36,6 +38,7 @@ class MessageRecord:
     cache_read_tokens: int
     cache_creation_tokens: int
     agent_path: tuple[str, ...] = ()
+    effort: str | None = None
 
     @property
     def total_tokens(self) -> int:
@@ -83,6 +86,49 @@ class CommandInvocationRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class SkillInvocationRecord:
+    """A privacy-safe Skill tool invocation observed in a transcript.
+
+    Only the normalized skill name, timestamp, agent path, and optional
+    tool-use identifier are retained. Skill arguments, message text, and tool
+    result content are never retained. The parser deduplicates records with a
+    tool-use identifier independently from response-message deduplication.
+
+    Attributes:
+        skill: Trimmed Skill name from the tool-use input.
+        timestamp: When the invocation was recorded.
+        agent_path: Full root-to-leaf path for the invoking agent.
+        tool_use_id: Transcript tool-use identifier, when present.
+    """
+
+    skill: str
+    timestamp: datetime
+    agent_path: tuple[str, ...]
+    tool_use_id: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class SessionMetadataObservation:
+    """A privacy-safe allowlisted session metadata observation.
+
+    The parser records only deterministic allowlisted field names and string
+    values. It never retains message text, prompts, thinking, tool inputs, or
+    tool-result content.
+
+    Attributes:
+        name: Normalized allowlisted field name.
+        value: Recorded string value for the field.
+        timestamp: When the metadata value was recorded.
+        agent_path: Full root-to-leaf path for the source transcript.
+    """
+
+    name: str
+    value: str
+    timestamp: datetime
+    agent_path: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class SessionRecord:
     """A parsed session with all its messages (including subagent messages).
 
@@ -104,6 +150,12 @@ class SessionRecord:
             encountered at any depth.
         commands: Manual slash-command invocations. Records retain only the
             command name and timestamp, never arguments or prompt content.
+        skill_invocations: Privacy-safe Skill invocation records, deduplicated
+            by tool-use identity independently from response messages.
+        metadata_observations: Deterministic allowlisted metadata values only.
+        agent_paths: Discovered transcript paths, including empty transcripts.
+        effort_conflicts: Count of conflicting non-empty effort values across
+            duplicate response fragments.
     """
 
     session_id: str
@@ -114,6 +166,12 @@ class SessionRecord:
     messages: list[MessageRecord]
     subagent_types: list[str]
     commands: list[CommandInvocationRecord] = field(default_factory=list)
+    skill_invocations: list[SkillInvocationRecord] = field(default_factory=list)
+    metadata_observations: list[SessionMetadataObservation] = field(
+        default_factory=list
+    )
+    agent_paths: list[tuple[str, ...]] = field(default_factory=list)
+    effort_conflicts: int = 0
 
     @property
     def total_tokens(self) -> int:
