@@ -214,3 +214,92 @@ def test_session_activity_respects_the_cli_time_window() -> None:
             "name": "/later",
         }
     ]
+
+
+def test_session_facts_retain_conflicting_metadata_values_and_paths() -> None:
+    """Retain all metadata values instead of selecting a preferred branch."""
+    start = datetime(2026, 9, 13, 10, tzinfo=timezone.utc)
+    session = replace(
+        _effort_session(),
+        metadata_observations=[
+            SessionMetadataObservation(
+                name="git_branch",
+                value="main",
+                timestamp=start + timedelta(minutes=1),
+                agent_path=("main",),
+            ),
+            SessionMetadataObservation(
+                name="git_branch",
+                value="feature/analytics",
+                timestamp=start + timedelta(minutes=2),
+                agent_path=("main", "worker"),
+            ),
+            SessionMetadataObservation(
+                name="git_branch",
+                value="main",
+                timestamp=start + timedelta(minutes=3),
+                agent_path=("main", "worker"),
+            ),
+        ],
+    )
+
+    assert aggregate([session]).sessions[0]["session_facts"]["metadata"] == [
+        {
+            "name": "git_branch",
+            "value": "main",
+            "first_seen": "2026-09-13T10:01:00+00:00",
+            "agent_paths": [["main"], ["main", "worker"]],
+        },
+        {
+            "name": "git_branch",
+            "value": "feature/analytics",
+            "first_seen": "2026-09-13T10:02:00+00:00",
+            "agent_paths": [["main", "worker"]],
+        },
+    ]
+
+
+def test_same_timestamp_activity_keeps_original_ordinal_order() -> None:
+    """Keep transcript order when activity records have equal timestamps."""
+    start = datetime(2026, 9, 13, 10, tzinfo=timezone.utc)
+    source = _effort_session()
+    session = replace(
+        source,
+        messages=[
+            replace(source.messages[1], timestamp=start),
+            source.messages[0],
+        ],
+        commands=[
+            CommandInvocationRecord(name="/first", timestamp=start),
+            CommandInvocationRecord(name="/second", timestamp=start),
+        ],
+        skill_invocations=[
+            SkillInvocationRecord(
+                skill="worker-skill",
+                timestamp=start,
+                agent_path=("main", "worker"),
+                tool_use_id="tool-worker",
+            ),
+            SkillInvocationRecord(
+                skill="main-skill",
+                timestamp=start,
+                agent_path=("main",),
+                tool_use_id="tool-main",
+            ),
+        ],
+    )
+
+    summary = aggregate([session]).sessions[0]
+
+    assert [row["agent"] for row in summary["agent_activity"]] == [
+        f"main{AGENT_PATH_SEPARATOR}worker",
+        "main",
+    ]
+    assert [row["skill"] for row in summary["skill_activity"]] == [
+        "worker-skill",
+        "main-skill",
+    ]
+    assert [row["name"] for row in summary["command_activity"]] == [
+        "/first",
+        "/second",
+    ]
