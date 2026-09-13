@@ -276,36 +276,35 @@ def test_valid_flag_import_fails_deletes_flag_and_emits_banner(
     tmp_path: Path,
 ) -> None:
     """VALID flag + import probe fails -> flag deleted, MISSING banner emitted."""
-    if platform.system() == "Windows":
-        venv_python_dir = tmp_path / "venv" / "Scripts"
-        venv_python_dir.mkdir(parents=True)
-        venv_python = venv_python_dir / "python.exe"
-    else:
-        venv_python_dir = tmp_path / "venv" / "bin"
-        venv_python_dir.mkdir(parents=True)
-        venv_python = venv_python_dir / "python"
+    scripts_name = "Scripts" if platform.system() == "Windows" else "bin"
+    current_python = Path(sys.executable)
+    assert (
+        current_python.parent.name.lower() == scripts_name.lower()
+    ), "Run hook tests with the project virtual environment"
+    venv_dir = current_python.parent.parent
 
-    # Write a script that always exits 1 (simulates broken venv)
-    fail_script = textwrap.dedent("""\
-        #!/usr/bin/env python3
-        import sys
-        sys.exit(1)
-    """)
-    venv_python.write_text(fail_script, encoding="utf-8")
-    if platform.system() != "Windows":
-        venv_python.chmod(0o755)
+    # Use the real venv interpreter and shadow the installed package with an
+    # import-failing package. A shebang script named ``python.exe`` is not a
+    # valid Windows executable and can hang this probe on Windows.
+    failure_site = tmp_path / "failure_site"
+    failure_package = failure_site / "claude_prospector"
+    failure_package.mkdir(parents=True)
+    (failure_package / "__init__.py").write_text(
+        'raise ImportError("simulated broken installation")\n',
+        encoding="utf-8",
+    )
 
     _write_flag(
         tmp_path,
         {
             "version": _CURRENT_VERSION,
-            "venv_path": str(tmp_path / "venv"),
+            "venv_path": str(venv_dir),
             "interpreter": "python3",
             "installed_at": "2026-01-01T00:00:00Z",
         },
     )
 
-    output = _run_hook(tmp_path)
+    output = _run_hook(tmp_path, extra_env={"PYTHONPATH": str(failure_site)})
 
     # Flag must be deleted (probe failure -> downgrade to MISSING)
     assert not (
