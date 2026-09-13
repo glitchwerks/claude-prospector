@@ -122,6 +122,7 @@ def render(
         cp_utils_js=_read_static("cp-utils.js"),
         economics_basic_js=_read_static("views/economics-basic.js"),
         layout_b_diag_js=_read_static("views/layout-b-diag.js"),
+        session_detail_js=_read_static("views/session-detail.js"),
         economics_js=_read_static("views/economics.js"),
         mcp_usage_js=_read_static("views/mcp-usage.js"),
         agents_js=_read_static("views/agents.js"),

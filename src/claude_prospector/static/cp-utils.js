@@ -234,6 +234,18 @@
     });
   }
 
+  function parseRoute(hash) {
+    const params = new URLSearchParams(String(hash || '').replace(/^#/, ''));
+    const entries = [...params.entries()];
+    if (entries.length !== 1 || entries[0][0] !== 'session') {
+      return { kind: 'dashboard' };
+    }
+    const sessionId = entries[0][1];
+    return sessionId
+      ? { kind: 'session', sessionId }
+      : { kind: 'not-found', sessionId: '' };
+  }
+
   const sessionAnalytics = {
     inRange,
     scopeSession,
@@ -244,6 +256,7 @@
     setSubtree,
     selectionState,
     mergeLedger,
+    parseRoute,
   };
 
   // ── Model helpers ────────────────────────────────────────────────────────

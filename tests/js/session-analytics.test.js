@@ -28,6 +28,19 @@ function rangeForResponse(response) {
   return {start, end: start + 1};
 }
 
+test('parseRoute accepts one encoded session key only', () => {
+  assert.deepEqual(
+    A.parseRoute('#session=abc%2F123'),
+    {kind: 'session', sessionId: 'abc/123'},
+  );
+  assert.deepEqual(
+    A.parseRoute('#session='),
+    {kind: 'not-found', sessionId: ''},
+  );
+  assert.deepEqual(A.parseRoute('#unknown=value'), {kind: 'dashboard'});
+  assert.deepEqual(A.parseRoute('#session=one&session=two'), {kind: 'dashboard'});
+});
+
 test('bucket totals reconcile for every effort series', () => {
   const session = require('../fixtures/session-analytics/long-concurrent-agents.json');
   const buckets = A.bucketResponses(session.agent_activity, {
