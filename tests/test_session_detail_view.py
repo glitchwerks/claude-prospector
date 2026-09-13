@@ -1,5 +1,6 @@
 """Packaging smoke tests; interactive behavior runs in the Node VM suite."""
 
+import re
 from importlib import resources
 from pathlib import Path
 
@@ -95,3 +96,22 @@ def test_session_controls_ship_in_rendered_dashboard(tmp_path: Path) -> None:
 def test_empty_dashboard_retains_session_renderer(tmp_path: Path) -> None:
     """No sessions still produces a dashboard with its route view installed."""
     assert "window.renderSessionDetail = renderSessionDetail" in _render_html(tmp_path)
+
+
+def test_narrow_session_tables_scroll_instead_of_wrapping_each_character(
+    tmp_path: Path,
+) -> None:
+    """Keep readable columns inside the existing horizontal scroll region.
+
+    A CSS contract is necessary because the Node DOM has no layout engine;
+    the final browser smoke also checks actual widths at 390 pixels.
+    """
+    html = _render_html(tmp_path, _session_result())
+    table = re.search(r"\.session-page table\s*\{([^}]+)\}", html)
+    wrapper = re.search(r"\.session-page \.session-table-wrap\s*\{([^}]+)\}", html)
+    assert table is not None and wrapper is not None
+    minimum = re.search(r"min-width:\s*(\d+)px", table.group(1))
+    assert minimum is not None, "Tables need a readable width floor"
+    assert int(minimum.group(1)) >= 640
+    assert "overflow-wrap: normal" in table.group(1)
+    assert "overflow-x: auto" in wrapper.group(1)

@@ -38,7 +38,7 @@
     .session-page .session-ranges output { display: block; color: #8b949e; font-size: 11px; }
     .session-page .session-brush { cursor: crosshair; touch-action: none; }
     .session-page .session-table-wrap { max-width: 100%; overflow-x: auto; margin: 12px 0; }
-    .session-page table { border-collapse: collapse; width: 100%; font-size: 12px; font-variant-numeric: tabular-nums; }
+    .session-page table { border-collapse: collapse; width: 100%; min-width: 640px; overflow-wrap: normal; font-size: 12px; font-variant-numeric: tabular-nums; }
     .session-page caption { text-align: left; color: #8b949e; padding: 8px 0; }
     .session-page th, .session-page td { text-align: right; padding: 7px 10px; border-bottom: 1px solid #30363d; }
     .session-page th:first-child, .session-page td:first-child { text-align: left; }

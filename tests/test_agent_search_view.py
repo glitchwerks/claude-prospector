@@ -12,6 +12,7 @@ import pytest
 
 from claude_prospector.aggregator import AggregateResult
 from claude_prospector.renderer import render
+from tests.test_phase3_views import _exercise_shell_views
 
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -46,20 +47,6 @@ def _render_html(tmp_path: Path) -> str:
     output_path = tmp_path / "dashboard.html"
     render(AggregateResult(), output_path=output_path, open_browser=False)
     return output_path.read_text(encoding="utf-8")
-
-
-def _extract_render_view_body(html: str) -> str:
-    """Extract the dashboard shell's view-dispatch function.
-
-    Args:
-        html: Complete rendered dashboard HTML.
-
-    Returns:
-        JavaScript source for ``_renderView``.
-    """
-    start = html.index("function _renderView(view)")
-    end = html.index("function setView(view)", start)
-    return html[start:end]
 
 
 def test_agent_view_exposes_render_entry_point() -> None:
@@ -409,22 +396,23 @@ def test_view_dispatch_is_exhaustive_and_rejects_unknown_views(
 ) -> None:
     """Restoring Advanced as the unknown-view catch-all must fail."""
     html = _render_html(tmp_path)
-    body = _extract_render_view_body(html)
     view_names = set(re.findall(r'data-view="([^"]+)"', html))
 
     assert view_names == {"basic", "detail", "advanced", "mcp", "agents", "skills"}
-    for view_name in view_names:
-        assert re.search(
-            rf"view\s*===\s*['\"]{view_name}['\"]",
-            body,
-        )
-    assert "renderAgents(_container)" in body
-    assert re.search(
-        r"view\s*===\s*['\"]advanced['\"].*?renderEconomics\(_container\)",
-        body,
-        re.DOTALL,
-    )
-    assert "console.error('Unknown view:', view)" in body
+    expected = {
+        "basic": "overview",
+        "detail": "breakdown",
+        "advanced": "economics",
+        "mcp": "mcp usage",
+        "agents": "agent lookup",
+        "skills": "skill adoption",
+    }
+    observed = _exercise_shell_views(html, [*expected, "unknown"])
+    assert observed["results"] == [
+        {"view": view, "output": output, "selected": [view]}
+        for view, output in expected.items()
+    ] + [{"view": "unknown", "output": "", "selected": []}]
+    assert observed["errors"] == [["Unknown view:", "unknown"]]
 
 
 def test_view_tabs_scroll_inside_narrow_viewports(tmp_path: Path) -> None:

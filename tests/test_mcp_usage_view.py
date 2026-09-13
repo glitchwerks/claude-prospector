@@ -31,6 +31,7 @@ from pathlib import Path
 
 from claude_prospector.aggregator import AggregateResult
 from claude_prospector.renderer import render
+from tests.test_phase3_views import _exercise_shell_views
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _MCP_USAGE_JS = (
@@ -82,25 +83,6 @@ def _render_html(tmp_path: Path, result: AggregateResult | None = None) -> str:
     out = tmp_path / "dashboard.html"
     render(result, output_path=out, open_browser=False)
     return out.read_text(encoding="utf-8")
-
-
-def _extract_render_view_body(html: str) -> str:
-    """Slice out the ``_renderView(view)`` function body from rendered HTML.
-
-    Args:
-        html: Full rendered dashboard HTML.
-
-    Returns:
-        The source text from the ``function _renderView(view)`` marker up
-        to (not including) the following ``function setView(view)``
-        marker, per ``templates/dashboard.html``'s current shell layout.
-
-    Raises:
-        ValueError: If either marker is absent (``str.index`` propagates).
-    """
-    start = html.index("function _renderView(view)")
-    end = html.index("function setView(view)", start)
-    return html[start:end]
 
 
 def _read_mcp_usage_js_source() -> str:
@@ -236,54 +218,21 @@ class TestMcpTabWiring:
 
 
 class TestMcpTabDispatchReachable:
-    """Guard against the documented `_renderView` trap.
-
-    `_renderView`'s existing final `else` is a bare catch-all calling
-    `renderEconomics`, not an explicit `view === 'advanced'` guard. Two
-    failure modes it calls out: shipping the `data-view="mcp"` button with
-    no matching branch at all, or inserting the branch in a position where
-    the catch-all shadows it first -- both make the new tab silently
-    render Economics, with no console error and no visual cue anything is
-    wrong.
-    `TestMcpTabWiring` above only proves the button exists; it does not
-    prove clicking it reaches `renderMcpUsage`. This test does not
-    mandate a specific branch shape (`else if` vs. an explicit dispatch
-    table) -- only that an `mcp` comparison exists and is not shadowed by
-    a bare catch-all positioned ahead of it.
-    """
+    """Clicking MCP must render MCP output even after visiting Advanced."""
 
     def test_renderview_dispatches_mcp_and_is_not_shadowed_by_catchall(
         self, tmp_path: Path
     ) -> None:
-        """`_renderView` must compare `view` to 'mcp' before any bare
-        catch-all `else { ... }` block that would otherwise shadow it.
-        """
+        """An Economics catch-all must not swallow the MCP tab click."""
         html = _render_html(tmp_path)
-        body = _extract_render_view_body(html)
-
-        mcp_match = re.search(r"view\s*===\s*['\"]mcp['\"]", body)
-        assert mcp_match, (
-            "_renderView's source has no `view === 'mcp'` (or "
-            '`view === "mcp"`) comparison. The mcp tab has no reachable '
-            "dispatch branch -- clicking it would silently fall through "
-            "to the shell's existing catch-all (renderEconomics), per "
-            "the trap described above."
-        )
-
-        # A bare `else { ... }` (i.e. not `else if`) is the documented
-        # catch-all. If one appears before the mcp comparison, the mcp
-        # branch is unreachable dead code -- the catch-all wins first.
-        catchall_pattern = re.compile(r"else(?!\s+if)\s*\{")
-        for catchall_match in catchall_pattern.finditer(body):
-            if catchall_match.start() < mcp_match.start():
-                raise AssertionError(
-                    "_renderView contains a bare catch-all `else { ... }` "
-                    "positioned before the 'mcp' dispatch comparison. Per "
-                    "the trap described above, the mcp branch must be inserted "
-                    "BEFORE the catch-all (e.g. as an `else if`), not "
-                    "after -- otherwise it is unreachable and the mcp "
-                    "tab silently renders Economics instead."
-                )
+        observed = _exercise_shell_views(html, ["advanced", "mcp"])
+        assert observed == {
+            "results": [
+                {"view": "advanced", "output": "economics", "selected": ["advanced"]},
+                {"view": "mcp", "output": "mcp usage", "selected": ["mcp"]},
+            ],
+            "errors": [],
+        }
 
 
 # ---------------------------------------------------------------------------

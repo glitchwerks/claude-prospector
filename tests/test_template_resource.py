@@ -15,6 +15,57 @@ editable and wheel installs.
 from __future__ import annotations
 
 import importlib.resources
+import json
+from pathlib import Path
+
+import pytest
+
+from claude_prospector.aggregator import AggregateResult
+from claude_prospector.renderer import render
+
+
+@pytest.mark.parametrize(
+    "name,session_id,total,path_count",
+    [
+        ("short-single-agent", "short", 60, 1),
+        ("long-concurrent-agents", "long-concurrent", 1000, 3),
+        ("deep-nested-agents", "deep", 5, 5),
+    ],
+)
+def test_session_fixtures_render_with_packaged_detail_resource(
+    tmp_path: Path, name: str, session_id: str, total: int, path_count: int
+) -> None:
+    """Missing client fixtures or omitted session resources break rendering.
+
+    Fixtures are repository test data; the view is an installed package
+    resource and must be inlined for generated reports to work offline.
+
+    Args:
+        tmp_path: Temporary output directory.
+        name: Committed fixture filename without extension.
+        session_id: Expected session identifier.
+        total: Hand-checked response token total.
+        path_count: Number of independently selectable agent paths.
+    """
+    fixture = Path(__file__).parent / "fixtures" / "session-analytics" / f"{name}.json"
+    session = json.loads(fixture.read_text(encoding="utf-8"))
+    assert session["session_id"] == session_id
+    assert session["total_tokens"] == total
+    assert sum(row["total_tokens"] for row in session["agent_activity"]) == total
+    assert len(session["agent_paths"]) == path_count
+    package = importlib.resources.files("claude_prospector")
+    asset = package / "static" / "views" / "session-detail.js"
+    assert asset.is_file()
+    source = asset.read_text(encoding="utf-8")
+    assert source.strip()
+    output = render(
+        AggregateResult(sessions=[session]),
+        tmp_path / f"{name}.html",
+        open_browser=False,
+    )
+    html = output.read_text(encoding="utf-8")
+    assert f"<script>{source}</script>" in html
+    assert f'"session_id": "{session_id}"' in html
 
 
 def test_dashboard_template_accessible_via_importlib_resources() -> None:
