@@ -109,7 +109,7 @@ function readShellScript() {
   return scripts.at(-1)[1];
 }
 
-function bootShell() {
+function bootShell(sessions = [{session_id: 'A'}, {session_id: 'B'}]) {
   const window = new FakeEventTarget();
   const document = {
     activeElement: null,
@@ -161,7 +161,7 @@ function bootShell() {
     renderCalls.push({view, state: {...state}});
     return () => cleanupCalls.push(view);
   };
-  window.DATA = {sessions: [{session_id: 'A'}, {session_id: 'B'}]};
+  window.DATA = {sessions};
   window.location = location;
   window.scrollTo = () => {};
   const context = vm.createContext({
@@ -172,7 +172,7 @@ function bootShell() {
     URLSearchParams,
     URL,
     console,
-    CP: {applyChartDefaults() {}, sessionAnalytics: A},
+    CP: global.window.CP,
     renderEconomicsBasic: renderView('basic'),
     renderLayoutBDiag: renderView('detail'),
     renderEconomics: renderView('advanced'),
@@ -209,6 +209,158 @@ function openSession(shell, sessionId, returnView, returnState) {
 function plain(value) {
   return JSON.parse(JSON.stringify(value));
 }
+
+/** Find actual nodes built by the view, without duplicating render logic. */
+function sessionNodes(shell) {
+  const visit = node => [node, ...node.children.flatMap(visit)];
+  return visit(shell.document.elements['view-container']);
+}
+
+function sessionNode(shell, predicate) {
+  const node = sessionNodes(shell).find(predicate);
+  assert.ok(node, 'Expected session control or panel to be rendered');
+  return node;
+}
+
+function agentControl(shell, path) {
+  return sessionNode(shell, node => node.dataset.agentPath === encodeURIComponent(path));
+}
+
+function scopedTotal(shell) {
+  return sessionNode(shell, node => node.dataset.sessionPanel === 'total').textContent;
+}
+
+function toggleAgent(shell, path, checked) {
+  const control = agentControl(shell, path);
+  control.checked = checked;
+  control.dispatchEvent({type: 'change'});
+}
+
+function freezeDeep(value) {
+  if (value && typeof value === 'object') {
+    Object.values(value).forEach(freezeDeep);
+    Object.freeze(value);
+  }
+  return value;
+}
+
+test('session shell renders semantic scan-first regions with all paths active', () => {
+  const fixture = plain(require('../fixtures/session-analytics/deep-nested-agents.json'));
+  fixture.project = '<img src=x onerror=alert(1)>';
+  const session = freezeDeep(fixture);
+  const shell = bootShell([session]);
+  openSession(shell, 'deep', 'basic');
+
+  assert.equal(shell.document.activeElement.textContent, 'Session deep');
+  const controls = sessionNodes(shell).filter(node => node.dataset.agentPath);
+  assert.equal(controls.length, 5);
+  assert.ok(controls.every(node => node.tagName === 'input' && node.type === 'checkbox' && node.checked && !node.indeterminate));
+  assert.equal(sessionNode(shell, node => node.attributes.role === 'tree').attributes['aria-label'], 'Agents included in analytics');
+  assert.equal(sessionNode(shell, node => node.tagName === 'fieldset').attributes['aria-label'], 'Session analytics scope');
+  const radios = sessionNodes(shell).filter(node => node.dataset.sessionScope);
+  assert.deepEqual(radios.map(node => [node.type, node.value, node.checked]), [['radio', 'all', true], ['radio', 'period', false]]);
+  assert.equal(sessionNode(shell, node => node.dataset.sessionPanel === 'total').attributes['aria-live'], 'polite');
+  assert.equal(scopedTotal(shell), 'All: 5 tokens across 5 responses');
+  assert.equal(sessionNode(shell, node => node.textContent === fixture.project).innerHTML, '');
+  assert.deepEqual(sessionNodes(shell).filter(node => node.dataset.sessionPanel).map(node => node.dataset.sessionPanel),
+    ['identity', 'overview', 'agent-filter', 'tracks', 'scope', 'total', 'detail', 'breakdowns', 'details', 'ledger']);
+});
+
+test('child changes preserve full-path independence and focused control', () => {
+  const session = freezeDeep(plain(require('../fixtures/session-analytics/deep-nested-agents.json')));
+  const shell = bootShell([session]);
+  openSession(shell, 'deep', 'basic');
+  toggleAgent(shell, 'main→left→worker', false);
+
+  assert.equal(agentControl(shell, 'main→left→worker').checked, false);
+  assert.equal(agentControl(shell, 'main→right→worker').checked, true);
+  assert.equal(agentControl(shell, 'main→left').indeterminate, true);
+  assert.equal(agentControl(shell, 'main').indeterminate, true);
+  assert.equal(shell.document.activeElement, agentControl(shell, 'main→left→worker'));
+  assert.equal(scopedTotal(shell), 'All: 4 tokens across 4 responses');
+  assert.equal(session.agent_activity.length, 5);
+});
+
+test('parent toggles its entire subtree and empty selection can select all', () => {
+  const session = require('../fixtures/session-analytics/deep-nested-agents.json');
+  const shell = bootShell([session]);
+  openSession(shell, 'deep', 'basic');
+  toggleAgent(shell, 'main→left', false);
+  assert.equal(agentControl(shell, 'main→left→worker').checked, false);
+  assert.equal(scopedTotal(shell), 'All: 3 tokens across 3 responses');
+  toggleAgent(shell, 'main', false);
+  assert.ok(sessionNodes(shell).some(node => node.textContent === 'No agents selected'));
+  assert.equal(scopedTotal(shell), 'All: 0 tokens across 0 responses');
+  sessionNode(shell, node => node.tagName === 'button' && node.textContent === 'Select all').dispatchEvent({type: 'click'});
+  assert.equal(scopedTotal(shell), 'All: 5 tokens across 5 responses');
+  assert.ok(sessionNodes(shell).filter(node => node.dataset.agentPath).every(node => node.checked && !node.indeterminate));
+  assert.equal(shell.document.activeElement, agentControl(shell, 'main'));
+});
+
+test('scope excludes untimed records only in period mode and keeps overview domain', () => {
+  const fixture = plain(require('../fixtures/session-analytics/short-single-agent.json'));
+  fixture.agent_activity.push({...fixture.agent_activity[0], timestamp: null, total_tokens: 7});
+  const shell = bootShell([freezeDeep(fixture)]);
+  openSession(shell, 'short', 'basic');
+  const overview = () => sessionNode(shell, node => node.dataset.sessionPanel === 'overview');
+  assert.equal(scopedTotal(shell), 'All: 67 tokens across 4 responses');
+  const liveTotal = sessionNode(shell, node => node.dataset.sessionPanel === 'total');
+  const domain = {...overview().dataset};
+  const period = sessionNode(shell, node => node.dataset.sessionScope === 'period');
+  period.checked = true;
+  period.dispatchEvent({type: 'change'});
+  assert.equal(scopedTotal(shell), 'By time period: 60 tokens across 3 responses');
+  assert.equal(sessionNode(shell, node => node.dataset.sessionPanel === 'total'), liveTotal,
+    'Live region must stay mounted so assistive technology can announce changes');
+  assert.deepEqual(overview().dataset, domain);
+  assert.equal(shell.document.activeElement.dataset.sessionScope, 'period');
+  const all = sessionNode(shell, node => node.dataset.sessionScope === 'all');
+  all.checked = true;
+  all.dispatchEvent({type: 'change'});
+  assert.equal(scopedTotal(shell), 'All: 67 tokens across 4 responses');
+});
+
+test('legacy agent labels remain selectable without inventing missing times', () => {
+  const session = freezeDeep({session_id: 'legacy', agent_activity: [{agent: 'main→worker', total_tokens: 9}]});
+  const shell = bootShell([session]);
+  openSession(shell, 'legacy', 'basic');
+  assert.equal(agentControl(shell, 'main→worker').checked, true);
+  assert.equal(scopedTotal(shell), 'All: 9 tokens across 1 response');
+  assert.ok(sessionNodes(shell).some(node => node.textContent === 'Timeline unavailable: no valid timestamps recorded.'));
+  assert.equal(sessionNode(shell, node => node.dataset.sessionScope === 'period').disabled, true);
+  assert.equal(sessionNode(shell, node => node.dataset.sessionPanel === 'overview').dataset.start, undefined);
+  assert.ok(sessionNodes(shell).some(node => node.textContent === 'Not recorded'));
+});
+
+test('missing attribution and empty activity have explicit states', () => {
+  const shell = bootShell([{session_id: 'missing', agent_activity: [{total_tokens: 8}]}]);
+  openSession(shell, 'missing', 'basic');
+  assert.ok(sessionNodes(shell).some(node => node.textContent === 'Agent paths unavailable.'));
+  assert.ok(sessionNodes(shell).some(node => node.textContent === '1 record without an agent path is excluded from analytics.'));
+  const empty = bootShell([{session_id: 'empty', agent_paths: [['main']], agent_activity: []}]);
+  openSession(empty, 'empty', 'basic');
+  assert.ok(sessionNodes(empty).some(node => node.textContent === 'No records in this scope.'));
+});
+
+test('cleanup removes stale listeners and destroys only session chart instances', () => {
+  const session = require('../fixtures/session-analytics/short-single-agent.json');
+  const shell = bootShell([session]);
+  openSession(shell, 'short', 'basic');
+  const oldBack = sessionNode(shell, node => node.textContent === 'Back to dashboard');
+  const oldCheckbox = agentControl(shell, 'main');
+  let sessionDestroyed = 0;
+  let otherDestroyed = 0;
+  global.window.CP.registerChart('session-test', {destroy() { sessionDestroyed += 1; }});
+  global.window.CP.registerChart('other-test', {destroy() { otherDestroyed += 1; }});
+  shell.buttons.find(button => button.dataset.view === 'detail').dispatchEvent({type: 'click'});
+  oldBack.dispatchEvent({type: 'click'});
+  oldCheckbox.dispatchEvent({type: 'change'});
+  assert.deepEqual(plain(shell.history.state), {dashboardView: 'detail'});
+  assert.equal(sessionDestroyed, 1);
+  assert.equal(otherDestroyed, 0);
+  assert.ok([...oldBack.listeners.values(), ...oldCheckbox.listeners.values()].every(list => list.length === 0));
+  global.window.CP.destroyChart('other-test');
+});
 
 test('paired Back events retain the Breakdown return state once', () => {
   const shell = bootShell();
