@@ -1468,6 +1468,62 @@ class TestDeriveProjectNameWorktreeRollup:
 class TestSessionActivityParsing:
     """Tests for privacy-safe session effort and activity extraction."""
 
+    def test_offset_naive_timestamps_are_omitted_from_session_activity(
+        self, tmp_path: Path
+    ) -> None:
+        """Offset-naive entries cannot enter timestamped session activity.
+
+        This catches ``_parse_timestamp`` returning a datetime whose
+        ``utcoffset()`` is ``None``, which otherwise lets mixed aware and naive
+        activity reach session ordering.
+        """
+        naive_assistant = _assistant_entry(
+            "naive-response",
+            "high",
+            timestamp="2026-09-13T10:01:00",
+            content=[
+                {
+                    "type": "tool_use",
+                    "id": "naive-skill",
+                    "name": "Skill",
+                    "input": {"skill": "python"},
+                }
+            ],
+            git_branch="naive-branch",
+        )
+        naive_command = {
+            "type": "user",
+            "userType": "external",
+            "uuid": "naive-command",
+            "timestamp": "2026-09-13T10:02:00",
+            "message": {
+                "role": "user",
+                "content": "<command-name>/fork</command-name>",
+            },
+        }
+        path = _write_session(
+            tmp_path,
+            [
+                _assistant_entry(
+                    "aware-response",
+                    "medium",
+                    timestamp="2026-09-13T10:00:00Z",
+                ),
+                naive_assistant,
+                naive_command,
+            ],
+        )
+
+        session = _parse_session(path, "project")
+
+        assert session is not None
+        assert len(session.messages) == 1
+        assert session.messages[0].effort == "medium"
+        assert session.messages[0].timestamp.utcoffset() is not None
+        assert session.skill_invocations == []
+        assert session.commands == []
+        assert session.metadata_observations == []
+
     def test_effort_is_trimmed_and_future_values_are_preserved(
         self, tmp_path: Path
     ) -> None:

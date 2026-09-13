@@ -313,9 +313,16 @@ def _read_cwd_from_jsonl(jsonl_path: Path) -> str | None:
 
 
 def _parse_timestamp(ts_str: str) -> datetime:
-    """Parse an ISO 8601 timestamp string to a datetime."""
+    """Parse an offset-aware ISO 8601 timestamp string.
+
+    Raises:
+        ValueError: If the timestamp is invalid or omits a UTC offset.
+    """
     ts_str = ts_str.replace("Z", "+00:00")
-    return datetime.fromisoformat(ts_str)
+    parsed = datetime.fromisoformat(ts_str)
+    if parsed.utcoffset() is None:
+        raise ValueError("timestamp must include a UTC offset")
+    return parsed
 
 
 _SESSION_METADATA_FIELDS = {
