@@ -188,17 +188,19 @@
       left.split(AGENT_PATH_SEP).length - right.split(AGENT_PATH_SEP).length
         || left.localeCompare(right))) {
       const parts = path.split(AGENT_PATH_SEP);
-      const node = nodes.get(path) || { path, label: parts.at(-1), children: [] };
-      nodes.set(path, node);
-      if (parts.length > 1) {
-        const parentPath = parts.slice(0, -1).join(AGENT_PATH_SEP);
-        const parent = nodes.get(parentPath) || {
-          path: parentPath,
-          label: parts.at(-2),
+      for (let index = 1; index <= parts.length; index++) {
+        const nodePath = parts.slice(0, index).join(AGENT_PATH_SEP);
+        const node = nodes.get(nodePath) || {
+          path: nodePath,
+          label: parts[index - 1],
           children: [],
         };
-        nodes.set(parentPath, parent);
-        if (!parent.children.some(child => child.path === path)) parent.children.push(node);
+        nodes.set(nodePath, node);
+        if (index > 1) {
+          const parentPath = parts.slice(0, index - 1).join(AGENT_PATH_SEP);
+          const parent = nodes.get(parentPath);
+          if (!parent.children.some(child => child.path === nodePath)) parent.children.push(node);
+        }
       }
     }
     for (const node of nodes.values()) {

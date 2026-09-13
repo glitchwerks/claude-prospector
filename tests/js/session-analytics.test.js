@@ -155,6 +155,30 @@ test('agent tree retains repeated worker leaves under their full paths', () => {
   }]);
 });
 
+test('agent tree connects an implicit parent between a root and grandchild', () => {
+  const tree = A.buildAgentTree(['main', 'main→left→worker']);
+  assert.deepEqual(tree, [{
+    path: 'main', label: 'main', children: [{
+      path: 'main→left', label: 'left', children: [{
+        path: 'main→left→worker', label: 'worker', children: [],
+      }],
+    }],
+  }]);
+});
+
+test('agent tree connects every missing intermediate ancestor', () => {
+  const tree = A.buildAgentTree(['main', 'main→alpha→beta→worker']);
+  assert.deepEqual(tree, [{
+    path: 'main', label: 'main', children: [{
+      path: 'main→alpha', label: 'alpha', children: [{
+        path: 'main→alpha→beta', label: 'beta', children: [{
+          path: 'main→alpha→beta→worker', label: 'worker', children: [],
+        }],
+      }],
+    }],
+  }]);
+});
+
 test('MCP payloads preserve collected zero, not collected, and unavailable states', () => {
   const short = require('../fixtures/session-analytics/short-single-agent.json');
   const deep = require('../fixtures/session-analytics/deep-nested-agents.json');
