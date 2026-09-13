@@ -26,6 +26,7 @@ Covers:
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timezone
 from itertools import count
 
@@ -210,6 +211,51 @@ class TestByTool:
 
 class TestSessionMcpActivity:
     """Session-scoped, privacy-safe MCP activity attachment."""
+
+    def test_orders_mcp_instants_then_source_ordinal_across_paths(self) -> None:
+        """Equal instants retain source order; untimed records remain last."""
+        records = [
+            replace(
+                _mcp_record(
+                    "mcp__github__zebra",
+                    timestamp=datetime.fromisoformat("2026-09-13T10:00:00+00:00"),
+                ),
+                agent_path=("main", "zebra"),
+            ),
+            replace(
+                _mcp_record(
+                    "mcp__github__alpha",
+                    timestamp=datetime.fromisoformat("2026-09-13T06:00:00-04:00"),
+                ),
+                agent_path=("main", "alpha"),
+            ),
+            _mcp_record("mcp__github__untimed_zebra", timestamp=None),
+            _mcp_record(
+                "mcp__github__earlier",
+                timestamp=datetime.fromisoformat("2026-09-13T10:30:00+01:00"),
+            ),
+            _mcp_record("mcp__github__untimed_alpha", timestamp=None),
+        ]
+        original_records = list(records)
+        result = AggregateResult(sessions=[_session_summary("ordered")])
+
+        attach_session_mcp_activity(
+            result, [("ordered", records, [])], track_mcp_call_sizes=False
+        )
+
+        rows = result.sessions[0]["mcp_activity"]
+        assert [row["method"] for row in rows] == [
+            "earlier",
+            "zebra",
+            "alpha",
+            "untimed_zebra",
+            "untimed_alpha",
+        ]
+        assert [row["agent_path"] for row in rows[1:3]] == [
+            ["main", "zebra"],
+            ["main", "alpha"],
+        ]
+        assert records == original_records
 
     def test_distinguishes_collected_empty_and_unavailable_sessions(self) -> None:
         """Selected transcript states map to collected, empty, and unavailable."""

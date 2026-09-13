@@ -78,15 +78,15 @@
     return pathKey(row.agent_path) || (typeof row.agent === 'string' ? row.agent : '');
   }
 
-  /** Derive a fixed half-open domain; absent endpoints remain unavailable. */
+  /** Include all retained timed activity in the immutable half-open domain. */
   function timelineDomain(session, records) {
     const times = records.map(row => Date.parse(row.timestamp)).filter(Number.isFinite);
     const recordedStart = Date.parse(session.start_time);
     const recordedEnd = Date.parse(session.end_time);
-    const start = Number.isFinite(recordedStart) ? recordedStart
-      : times.reduce((lowest, time) => Math.min(lowest, time), Infinity);
-    const end = (Number.isFinite(recordedEnd) ? recordedEnd
-      : times.reduce((highest, time) => Math.max(highest, time), -Infinity)) + 1;
+    const start = times.reduce((lowest, time) => Math.min(lowest, time),
+      Number.isFinite(recordedStart) ? recordedStart : Infinity);
+    const end = times.reduce((highest, time) => Math.max(highest, time),
+      Number.isFinite(recordedEnd) ? recordedEnd : -Infinity) + 1;
     return Number.isFinite(start) && Number.isFinite(end) && end > start
       ? Object.freeze({start, end}) : null;
   }
@@ -158,6 +158,40 @@
     return disclosure;
   }
 
+  /** A partial component sum is unavailable; recorded zero remains a value. */
+  function recordedTokenValues(responses) {
+    const totals = A.sumTokens(responses);
+    return TOKEN_FIELDS.map(field => responses.every(row => Number.isFinite(row[field]))
+      ? totals[field] : 'Not recorded');
+  }
+
+  /** Reconcile each recorded dimension against the same exact scoped responses. */
+  function renderBreakdowns(parent, responses, scope) {
+    parent.append(element('p', 'muted', `${MODES[scope]}: ${responses.length} responses`));
+    if (!responses.length) {
+      parent.append(element('p', 'session-empty', 'No response records in this scope.'));
+      return;
+    }
+    for (const [key, label, dimension] of [
+      ['effort', 'Effort', row => effortLabel(row.effort_key)],
+      ['model', 'Normalized model', row => row.model || 'Unknown'],
+      ['model-full', 'Full model', row => row.model_full || 'Unknown'],
+    ]) {
+      const groups = new Map();
+      for (const row of responses) {
+        const value = dimension(row);
+        if (!groups.has(value)) groups.set(value, []);
+        groups.get(value).push(row);
+      }
+      parent.append(chartTable(`breakdown-${key}`, `${MODES[scope]}: token totals by ${label.toLowerCase()}`,
+        [label, 'Responses', ...TOKEN_LABELS],
+        [...groups].map(([value, rows]) => [value, rows.length, ...recordedTokenValues(rows)])));
+    }
+    const values = recordedTokenValues(responses);
+    parent.append(chartTable('breakdown-tokens', `${MODES[scope]}: token component totals`,
+      ['Component', 'Tokens'], TOKEN_LABELS.map((label, index) => [label, values[index]])));
+  }
+
   /** Install a stripe pattern for missing/future effort; IDs are chart-local. */
   function effortPattern(svg, key) {
     const defs = svgElement('defs');
@@ -207,7 +241,7 @@
       swatch.setAttribute('aria-hidden', 'true');
       label.append(swatch, element('span', undefined, `${effortLabel(layer.key)}: ${total.total_tokens.toLocaleString()} tokens`));
       legend.append(label);
-      return [effortLabel(layer.key), matching.length, ...TOKEN_FIELDS.map(field => total[field])];
+      return [effortLabel(layer.key), matching.length, ...recordedTokenValues(matching)];
     });
     parent.append(legend, chartTable(key, 'Token totals by effort', ['Effort', 'Responses', ...TOKEN_LABELS], rows));
     return svg;
@@ -253,7 +287,7 @@
       parent.append(element('p', 'muted', 'Zoom further for per-response bars'));
     }
     parent.append(chartTable('detail', 'Exact response values', ['Timestamp', 'Full model', 'Model', 'Effort', 'Agent path', ...TOKEN_LABELS],
-      timed.map(row => [row.timestamp, row.model_full || 'Unknown', row.model || 'unknown', effortLabel(row.effort_key), recordPath(row), ...TOKEN_FIELDS.map(field => row[field] || 0)])));
+      timed.map(row => [row.timestamp, row.model_full || 'Unknown', row.model || 'unknown', effortLabel(row.effort_key), recordPath(row), ...recordedTokenValues([row])])));
   }
 
   /** Plot independent exact paths on a common clock, including empty rows. */
@@ -280,7 +314,7 @@
       parent.append(track);
       const matching = timed.filter(row => recordPath(row) === path);
       const totals = A.sumTokens(matching);
-      rows.push([path, activePaths.has(path) ? 'Active' : 'Inactive', matching.length, ...TOKEN_FIELDS.map(field => totals[field])]);
+      rows.push([path, activePaths.has(path) ? 'Active' : 'Inactive', matching.length, ...recordedTokenValues(matching)]);
       if (!domain) return;
       const svg = svgElement('svg', {role: 'img', 'aria-label': `${path}: ${matching.length} timestamped responses, ${totals.total_tokens} tokens`});
       track.append(svg);
@@ -587,6 +621,8 @@
       listen(back, 'click', routeState.close);
       const heading = element('h2', undefined, `Session ${String(session.session_id)}`);
       heading.tabIndex = -1;
+      controls.set('header:back', back);
+      controls.set('header:heading', heading);
       header.append(back, heading,
         element('p', 'session-project', session.project || 'Project not recorded'),
         element('p', 'muted', session.project_path || 'Project path not recorded'));
@@ -768,9 +804,9 @@
           else state.expanded.delete(name);
         });
       }
-      afterScope.replaceChildren(detail,
-        panel('breakdowns', 'Effort, models, and tokens'),
-        details);
+      const breakdowns = panel('breakdowns', 'Effort, models, and tokens');
+      renderBreakdowns(breakdowns, scoped.responses, state.scope);
+      afterScope.replaceChildren(detail, breakdowns, details);
       renderScopedDetail(detail, scoped.responses, state.scope === 'period' ? state.range : domain, listen, controls);
       const detailHeading = detail.children[0];
       detailHeading.tabIndex = -1;

@@ -236,6 +236,8 @@ def run(args: argparse.Namespace) -> int:
             result,
             per_session,
             track_mcp_call_sizes=args.track_mcp_call_sizes,
+            from_date=resolved_from,
+            to_date=resolved_to,
         )
         usage = compute_tool_usage(
             per_session, track_mcp_call_sizes=args.track_mcp_call_sizes

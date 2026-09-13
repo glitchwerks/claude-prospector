@@ -626,7 +626,17 @@ def _session_mcp_records(records: list[ToolUseRecord]) -> list[dict]:
         and optional result-size proxy fields.
     """
     activity: list[dict] = []
-    for record in records:
+    # Timestamps are parsed datetimes: compare instants, then original ordinal.
+    # Never reorder equal-time calls by path, server, or method names.
+    ordered = sorted(
+        enumerate(records),
+        key=lambda item: (
+            item[1].timestamp is None,
+            item[1].timestamp.timestamp() if item[1].timestamp else 0,
+            item[0],
+        ),
+    )
+    for _, record in ordered:
         normalized = normalize_mcp_tool_name(record.tool_name)
         if normalized is None:
             continue
@@ -643,16 +653,7 @@ def _session_mcp_records(records: list[ToolUseRecord]) -> list[dict]:
                 "result_excluded": record.result_excluded,
             }
         )
-    return sorted(
-        activity,
-        key=lambda row: (
-            row["timestamp"] is None,
-            row["timestamp"] or "",
-            row["agent"],
-            row["server"],
-            row["method"],
-        ),
-    )
+    return activity
 
 
 def attach_session_mcp_activity(
@@ -660,6 +661,8 @@ def attach_session_mcp_activity(
     per_session: list[tuple[str, list[ToolUseRecord], list[AgentAvailability]]],
     *,
     track_mcp_call_sizes: bool,
+    from_date: datetime | None = None,
+    to_date: datetime | None = None,
 ) -> None:
     """Attach opt-in MCP collection state and activity to session summaries.
 
@@ -670,6 +673,12 @@ def attach_session_mcp_activity(
             list have an unavailable transcript.
         track_mcp_call_sizes: Whether result-size collection was separately
             enabled for the shared transcript pass.
+        from_date: Inclusive lower timestamp bound for session activity.
+        to_date: Exclusive upper timestamp bound for session activity.
+
+    Untimed calls are retained only with no date bounds. A bounded projection
+    cannot prove their inclusion. The shared collected records remain intact
+    for global tool-usage accounting.
     """
     collected = {session_id: records for session_id, records, _ in per_session}
     for summary in result.sessions:
@@ -688,6 +697,13 @@ def attach_session_mcp_activity(
             "calls": "collected",
             "result_sizes": "collected" if track_mcp_call_sizes else "not_collected",
         }
+        if from_date is not None or to_date is not None:
+            records = [
+                record
+                for record in records
+                if record.timestamp is not None
+                and _in_window(record.timestamp, from_date, to_date)
+            ]
         summary["mcp_activity"] = _session_mcp_records(records)
 
 

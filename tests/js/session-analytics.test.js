@@ -312,6 +312,94 @@ function nodeText(node) {
   return [node.textContent, ...node.children.map(nodeText)].join(' ');
 }
 
+/** Read the values displayed by a specific labelled table. */
+function tableRows(shell, key, caption) {
+  const table = sessionNode(shell, node => node.dataset.chartTable === key
+    && (!caption || node.children.some(child => child.tagName === 'caption' && child.textContent === caption)));
+  return table.querySelectorAll('tbody')[0].children.map(row => row.children.map(cell => cell.textContent));
+}
+
+test('scoped breakdowns reconcile effort, normalized and full models, and components in All, period, and child selection', () => {
+  const session = freezeDeep({session_id: 'breakdowns',
+    agent_paths: [['main'], ['main', 'worker']],
+    agent_activity: [
+      {timestamp: '2026-09-13T10:00:00Z', agent: 'main', effort_key: 'low', model: 'sonnet', model_full: 'sonnet-one',
+        input_tokens: 1, output_tokens: 2, cache_read_tokens: 3, cache_creation_tokens: 4, total_tokens: 10},
+      {timestamp: '2026-09-13T10:01:00Z', agent: 'main→worker', effort_key: 'high', model: 'sonnet', model_full: 'sonnet-two',
+        input_tokens: 5, output_tokens: 6, cache_read_tokens: 7, cache_creation_tokens: 8, total_tokens: 26},
+      {timestamp: '2026-09-13T10:02:00Z', agent: 'main→worker', effort_key: 'high', model: 'opus', model_full: 'opus-one',
+        input_tokens: 0, output_tokens: 3, cache_read_tokens: 2, cache_creation_tokens: 1, total_tokens: 6},
+    ]});
+  const shell = bootShell([session]);
+  openSession(shell, session.session_id, 'basic');
+  assert.deepEqual(tableRows(shell, 'breakdown-effort'), [
+    ['low', '1', '1', '2', '3', '4', '10'], ['high', '2', '5', '9', '9', '9', '32'],
+  ]);
+  assert.deepEqual(tableRows(shell, 'breakdown-model'), [
+    ['sonnet', '2', '6', '8', '10', '12', '36'], ['opus', '1', '0', '3', '2', '1', '6'],
+  ]);
+  assert.deepEqual(tableRows(shell, 'breakdown-model-full'), [
+    ['sonnet-one', '1', '1', '2', '3', '4', '10'], ['sonnet-two', '1', '5', '6', '7', '8', '26'],
+    ['opus-one', '1', '0', '3', '2', '1', '6'],
+  ]);
+  assert.deepEqual(tableRows(shell, 'breakdown-tokens'), [
+    ['Input', '6'], ['Output', '11'], ['Cache read', '12'], ['Cache creation', '13'], ['Total', '42'],
+  ]);
+  moveRange(shell, 'start', Date.parse('2026-09-13T10:01:00Z'));
+  moveRange(shell, 'end', Date.parse('2026-09-13T10:02:00Z'));
+  assert.equal(tableRows(shell, 'breakdown-tokens').at(-1)[1], '42', 'All ignores the brush');
+  chooseScope(shell, 'period');
+  assert.match(nodeText(activityPanel(shell, 'breakdowns')), /By time period/);
+  for (const [key, label] of [['effort', 'high'], ['model', 'sonnet'], ['model-full', 'sonnet-two']]) {
+    assert.deepEqual(tableRows(shell, `breakdown-${key}`), [[label, '1', '5', '6', '7', '8', '26']]);
+  }
+  assert.deepEqual(tableRows(shell, 'breakdown-tokens'), [
+    ['Input', '5'], ['Output', '6'], ['Cache read', '7'], ['Cache creation', '8'], ['Total', '26'],
+  ]);
+  chooseScope(shell, 'all');
+  toggleAgent(shell, 'main', false);
+  toggleAgent(shell, 'main→worker', true);
+  assert.deepEqual(tableRows(shell, 'breakdown-effort'), [['high', '2', '5', '9', '9', '9', '32']]);
+  assert.deepEqual(tableRows(shell, 'breakdown-model'), [
+    ['sonnet', '1', '5', '6', '7', '8', '26'], ['opus', '1', '0', '3', '2', '1', '6'],
+  ]);
+  assert.deepEqual(tableRows(shell, 'breakdown-model-full'), [
+    ['sonnet-two', '1', '5', '6', '7', '8', '26'], ['opus-one', '1', '0', '3', '2', '1', '6'],
+  ]);
+  assert.deepEqual(tableRows(shell, 'breakdown-tokens'), [
+    ['Input', '5'], ['Output', '9'], ['Cache read', '9'], ['Cache creation', '9'], ['Total', '32'],
+  ]);
+});
+
+test('scoped breakdowns retain missing components, known totals, recorded zero, and unknown dimensions', () => {
+  const session = freezeDeep({session_id: 'legacy-breakdowns', agent_activity: [
+    {timestamp: '2026-09-13T10:00:00Z', agent: 'main', total_tokens: 9, cache_read_tokens: 4, cache_creation_tokens: 1},
+    {timestamp: '2026-09-13T10:01:00Z', agent: 'main→worker', effort_key: '__proto__', model: 'constructor', model_full: 'toString',
+      input_tokens: 0, output_tokens: 3, cache_read_tokens: 0, cache_creation_tokens: 0, total_tokens: 3},
+  ]});
+  const shell = bootShell([session]);
+  openSession(shell, session.session_id, 'basic');
+  assert.deepEqual(tableRows(shell, 'breakdown-tokens'), [
+    ['Input', 'Not recorded'], ['Output', 'Not recorded'], ['Cache read', '4'], ['Cache creation', '1'], ['Total', '12'],
+  ]);
+  for (const [key, label] of [['effort', '__proto__'], ['model', 'constructor'], ['model-full', 'toString']]) {
+    assert.deepEqual(tableRows(shell, `breakdown-${key}`), [
+      ['Unknown', '1', 'Not recorded', 'Not recorded', '4', '1', '9'], [label, '1', '0', '3', '0', '0', '3'],
+    ]);
+  }
+  chooseScope(shell, 'period');
+  moveRange(shell, 'end', Date.parse('2026-09-13T10:01:00Z'));
+  assert.deepEqual(tableRows(shell, 'breakdown-tokens'), [
+    ['Input', 'Not recorded'], ['Output', 'Not recorded'], ['Cache read', '4'], ['Cache creation', '1'], ['Total', '9'],
+  ]);
+  chooseScope(shell, 'all');
+  toggleAgent(shell, 'main', false);
+  toggleAgent(shell, 'main→worker', true);
+  assert.deepEqual(tableRows(shell, 'breakdown-tokens'), [
+    ['Input', '0'], ['Output', '3'], ['Cache read', '0'], ['Cache creation', '0'], ['Total', '3'],
+  ]);
+});
+
 test('native detail disclosures retain every response, skill, command, and agent path', () => {
   const seed = plain(require('../fixtures/session-analytics/short-single-agent.json'));
   const count = 151;
@@ -909,6 +997,104 @@ test('exact bars require twelve pixels per response', () => {
   assert.equal(A.usesExactBars(new Array(11).fill({}), 120), false);
 });
 
+for (const [label, extra] of [['single legacy', []], ['mixed legacy', [{
+  timestamp: '2026-09-13T10:01:00Z', agent: 'main', input_tokens: 0, output_tokens: 3,
+  cache_read_tokens: 0, cache_creation_tokens: 0, total_tokens: 3,
+}]]]) {
+  test(`chart tables preserve unavailable components and known totals for ${label} responses at exact and dense widths`, () => {
+    const session = freezeDeep({session_id: 'legacy-charts', agent_activity: [
+      {timestamp: '2026-09-13T10:00:00Z', agent: 'main', total_tokens: 9, cache_read_tokens: 4, cache_creation_tokens: 1},
+      ...extra,
+    ]});
+    const shell = bootShell([session]);
+    openSession(shell, session.session_id, 'basic');
+    const totals = extra.length ? ['Not recorded', 'Not recorded', '4', '1', '12']
+      : ['Not recorded', 'Not recorded', '4', '1', '9'];
+    for (const width of [600, 1]) {
+      shell.document.chartWidth = width;
+      shell.resizeObservers[0].callback([{contentRect: {width}}]);
+      assert.deepEqual(tableRows(shell, 'overview')[0].slice(-5), totals);
+      assert.deepEqual(tableRows(shell, 'tracks')[0].slice(-5), totals);
+      const exact = tableRows(shell, 'detail', 'Exact response values');
+      assert.deepEqual(exact[0].slice(-5), ['Not recorded', 'Not recorded', '4', '1', '9']);
+      if (extra.length) assert.deepEqual(exact[1].slice(-5), ['0', '3', '0', '0', '3']);
+      if (width === 1) {
+        assert.deepEqual(tableRows(shell, 'detail', 'Token totals by effort')[0].slice(-5), totals);
+      }
+    }
+  });
+}
+
+test('every unavailable token field remains unavailable in chart tables while recorded zeros stay zero', () => {
+  for (const missing of TOKEN_KEYS) {
+    const response = {timestamp: '2026-09-13T10:00:00Z', agent: 'main',
+      input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0, total_tokens: 0,
+      [missing]: null};
+    const shell = bootShell([{session_id: 'missing-field', agent_activity: [response]}]);
+    shell.document.chartWidth = 1;
+    openSession(shell, 'missing-field', 'basic');
+    const expected = TOKEN_KEYS.map(field => field === missing ? 'Not recorded' : '0');
+    for (const [key, caption] of [['overview'], ['tracks'], ['detail', 'Exact response values'], ['detail', 'Token totals by effort']]) {
+      assert.deepEqual(tableRows(shell, key, caption)[0].slice(-5), expected, `${key}: ${missing}`);
+    }
+  }
+});
+
+test('full brush domain includes all retained timed activity beyond response identity bounds and remains half-open', () => {
+  const seed = plain(require('../fixtures/session-analytics/short-single-agent.json'));
+  const session = freezeDeep({...seed,
+    command_activity: [{timestamp: '2026-09-13T09:59:00Z', agent: 'main', name: '/early'}],
+    skill_activity: [{timestamp: '2026-09-13T10:03:00Z', agent: 'main', skill: 'late-skill'}],
+    mcp_collection: {calls: 'collected', result_sizes: 'not_collected'},
+    mcp_activity: [{timestamp: '2026-09-13T10:04:00Z', agent: 'main', server: 'github', method: 'late'}],
+  });
+  const shell = bootShell([session]);
+  openSession(shell, 'short', 'basic');
+  const identity = nodeText(activityPanel(shell, 'identity'));
+  const initialLedger = activityRows(shell, 'ledger');
+  chooseScope(shell, 'period');
+  assert.deepEqual(activityRows(shell, 'ledger'), initialLedger, 'The untouched period includes all retained timed events');
+  const overview = {...activityPanel(shell, 'overview').dataset};
+  assert.equal(overview.start, String(Date.parse('2026-09-13T09:59:00Z')));
+  assert.equal(overview.end, String(Date.parse('2026-09-13T10:04:00Z') + 1));
+  moveRange(shell, 'start', Date.parse('2026-09-13T09:59:00Z') + 1);
+  assert.deepEqual(activityRows(shell, 'commands'), []);
+  assert.equal(activityRows(shell, 'skills').length, 1);
+  assert.equal(activityRows(shell, 'mcp').length, 1);
+  moveRange(shell, 'end', Date.parse('2026-09-13T10:04:00Z'));
+  assert.match(nodeText(activityPanel(shell, 'mcp')), /0 calls/);
+  assert.equal(activityRows(shell, 'skills').length, 1);
+  moveRange(shell, 'end', Date.parse('2026-09-13T10:03:00Z'));
+  assert.deepEqual(activityRows(shell, 'skills'), []);
+  moveRange(shell, 'end', Date.parse('2026-09-13T10:03:00Z') + 1);
+  assert.equal(activityRows(shell, 'skills').length, 1);
+  assert.deepEqual(activityPanel(shell, 'overview').dataset, overview);
+  assert.equal(nodeText(activityPanel(shell, 'identity')), identity);
+  toggleAgent(shell, 'main', false);
+  assert.deepEqual(activityPanel(shell, 'overview').dataset, overview, 'Selection cannot shrink the immutable brush domain');
+});
+
+for (const control of ['Back', 'heading']) {
+  test(`resize retains the mounted ${control} focus owner`, () => {
+    const shell = bootShell([require('../fixtures/session-analytics/short-single-agent.json')]);
+    openSession(shell, 'short', 'basic');
+    const headerControl = () => activityPanel(shell, 'identity').children.find(node =>
+      control === 'Back' ? node.tagName === 'button' : node.tagName === 'h2');
+    const original = headerControl();
+    if (control === 'Back') original.focus();
+    else assert.equal(shell.document.activeElement, original, 'The route initially focuses its heading');
+    shell.document.chartWidth = 390;
+    shell.resizeObservers[0].callback([{contentRect: {width: 390}}]);
+    assert.ok(shell.document.activeElement === headerControl(), `The mounted ${control} must keep focus`);
+    assert.ok(sessionNodes(shell).includes(shell.document.activeElement));
+    if (control === 'Back') {
+      headerControl().dispatchEvent({type: 'click'});
+      assert.equal(shell.location.hash, '');
+      assert.equal(shell.renderCalls.at(-1).view, 'basic');
+    }
+  });
+}
+
 /** Change the real range control, as keyboard/native range commits do. */
 function moveRange(shell, edge, value) {
   const input = sessionNode(shell, node => node.dataset.sessionRange === edge);
@@ -929,6 +1115,8 @@ function exactBars(shell) {
 test('overview draws shared stepped stack boundaries and offers token totals by effort', () => {
   const seed = require('../fixtures/session-analytics/short-single-agent.json');
   const fixture = {...seed, start_time: new Date(0).toISOString(), end_time: new Date(1999).toISOString(),
+    // This two-second chart fixture has no activity in the seed's 2026 clock.
+    skill_activity: [], command_activity: [],
     agent_activity: [
       {...seed.agent_activity[0], timestamp: new Date(0).toISOString(), total_tokens: 10},
       {...seed.agent_activity[1], timestamp: new Date(0).toISOString(), total_tokens: 20},

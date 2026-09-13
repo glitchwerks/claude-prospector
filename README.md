@@ -90,6 +90,9 @@ The generated HTML dashboard includes:
   exact per-response token details, and independently filterable nested-agent tracks.
   `All` keeps details scoped to the complete session represented in the dashboard;
   `By time period` scopes them to the selected interval.
+  Effort, normalized/full-model, and token-component totals follow the same
+  agent and period selection. Incomplete token components say `Not recorded`.
+  The full timeline includes retained response, Skill, Command, and MCP times.
 
 ### `claude-audit` skill
 
@@ -318,6 +321,11 @@ MCP session detail follows the same opt-ins as the global MCP report. Without
 **Not collected**; it does not report zero calls. The page never stores prompts,
 tool arguments, or tool-result content. Result sizes remain estimates and appear
 only when `--track-mcp-call-sizes` is enabled.
+
+Session MCP activity follows the dashboard's `--from`, `--to`, or resolved
+`--window` bounds: start included, end excluded. Untimed calls appear only
+when no date filter is applied. The global MCP report continues to count all
+calls in each selected session.
 
 ### `session-summary` — deterministic session recap
 
