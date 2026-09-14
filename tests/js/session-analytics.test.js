@@ -1140,6 +1140,34 @@ test('overview draws shared stepped stack boundaries and offers token totals by 
   ]);
 });
 
+test('xhigh is solid red while unknown effort retains its pattern', () => {
+  const fixture = plain(require('../fixtures/session-analytics/short-single-agent.json'));
+  fixture.agent_activity[0] = {
+    ...fixture.agent_activity[0], effort: 'xhigh', effort_key: 'xhigh',
+  };
+  const shell = bootShell([freezeDeep(fixture)]);
+  openSession(shell, 'short', 'basic');
+
+  const xhighBand = sessionNode(shell, node => node.dataset.effortLayer === 'xhigh');
+  const unknownBand = sessionNode(shell, node => node.dataset.effortLayer === 'unknown');
+  assert.equal(xhighBand.attributes.fill, '#f85149');
+  assert.equal(unknownBand.attributes.fill, 'url(#session-overview-unknown)');
+
+  const legendEntry = label => sessionNode(shell, node => node.tagName === 'span'
+    && node.children[1]?.textContent.startsWith(`${label}:`));
+  assert.equal(legendEntry('xhigh').children[0].style.background, '#f85149');
+  assert.match(legendEntry('Unknown').children[0].style.background, /^repeating-linear-gradient/);
+
+  const bars = exactBars(shell);
+  assert.equal(bars[0].children[0].style.background, '#f85149');
+  assert.match(bars[2].children[0].style.background, /^repeating-linear-gradient/);
+
+  const trackMark = effort => sessionNode(shell, node => node.dataset.trackMark === 'main'
+    && node.attributes['aria-label']?.includes(`effort ${effort};`));
+  assert.equal(trackMark('xhigh').children[1].attributes.fill, '#f85149');
+  assert.equal(trackMark('Unknown').children[1].attributes.fill, 'url(#session-track-0-unknown)');
+});
+
 test('labeled keyboard brush controls change only period detail and retain overview domain', () => {
   const session = freezeDeep(plain(require('../fixtures/session-analytics/short-single-agent.json')));
   const shell = bootShell([session]);
