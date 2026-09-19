@@ -3,7 +3,7 @@
   const MODES = {all: 'All', period: 'By time period'};
   const TOKEN_FIELDS = ['input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_creation_tokens', 'total_tokens'];
   const TOKEN_LABELS = ['Input', 'Output', 'Cache read', 'Cache creation', 'Total'];
-  const EFFORT_COLORS = {low: '#3fb950', medium: '#58a6ff', high: '#d2a8ff', max: '#ffa657', unknown: '#8b949e'};
+  const EFFORT_COLORS = {low: '#3fb950', medium: '#58a6ff', high: '#d2a8ff', xhigh: '#f85149', max: '#ffa657', unknown: '#8b949e'};
   const STYLE = `
     .session-detail.session-page { max-width: none; background: transparent; border: 0; padding: 0; }
     .session-page { overflow-wrap: anywhere; }
