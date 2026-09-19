@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.1] - 2026-09-19
+
+### Fixed
+
+- **Recorded xhigh effort now renders in red** (issue #316, PR #317).
+  Session overview layers, legends, exact response bars, and agent-track marks
+  use the dashboard's established red for `xhigh`, while missing, unknown, and
+  future effort values retain the crosshatch treatment.
+
 ## [0.16.0] - 2026-09-13
 
 ### Added
